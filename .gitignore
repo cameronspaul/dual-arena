@@ -1,8 +1,9 @@
-
-
-
+# Audio dumps elsewhere — keep game SFX in public/sounds tracked for deploy
 *.mp3
 *.ogg
+!public/sounds/
+!public/sounds/**
+
 # ------------------------------------------------------
 # Logs
 # ------------------------------------------------------

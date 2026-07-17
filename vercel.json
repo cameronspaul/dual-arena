@@ -1,5 +1,8 @@
 {
   "rewrites": [
-    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!assets/|sounds/|models/|env/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
