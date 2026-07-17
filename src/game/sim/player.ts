@@ -1,6 +1,10 @@
 import { MOVE, PLAYER } from '../core/config'
 import { clamp, facingXZ, lenXZ, lerp, wishDir } from '../core/math'
 import type { AABB, Hitbox, HitVolumes, PlayerBody, PlayerInput, Vec3 } from '../core/types'
+import {
+  resolveMeshCollisions,
+  type MeshWorld,
+} from '../maps/meshCollision'
 
 export function volumesToHitboxes(ownerId: string, v: HitVolumes): Hitbox[] {
   const boxes: Hitbox[] = [
@@ -41,7 +45,9 @@ export function volumesToHitboxes(ownerId: string, v: HitVolumes): Hitbox[] {
   return boxes
 }
 
-export function createPlayer(spawn = PLAYER.spawn): PlayerBody {
+export function createPlayer(
+  spawn: { x: number; y: number; z: number } = PLAYER.spawn,
+): PlayerBody {
   return {
     position: { x: spawn.x, y: spawn.y, z: spawn.z },
     velocity: { x: 0, y: 0, z: 0 },
@@ -228,6 +234,8 @@ export function stepPlayer(
   input: PlayerInput,
   dt: number,
   worldColliders: AABB[],
+  /** When set (GLB maps), walk on real triangle floors/walls instead of y=0 + AABBs. */
+  meshWorld?: MeshWorld | null,
 ) {
   p.yaw = input.yaw
   p.pitch = input.pitch
@@ -329,7 +337,13 @@ export function stepPlayer(
   p.velocity.y += MOVE.gravity * dt
 
   // collide + integrate
-  resolveCollisions(p, worldColliders, dt)
+  if (meshWorld && meshWorld.meshes.length > 0) {
+    // Real map geometry (floors, walls, ramps)
+    resolveMeshCollisions(p, meshWorld, dt)
+  } else {
+    // Procedural range: infinite floor + cover AABBs
+    resolveCollisions(p, worldColliders, dt)
+  }
 
   // height / eye lerp — stand up faster when recovering from slide/crouch
   const th = targetHeight(p.state)

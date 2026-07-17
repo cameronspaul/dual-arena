@@ -1,6 +1,7 @@
 import { DUMMY, MOVE, WORLD } from '../core/config'
 import { aabbFromCenter, clamp, lenXZ, normalizeXZ } from '../core/math'
 import type { AABB, DummyMoveState, DummyTarget, Vec3 } from '../core/types'
+import type { MapDummyDef } from '../maps/catalog'
 
 export function buildWorldColliders(): AABB[] {
   return WORLD.coverBoxes.map((b) =>
@@ -12,13 +13,15 @@ function randRange(lo: number, hi: number) {
   return lo + Math.random() * (hi - lo)
 }
 
-function pickWanderPoint(home: Vec3): Vec3 {
+function pickWanderPoint(home: Vec3, bounds: number = DUMMY.bounds): Vec3 {
   const ang = Math.random() * Math.PI * 2
-  const r = Math.sqrt(Math.random()) * DUMMY.wanderRadius
-  const b = DUMMY.bounds
+  // Stay near home so mesh-map dummies don't wander off walkable pads
+  const maxR = Math.min(DUMMY.wanderRadius, Math.max(2.5, bounds * 0.35))
+  const r = Math.sqrt(Math.random()) * maxR
+  const b = bounds
   return {
     x: clamp(home.x + Math.cos(ang) * r, -b, b),
-    y: 0,
+    y: home.y,
     z: clamp(home.z + Math.sin(ang) * r, -b, b),
   }
 }
@@ -51,12 +54,21 @@ function speedForState(state: DummyMoveState): number {
   }
 }
 
-export function createDummies(): DummyTarget[] {
-  return WORLD.dummies.map((d, i) => {
-    const home = { x: d.x, y: 0, z: d.z }
+export type CreateDummiesOpts = {
+  defs?: MapDummyDef[]
+  /** Half-extent for wander clamp (defaults to DUMMY.bounds) */
+  bounds?: number
+}
+
+export function createDummies(opts: CreateDummiesOpts = {}): DummyTarget[] {
+  const defs = opts.defs ?? WORLD.dummies
+  const bounds = opts.bounds ?? DUMMY.bounds
+  return defs.map((d, i) => {
+    const y = 'y' in d && typeof d.y === 'number' ? d.y : 0
+    const home = { x: d.x, y, z: d.z }
     const dummy: DummyTarget = {
       id: d.id,
-      position: { x: d.x, y: 0, z: d.z },
+      position: { x: d.x, y, z: d.z },
       velocity: { x: 0, y: 0, z: 0 },
       hp: DUMMY.maxHp,
       maxHp: DUMMY.maxHp,
@@ -66,9 +78,10 @@ export function createDummies(): DummyTarget[] {
       home,
       stateTimer: stateDuration('idle') + i * 0.35,
       slideTimer: 0,
-      target: pickWanderPoint(home),
+      target: pickWanderPoint(home, bounds),
       // Stagger cycle so they aren't all in the same anim
       cycleIdx: i % DUMMY.stateCycle.length,
+      wanderBounds: bounds,
     }
     return dummy
   })
@@ -111,14 +124,14 @@ export function stepRespawns(
       d.alive = true
       d.hp = d.maxHp
       d.position.x = d.home.x
-      d.position.y = 0
+      d.position.y = d.home.y
       d.position.z = d.home.z
       d.velocity.x = 0
       d.velocity.z = 0
       d.state = 'idle'
       d.stateTimer = stateDuration('idle')
       d.slideTimer = 0
-      d.target = pickWanderPoint(d.home)
+      d.target = pickWanderPoint(d.home, d.wanderBounds)
     }
     timers.splice(i, 1)
   }
@@ -150,11 +163,13 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
       enterState(d, nextState(d))
     }
 
+    const bounds = d.wanderBounds ?? DUMMY.bounds
+
     // New wander point when close
     const dx = d.target.x - d.position.x
     const dz = d.target.z - d.position.z
     if (Math.hypot(dx, dz) < DUMMY.arriveDist) {
-      d.target = pickWanderPoint(d.home)
+      d.target = pickWanderPoint(d.home, bounds)
     }
 
     const sp = speedForState(d.state)
@@ -189,18 +204,27 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
 
     d.position.x += d.velocity.x * dt
     d.position.z += d.velocity.z * dt
+    // Keep feet on the home floor height (mesh maps)
+    d.position.y = d.home.y
 
-    // Soft bounds
-    const b = DUMMY.bounds
+    // Soft bounds around map + pull back toward home if too far
+    const b = bounds
     if (d.position.x < -b || d.position.x > b) {
       d.position.x = clamp(d.position.x, -b, b)
       d.velocity.x *= -1
-      d.target = pickWanderPoint(d.home)
+      d.target = pickWanderPoint(d.home, bounds)
     }
     if (d.position.z < -b || d.position.z > b) {
       d.position.z = clamp(d.position.z, -b, b)
       d.velocity.z *= -1
-      d.target = pickWanderPoint(d.home)
+      d.target = pickWanderPoint(d.home, bounds)
+    }
+    const fromHome = Math.hypot(
+      d.position.x - d.home.x,
+      d.position.z - d.home.z,
+    )
+    if (fromHome > Math.min(DUMMY.wanderRadius * 1.15, bounds * 0.5)) {
+      d.target = pickWanderPoint(d.home, bounds)
     }
 
     // Face velocity — man.glb faces +Z at yaw 0 (not player -Z convention)
@@ -240,7 +264,7 @@ function enterState(d: DummyTarget, state: DummyMoveState) {
     d.velocity.x = 0
     d.velocity.z = 0
   } else {
-    d.target = pickWanderPoint(d.home)
+    d.target = pickWanderPoint(d.home, d.wanderBounds)
   }
 }
 

@@ -175,6 +175,38 @@ export function playDummyHit(root: THREE.Group) {
   pick.reset().setEffectiveWeight(1).fadeIn(0.05).play()
 }
 
+/**
+ * Orient + nudge the dummy so the single Death clip falls along the shot.
+ *
+ * man.glb faces local +Z at yaw 0; Death falls backward (local −Z). Facing
+ * the shooter makes the body flop away from impact along the bullet XZ dir.
+ */
+export function alignDummyDeathToShot(
+  root: THREE.Group,
+  shotDir: { x: number; y: number; z: number },
+  opts: { alignYaw: boolean; knockback: number },
+) {
+  const hx = shotDir.x
+  const hz = shotDir.z
+  const hLen = Math.hypot(hx, hz)
+  if (hLen < 0.05) return
+
+  const nx = hx / hLen
+  const nz = hz / hLen
+
+  if (opts.alignYaw) {
+    // Face shooter: local +Z = −shot, so local −Z (fall) = +shot.
+    root.rotation.y = Math.atan2(-nx, -nz)
+  }
+
+  if (opts.knockback > 0) {
+    root.position.x += nx * opts.knockback
+    root.position.z += nz * opts.knockback
+  }
+
+  root.userData.deathShotDir = { x: nx, y: 0, z: nz }
+}
+
 export function playDummyDeath(root: THREE.Group) {
   const actions = getDummyActions(root)
   if (!actions?.death) {

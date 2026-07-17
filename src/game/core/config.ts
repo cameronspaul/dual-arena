@@ -459,6 +459,13 @@ export const DUMMY = {
   crouchScaleY: 0.78,
   /** Label height above feet */
   labelY: 2.05,
+  /**
+   * On kill: re-yaw so man.glb Death (falls backward in local -Z) lands
+   * along the bullet. Set false to keep pre-death facing.
+   */
+  deathAlignToShot: true,
+  /** Horizontal meters the corpse is pushed along the shot on kill. */
+  deathKnockback: 0.45,
 } as const
 
 /** Dev / tuning overlays */

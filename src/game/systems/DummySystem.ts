@@ -9,6 +9,7 @@ import {
   attachDummyLabel,
   fadeDummyLoco,
   getDummyActions,
+  alignDummyDeathToShot,
   playDummyDeath,
   playDummyHit,
   playDummyIdle,
@@ -305,6 +306,25 @@ export class DummySystem {
   onHit(ownerId: string) {
     const root = this.meshes.get(ownerId)
     if (root) playDummyHit(root)
+  }
+
+  /**
+   * Kill reaction: optional re-yaw / knockback from shot direction, then Death.
+   * `shotDir` is world-space bullet direction (origin → impact).
+   *
+   * Call `alignDeath` first if you need a kill ghost of the live pose under
+   * the new root orientation before the Death clip begins.
+   */
+  alignDeath(
+    ownerId: string,
+    shotDir: { x: number; y: number; z: number },
+  ) {
+    const root = this.meshes.get(ownerId)
+    if (!root) return
+    alignDummyDeathToShot(root, shotDir, {
+      alignYaw: DUMMY.deathAlignToShot,
+      knockback: DUMMY.deathKnockback,
+    })
   }
 
   onDeath(ownerId: string) {

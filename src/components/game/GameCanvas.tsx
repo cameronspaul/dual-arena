@@ -1,13 +1,19 @@
 import { useEffect, useRef } from 'react'
-import { GameEngine, type HudListener } from '@/game/engine'
+import {
+  GameEngine,
+  type HudListener,
+  type GameEngineOptions,
+} from '@/game/engine'
+import type { MapId } from '@/game/maps'
 
 interface GameCanvasProps {
   onHud: HudListener
   /** Called once the engine is constructed (and again with null on dispose). */
   onEngine?: (engine: GameEngine | null) => void
+  mapId?: MapId | string
 }
 
-export function GameCanvas({ onHud, onEngine }: GameCanvasProps) {
+export function GameCanvas({ onHud, onEngine, mapId }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const onHudRef = useRef(onHud)
@@ -19,7 +25,8 @@ export function GameCanvas({ onHud, onEngine }: GameCanvasProps) {
     const el = containerRef.current
     if (!el) return
 
-    const engine = new GameEngine(el)
+    const opts: GameEngineOptions = { mapId }
+    const engine = new GameEngine(el, opts)
     engineRef.current = engine
     onEngineRef.current?.(engine)
     const unsub = engine.onHud((snap) => onHudRef.current(snap))
@@ -31,7 +38,7 @@ export function GameCanvas({ onHud, onEngine }: GameCanvasProps) {
       engineRef.current = null
       onEngineRef.current?.(null)
     }
-  }, [])
+  }, [mapId])
 
   return (
     <div

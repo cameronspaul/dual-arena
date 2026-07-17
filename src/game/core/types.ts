@@ -105,6 +105,8 @@ export interface DummyTarget {
   target: Vec3
   /** Index into DUMMY.stateCycle for demo sequencing */
   cycleIdx: number
+  /** Map-specific wander half-extent (defaults to DUMMY.bounds) */
+  wanderBounds?: number
 }
 
 export type SniperPhase = 'ready' | 'firing' | 'bolt' | 'reloading'

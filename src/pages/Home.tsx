@@ -96,7 +96,7 @@ function Home() {
               onClick={() => gameAudio.uiConfirm()}
                 >
               <Target className="h-5 w-5" />
-              Enter Range
+              Play
             </Link>
           </Button>
           <Button

@@ -1,2 +1,6 @@
 /** Public entry — re-exports the orchestrator. */
-export { GameEngine, type HudListener } from './engine/GameEngine'
+export {
+  GameEngine,
+  type HudListener,
+  type GameEngineOptions,
+} from './engine/GameEngine'

@@ -9,7 +9,9 @@ import type {
   DummyTarget,
   HitEvent,
   PlayerBody,
+  RayHit,
   SniperState,
+  Vec3,
 } from '../core/types'
 import { damageForZone } from '../character/hitMeshes'
 import { castHitscan } from '../sim/hitscan'
@@ -36,6 +38,12 @@ export function fireShot(opts: {
   respawns: RespawnTimer[]
   dummiesSys: DummySystem
   fx: CombatFx
+  /** Optional map mesh raycast (GLB geometry) — more accurate than AABB alone */
+  castWorldMesh?: (
+    origin: Vec3,
+    dir: Vec3,
+    maxRange: number,
+  ) => RayHit | null
 }): FireResult {
   const {
     player,
@@ -45,6 +53,7 @@ export function fireShot(opts: {
     respawns,
     dummiesSys,
     fx,
+    castWorldMesh,
   } = opts
 
   const look = effectiveLook(player, sniper)
@@ -52,7 +61,15 @@ export function fireShot(opts: {
   const spread = aimSpread(sniper, player)
   const dir = spreadLookDirection(look.yaw, look.pitch, spread)
 
-  const worldHit = castHitscan(origin, dir, [], colliders)
+  const aabbHit = castHitscan(origin, dir, [], colliders)
+  const meshWorld = castWorldMesh?.(origin, dir, SNIPER.maxRange) ?? null
+  // Prefer the closer of mesh vs AABB world hits
+  let worldHit = aabbHit
+  if (meshWorld) {
+    if (!worldHit || meshWorld.distance < worldHit.distance) {
+      worldHit = meshWorld
+    }
+  }
   const range = worldHit?.distance ?? SNIPER.maxRange
   const meshHit = dummiesSys.castHitscan(dummies, origin, dir, range)
   const hit = meshHit ?? worldHit
@@ -88,7 +105,10 @@ export function fireShot(opts: {
     gameAudio.playHitConfirm({ zone, killed: result.killed })
     if (result.killed) {
       killsDelta = 1
-      // Freeze silhouette from the live pose, then play death on the real dummy.
+      // 1) Face / nudge along the bullet so Death falls away from the shot.
+      // 2) Freeze a red ghost of the live pose under that root.
+      // 3) Play the Death clip on the real dummy.
+      dummiesSys.alignDeath(ownerId, dir)
       const victim = dummiesSys.meshes.get(ownerId)
       if (victim) fx.spawnKillGhost(victim)
       dummiesSys.onDeath(ownerId)

@@ -7,9 +7,14 @@ import { LOOK } from '../core/config'
 import { InputManager } from '../core/input'
 import type { HitEvent, HudSnapshot, SniperState } from '../core/types'
 import {
-  buildRange as buildRangeScene,
-  loadEnvironmentTextures,
-} from '../scene/environment'
+  buildProceduralRange,
+  castMapHitscan,
+  getMap,
+  loadEnvForMap,
+  loadGltfMap,
+  type MapDef,
+  type MapId,
+} from '../maps'
 import { createPlayer, stepPlayer } from '../sim/player'
 import {
   aimSpread,
@@ -19,7 +24,6 @@ import {
   tryFire,
 } from '../sim/sniper'
 import {
-  buildWorldColliders,
   createDummies,
   stepDummies,
   stepRespawns,
@@ -35,6 +39,10 @@ import type { ViewmodelConfig } from '../viewmodel/config'
 
 export type HudListener = (hud: HudSnapshot) => void
 
+export type GameEngineOptions = {
+  mapId?: MapId | string
+}
+
 export class GameEngine {
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
@@ -42,7 +50,7 @@ export class GameEngine {
   private input = new InputManager()
   private player = createPlayer()
   private sniper = createSniper()
-  private colliders = buildWorldColliders()
+  private colliders: import('../core/types').AABB[] = []
   private dummies = createDummies()
   private respawns: RespawnTimer[] = []
   private running = false
@@ -70,15 +78,33 @@ export class GameEngine {
   private dummiesPaused = false
   private prevSniperPhase: SniperState['phase'] = 'ready'
 
-  constructor(container: HTMLElement) {
+  private mapDef: MapDef
+  private mapHitMeshes: THREE.Object3D[] = []
+  /** Live triangle collision for GLB maps (null on procedural range). */
+  private meshWorld: { meshes: THREE.Object3D[] } | null = null
+  private mapReady = false
+  private mapLoadError: string | null = null
+
+  constructor(container: HTMLElement, opts: GameEngineOptions = {}) {
     this.container = container
+    this.mapDef = getMap(opts.mapId)
+
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(0x87a0b8)
-    this.scene.fog = new THREE.Fog(0xa8c4e0, 45, 100)
+    this.scene.background = new THREE.Color(this.mapDef.bgColor)
+    this.scene.fog = new THREE.Fog(
+      this.mapDef.fogColor,
+      this.mapDef.fogNear,
+      this.mapDef.fogFar,
+    )
 
     const w = container.clientWidth || window.innerWidth
     const h = container.clientHeight || window.innerHeight
-    this.camera = new THREE.PerspectiveCamera(LOOK.hipFov, w / h, 0.05, 200)
+    this.camera = new THREE.PerspectiveCamera(
+      LOOK.hipFov,
+      w / h,
+      0.05,
+      this.mapDef.cameraFar,
+    )
     this.camera.rotation.order = 'YXZ'
 
     this.renderer = new THREE.WebGLRenderer({
@@ -93,20 +119,123 @@ export class GameEngine {
     this.renderer.domElement.classList.add('touch-none', 'outline-none')
     this.renderer.domElement.tabIndex = 0
 
-    this.buildRange()
+    // Temporary spawn — GLB maps re-place the player after real bounds are known.
+    this.player = createPlayer(this.mapDef.spawn)
+    this.player.yaw = this.mapDef.spawnYaw
+    this.input.setLook(this.mapDef.spawnYaw, 0)
+
+    this.dummies = createDummies({
+      defs: this.mapDef.dummies,
+      bounds: this.mapDef.dummyBounds,
+    })
+
     this.combatFx.build(this.scene)
     this.playerVisuals.buildPlaceholder(this.scene)
-    void this.loadEnvironment()
+    void this.bootstrapMap()
     void this.viewmodel.load(this.camera, this.scene)
-    void this.dummiesSys.load(
-      this.scene,
-      this.dummies,
-      this.playerVisuals,
-      this.thirdPerson,
-    )
     this.input.attach(this.renderer.domElement)
 
     window.addEventListener('resize', this.onResize)
+  }
+
+  private applySpawn(
+    spawn: { x: number; y: number; z: number },
+    spawnYaw: number,
+  ) {
+    this.player.position.x = spawn.x
+    // Engine ground plane is y=0; keep feet on/above it. Mesh floors near 0
+    // are preferred by the placer — raised Y still helps until gravity settles.
+    this.player.position.y = Math.max(0, spawn.y)
+    this.player.position.z = spawn.z
+    this.player.velocity.x = 0
+    this.player.velocity.y = 0
+    this.player.velocity.z = 0
+    this.player.yaw = spawnYaw
+    this.player.pitch = 0
+    this.player.grounded = true
+    this.input.setLook(spawnYaw, 0)
+  }
+
+  private async bootstrapMap() {
+    try {
+      if (this.mapDef.kind === 'range') {
+        const built = buildProceduralRange(this.scene)
+        this.colliders = built.colliders
+        this.floorMat = built.floorMat
+        this.coverMat = built.coverMat
+        this.mapHitMeshes = built.hitMeshes
+        this.meshWorld = null
+        this.applySpawn(built.spawn, built.spawnYaw)
+        this.dummies = createDummies({
+          defs: built.dummies,
+          bounds: built.dummyBounds,
+        })
+        const textures = await loadEnvForMap(
+          this.mapDef,
+          this.scene,
+          this.renderer,
+          this.floorMat,
+          this.coverMat,
+        )
+        this.envTextures.push(...textures)
+      } else {
+        const built = await loadGltfMap(this.scene, this.mapDef)
+        this.colliders = built.colliders
+        this.mapHitMeshes = built.hitMeshes
+        // Walk / bullets use real triangle geometry
+        this.meshWorld =
+          built.hitMeshes.length > 0 ? { meshes: built.hitMeshes } : null
+        // Place from fitted bounds (catalog coords alone are wrong for most GLBs)
+        this.applySpawn(built.spawn, built.spawnYaw)
+        this.dummies = createDummies({
+          defs: built.dummies,
+          bounds: built.dummyBounds,
+        })
+        if (built.bounds) {
+          const span = Math.hypot(built.bounds.size.x, built.bounds.size.z)
+          this.camera.far = Math.max(this.mapDef.cameraFar, span * 1.2 + 40)
+          this.camera.updateProjectionMatrix()
+        }
+        console.info(
+          `[map] ${this.mapDef.id} fitted`,
+          built.bounds,
+          'spawn',
+          built.spawn,
+          'collisionMeshes',
+          built.hitMeshes.length,
+        )
+      }
+      this.mapReady = true
+      void this.dummiesSys.load(
+        this.scene,
+        this.dummies,
+        this.playerVisuals,
+        this.thirdPerson,
+      )
+    } catch (e) {
+      console.error('Map load failed', e)
+      this.mapLoadError =
+        e instanceof Error ? e.message : 'Failed to load map'
+      // Floor plane still works at y=0 with no cover colliders
+      this.colliders = []
+      this.mapReady = true
+    }
+  }
+
+  getMapId(): MapId {
+    return this.mapDef.id
+  }
+
+  getMapName(): string {
+    return this.mapDef.name
+  }
+
+  isMapReady() {
+    return this.mapReady
+  }
+
+  getMapLoadError() {
+    return this.mapLoadError
   }
 
   onHud(fn: HudListener) {
@@ -257,23 +386,6 @@ export class GameEngine {
     this.renderer.setSize(w, h)
   }
 
-  private buildRange() {
-    const built = buildRangeScene(this.scene, this.colliders)
-    this.floorMat = built.floorMat
-    this.coverMat = built.coverMat
-    this.colliders.push(...built.extraColliders)
-  }
-
-  private async loadEnvironment() {
-    const textures = await loadEnvironmentTextures({
-      scene: this.scene,
-      renderer: this.renderer,
-      floorMat: this.floorMat,
-      coverMat: this.coverMat,
-    })
-    this.envTextures.push(...textures)
-  }
-
   private loop = () => {
     if (!this.running) return
     this.raf = requestAnimationFrame(this.loop)
@@ -292,7 +404,7 @@ export class GameEngine {
 
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
-    stepPlayer(this.player, input, dt, this.colliders)
+    stepPlayer(this.player, input, dt, this.colliders, this.meshWorld)
     stepSniper(this.sniper, input, dt)
     if (!this.dummiesPaused) {
       stepDummies(this.dummies, dt)
@@ -320,6 +432,8 @@ export class GameEngine {
         respawns: this.respawns,
         dummiesSys: this.dummiesSys,
         fx: this.combatFx,
+        castWorldMesh: (origin, dir, maxRange) =>
+          castMapHitscan(this.mapHitMeshes, origin, dir, maxRange),
       })
       if (result.lastHit) {
         this.lastHit = result.lastHit

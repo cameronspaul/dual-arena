@@ -291,7 +291,7 @@ export class GameAudio {
   }
 
   /** Body / head / kill confirmation stack. */
-  playHitConfirm(opts: { zone: string; killed: boolean }) {
+  playHitConfirm(_opts: { zone: string; killed: boolean }) {
     const rate = 0.94 + Math.random() * 0.12
     this.play('hitBody', { rate })
   }
