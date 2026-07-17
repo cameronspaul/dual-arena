@@ -296,76 +296,96 @@ body {
 }
 
 /*
- * Hit confirm chip: punch out from reticle pivot, drift down-right, fade.
+ * Hit confirm chip: punch out from reticle pivot to top-right, fade.
  * Remount via React key only — HUD ticks must not restart this.
- * Duration ≤ HITMARKER_DURATION (1.05s).
+ * Duration matches HITMARKER_DURATION (1.05s) — same hold then fade as X.
  */
 @keyframes hit-confirm-chip {
   0% {
     opacity: 0;
-    transform: translate(2px, 4px) scale(0.42);
+    transform: translate(2px, -2px) scale(0.42);
   }
-  10% {
+  8% {
     opacity: 1;
-    transform: translate(22px, 16px) scale(1.14);
+    transform: translate(22px, -14px) scale(1.14);
   }
-  18% {
+  14% {
     opacity: 1;
-    transform: translate(26px, 18px) scale(0.98);
+    transform: translate(26px, -16px) scale(0.98);
   }
-  28% {
+  20% {
     opacity: 1;
-    transform: translate(28px, 18px) scale(1);
+    transform: translate(28px, -16px) scale(1);
   }
-  62% {
+  85% {
     opacity: 1;
-    transform: translate(34px, 12px) scale(1);
+    transform: translate(36px, -20px) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(44px, -4px) scale(0.9);
+    transform: translate(44px, -28px) scale(0.9);
   }
 }
 
-/* Head / kill — farther throw + harder punch */
+/* Head — farther throw + harder punch; same total duration */
 @keyframes hit-confirm-chip-hard {
   0% {
     opacity: 0;
-    transform: translate(2px, 4px) scale(0.35);
+    transform: translate(2px, -2px) scale(0.35);
   }
-  9% {
+  7% {
     opacity: 1;
-    transform: translate(26px, 18px) scale(1.22);
+    transform: translate(26px, -16px) scale(1.22);
   }
-  17% {
+  13% {
     opacity: 1;
-    transform: translate(30px, 20px) scale(0.97);
+    transform: translate(30px, -18px) scale(0.97);
   }
-  26% {
+  18% {
     opacity: 1;
-    transform: translate(32px, 20px) scale(1);
+    transform: translate(32px, -18px) scale(1);
   }
-  60% {
+  85% {
     opacity: 1;
-    transform: translate(40px, 10px) scale(1);
+    transform: translate(42px, -24px) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(52px, -8px) scale(0.88);
+    transform: translate(52px, -34px) scale(0.88);
   }
 }
 
 .hit-confirm-chip {
-  animation: hit-confirm-chip 0.78s cubic-bezier(0.2, 0.85, 0.25, 1) forwards;
-  transform-origin: left center;
+  animation: hit-confirm-chip 1.05s cubic-bezier(0.2, 0.85, 0.25, 1) forwards;
+  transform-origin: left bottom;
   will-change: transform, opacity;
 }
 
 .hit-confirm-chip-hard {
-  animation: hit-confirm-chip-hard 0.88s cubic-bezier(0.18, 0.88, 0.22, 1)
+  animation: hit-confirm-chip-hard 1.05s cubic-bezier(0.18, 0.88, 0.22, 1)
     forwards;
-  transform-origin: left center;
+  transform-origin: left bottom;
   will-change: transform, opacity;
+}
+
+/*
+ * Reload cue — soft mount in. Class animation only; remount via React key
+ * (HUD ticks must not restart).
+ */
+@keyframes reload-sticker-in {
+  0% {
+    opacity: 0;
+    transform: translate(2px, 3px) scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+.reload-sticker-in {
+  animation: reload-sticker-in 0.16s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+  transform-origin: top left;
 }
 
 

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
+import { SNIPER } from '@/game/core/config'
 import { ScopeOverlay } from './ScopeOverlay'
 import {
   formatKeyCode,
@@ -60,7 +61,7 @@ function hitZoneLabel(hit: HitEvent): string {
 }
 
 /**
- * Combat hit confirm — bare damage + zone text punches out from the reticle.
+ * Combat hit confirm — bare damage + zone text punches out top-right of reticle.
  * Lifecycle is CSS-class only (remount via key) so HUD ticks don't pulse it.
  */
 function HitConfirm({ hit }: { hit: HitEvent }) {
@@ -384,6 +385,38 @@ function ChromeBtn({
   )
 }
 
+/**
+ * Reload cue — ammo sticker + progress bar, bottom-right of the reticle.
+ * No panel/text — just icon + bar side by side (sticker language, bare).
+ */
+function ReloadReticleHint({ progress }: { progress: number }) {
+  const p = Math.max(0, Math.min(1, progress))
+  const almostDone = p >= 0.92
+
+  return (
+    <div
+      className="reload-sticker-in pointer-events-none absolute top-6 left-6 flex items-center gap-1.5"
+      aria-hidden
+    >
+      <img
+        src={icons.ammo}
+        alt=""
+        draggable={false}
+        className="size-4 object-contain select-none drop-shadow-[0_1px_0_rgba(0,0,0,0.55)]"
+      />
+      <div className="h-2 w-12 overflow-hidden rounded-full border-[2px] border-arena-ink bg-black/50 shadow-[1px_2px_0_var(--arena-ink)]">
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${p * 100}%`,
+            background: almostDone ? 'var(--arena-ok)' : 'var(--arena-heat)',
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export function GameHud({
   hud,
   onOpenSettings,
@@ -430,6 +463,13 @@ export function GameHud({
   const inRoundReset = hud.matchPhase === 'round_reset'
   const countdownN = Math.max(0, Math.ceil(hud.matchPhaseTimer))
   const firstTo = hud.matchFirstTo || 7
+  const reloading = hud.phase === 'reloading' && !hud.spectating
+  const reloadProgress = reloading
+    ? Math.max(
+        0,
+        Math.min(1, 1 - hud.phaseTimer / Math.max(0.001, SNIPER.reloadTime)),
+      )
+    : 0
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
@@ -829,12 +869,32 @@ export function GameHud({
         </div>
 
         {/*
-          Hit confirm — combat chip arcs off the reticle (not a static caption).
+          Hit confirm — combat chip arcs top-right of the reticle.
           Remount key restarts CSS lifecycle once per hit id.
         */}
         {showHit && hit && (
           <HitConfirm key={`confirm-${hud.lastHitId}`} hit={hit} />
         )}
+
+        {/*
+          Reload — ammo icon + bar, bottom-right of reticle (hip + scoped).
+          CSS enter only; remount once per reload so progress ticks
+          don't restart keyframes.
+        */}
+        <AnimatePresence>
+          {reloading && (
+            <motion.div
+              key="reload-hint"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, scale: 0.85, y: 4 }}
+              transition={{ duration: 0.12 }}
+              className="pointer-events-none absolute top-0 left-0"
+            >
+              <ReloadReticleHint progress={reloadProgress} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Bottom chrome — health left, mag bullets right */}
@@ -877,7 +937,7 @@ export function GameHud({
           </div>
         </HudPanel>
 
-        {/* Mag — bullet icons only */}
+        {/* Mag — bullet icons + infinite reserve (reloads always refill) */}
         <HudPanel
           className={cn(
             'px-3.5 py-2.5',
@@ -885,26 +945,41 @@ export function GameHud({
           )}
           accent={lowAmmo || emptyMag ? 'danger' : 'none'}
         >
-          <div className="flex items-center gap-1">
-            {Array.from({ length: hud.magSize }).map((_, i) => {
-              // Fill from the right so remaining rounds read left→right
-              const filled = i >= hud.magSize - hud.ammo
-              return (
-                <GameIcon
-                  key={i}
-                  src={icons.ammo}
-                  className={cn(
-                    'size-8 transition-all duration-150',
-                    filled
-                      ? lowAmmo
-                        ? 'opacity-100 drop-shadow-[0_0_6px_var(--arena-heat)]'
-                        : 'opacity-100'
-                      : 'scale-90 opacity-20 grayscale',
-                    emptyMag && 'opacity-25 grayscale',
-                  )}
-                />
-              )
-            })}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1" title="Magazine">
+              {Array.from({ length: hud.magSize }).map((_, i) => {
+                // Fill from the right so remaining rounds read left→right
+                const filled = i >= hud.magSize - hud.ammo
+                return (
+                  <GameIcon
+                    key={i}
+                    src={icons.ammo}
+                    className={cn(
+                      'size-8 transition-all duration-150',
+                      filled
+                        ? lowAmmo
+                          ? 'opacity-100 drop-shadow-[0_0_6px_var(--arena-heat)]'
+                          : 'opacity-100'
+                        : 'scale-90 opacity-20 grayscale',
+                      emptyMag && 'opacity-25 grayscale',
+                    )}
+                  />
+                )
+              })}
+            </div>
+            <span
+              className="select-none text-lg font-black leading-none text-white/35"
+              aria-hidden
+            >
+              /
+            </span>
+            <span
+              className="select-none text-2xl font-black leading-none tracking-tight text-white drop-shadow-[0_2px_0_var(--arena-ink)]"
+              title="Infinite reserve ammo"
+              aria-label="Infinite reserve ammo"
+            >
+              ∞
+            </span>
           </div>
         </HudPanel>
       </div>

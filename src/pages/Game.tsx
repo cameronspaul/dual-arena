@@ -32,6 +32,8 @@ function hudKey(s: HudSnapshot): string {
   return [
     s.ammo,
     s.phase,
+    // Reload line progress (~20 ticks over full mag change)
+    Math.round(s.phaseTimer * 10),
     s.ads ? 1 : 0,
     Math.round(s.adsBlend * 10),
     // Scoped reload reticle jiggle (~px-level updates while mag changing)

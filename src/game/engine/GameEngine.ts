@@ -1988,6 +1988,7 @@ export class GameEngine {
       ammo: this.sniper.ammo,
       magSize: this.sniper.magSize,
       phase: this.sniper.phase,
+      phaseTimer: this.sniper.phaseTimer,
       ads: this.playerAlive && !freecam ? this.sniper.ads : false,
       adsBlend: this.playerAlive && !freecam ? this.sniper.adsBlend : 0,
       reloadJiggleX: this.sniper.reloadJiggleX,
