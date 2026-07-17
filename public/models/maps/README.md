@@ -111,7 +111,7 @@ In-game (top-right, when `DEBUG.showPerf` is true — default on):
 If a map has **no** `COL_` / `collision` / `UCX_` meshes, the loader still uses visuals for collision, but **walk probes** drop tiny decorative props (bullets keep the fuller set). Console:
 
 ```
-[map] tdm-location walk colliders 180/427 (visual set filtered for CPU)
+[map] desert walk colliders 180/427 (visual set filtered for CPU)
 ```
 
 Authoring a real low-poly `COL_` hull is still the best fix for high-refresh targets.

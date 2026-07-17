@@ -10,7 +10,6 @@ export type MapId =
   | 'arena-v3'
   | 'arena-v4'
   | 'tdm'
-  | 'tdm-location'
 
 export interface MapDummyDef {
   id: string
@@ -211,31 +210,6 @@ export const MAPS: Record<MapId, MapDef> = {
     loadEnvTextures: false,
     fallDeath: true,
   },
-  'tdm-location': {
-    id: 'tdm-location',
-    name: 'TDM Location',
-    blurb: 'Low-poly TDM location map — open lanes with natural props and cover.',
-    tags: ['mid range', 'tdm'],
-    kind: 'gltf',
-    url: '/models/maps/lowpoly__location__map__tdm.glb',
-    // Authored ~cm/mixed units with km-scale backdrop shells; robust fit
-    // centers the real ~60×400 m lane pad. Shrink for tighter feel.
-    scale: 0.5,
-    rotateY: 0,
-    offset: { x: 0, y: 0, z: 0 },
-    // Solo fallback ≈ blue-0 (team pads in authoredSpawns.ts)
-    spawn: { x: -5.921, y: 0.167, z: -4.872 },
-    spawnYaw: 6.0168,
-    dummies: arenaDummies(12),
-    dummyBounds: 40,
-    cameraFar: 280,
-    fogNear: 40,
-    fogFar: 200,
-    fogColor: 0x8a9a8a,
-    bgColor: 0x6a7a6a,
-    loadEnvTextures: false,
-    fallDeath: true,
-  },
 }
 
 export const MAP_LIST: MapDef[] = [
@@ -244,7 +218,6 @@ export const MAP_LIST: MapDef[] = [
   MAPS['arena-v3'],
   MAPS['arena-v4'],
   MAPS.tdm,
-  MAPS['tdm-location'],
 ]
 
 export const DEFAULT_MAP_ID: MapId = 'range'

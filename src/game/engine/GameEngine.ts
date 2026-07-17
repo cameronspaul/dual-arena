@@ -751,7 +751,7 @@ export class GameEngine {
   }
 
   clearAllBarriers() {
-    // Drop browser override so baked authored walls (e.g. tdm-location) return
+    // Drop browser override so baked authored walls return
     clearBarrierLayout(this.mapDef.id)
     this.barrierLayout = authoredBarrierLayout(this.mapDef.id)
     this.lastPlacedBarrierId = null

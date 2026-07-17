@@ -129,8 +129,8 @@ export async function loadGltfMap(
   root.updateMatrixWorld(true)
 
   // Fit using *robust* bounds so giant Sketchfab shells / far debris
-  // (e.g. TDM Location's km-scale wrappers) don't yank the playable pad
-  // into empty space — that was spawning the player with no floor underfoot.
+  // don't yank the playable pad into empty space — that was spawning
+  // the player with no floor underfoot.
   const preBox = robustMeshBounds(root)
   const preCenter = new THREE.Vector3()
   preBox.getCenter(preCenter)
@@ -736,7 +736,7 @@ function clamp(v: number, lo: number, hi: number) {
 /**
  * Soft-cap shadow casters on dense marketplace GLBs.
  * Every mesh casting into a soft shadow map was the dominant GPU cost
- * on maps like tdm-location (~400+ casters).
+ * on high-prop maps (~400+ casters).
  */
 function configureMapMeshShadows(root: THREE.Object3D): {
   meshCount: number

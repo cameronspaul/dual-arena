@@ -125,7 +125,7 @@ function normalizeBarriers(raw: unknown[] | undefined): BarrierWall[] | null {
 /**
  * Load barriers for a map.
  * - Browser editor save for this map wins when present.
- * - Otherwise use baked authored barriers (e.g. tdm-location edges).
+ * - Otherwise use baked authored barriers for the map.
  */
 export function loadBarrierLayout(mapId: string): MapBarrierLayout {
   if (typeof window !== 'undefined') {
