@@ -14,6 +14,7 @@ import type { SkyboxId } from '../scene/skyboxes'
 import type { MapDef, MapDummyDef } from './catalog'
 import {
   castMeshWorldHitscan,
+  filterWalkCollisionMeshes,
   prepareCollisionMeshes,
 } from './meshCollision'
 
@@ -32,6 +33,11 @@ export type MapLoadResult = {
   envTextures: THREE.Texture[]
   /** Meshes used for accurate bullet hitscan (GLB maps). */
   hitMeshes: THREE.Object3D[]
+  /**
+   * Cheaper subset for player walk probes (filtered visuals or COL_ hull).
+   * Same as hitMeshes when the set is already small / dedicated.
+   */
+  walkMeshes: THREE.Object3D[]
   /** World-space spawn after fit (feet on floor). */
   spawn: Vec3
   spawnYaw: number
@@ -63,6 +69,7 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
     coverMat: built.coverMat,
     envTextures: [],
     hitMeshes: [],
+    walkMeshes: [],
     spawn: { x: 0, y: 0, z: 8 },
     spawnYaw: 0,
     dummies: WORLD.dummies.map((d) => ({
@@ -133,13 +140,6 @@ export async function loadGltfMap(
   root.position.z += -preCenter.z + map.offset.z
   root.updateMatrixWorld(true)
 
-  // Visual setup
-  root.traverse((obj) => {
-    if (!(obj instanceof THREE.Mesh)) return
-    obj.castShadow = true
-    obj.receiveShadow = true
-  })
-
   scene.add(root)
   root.updateMatrixWorld(true)
 
@@ -153,10 +153,16 @@ export async function loadGltfMap(
 
   // Drop absurd wrapper shells from collision (keeps bullets/walk sane)
   hitMeshes = filterPlayableCollisionMeshes(hitMeshes, playBox)
+  // Walk probes are ~50 rays/frame — strip decorative props when no COL_ hull
+  const walkMeshes = filterWalkCollisionMeshes(hitMeshes)
+
+  // Shadows: only a capped set of large solids cast (full cast on every mesh
+  // was the main GPU cost on dense marketplace maps).
+  const shadowStats = configureMapMeshShadows(root)
 
   const colliders = extractColliders(root, map, bounds)
 
-  addMapLights(scene, map, bounds)
+  addMapLights(scene, map, bounds, shadowStats.meshCount)
 
   scene.background = new THREE.Color(map.bgColor)
   // Fog scales with map size so small arenas aren't fogged out
@@ -172,11 +178,22 @@ export async function loadGltfMap(
     Math.min(map.dummyBounds, Math.min(size.x, size.z) * 0.42),
   )
 
+  // Spawn/floor sampling uses the fuller hit set — walk filter can drop large
+  // flat floors (receive-only) and shove pads into bad Y / open air.
   const { spawn, spawnYaw, dummies } = placeActors(
     map,
-    hitMeshes,
+    hitMeshes.length > 0 ? hitMeshes : walkMeshes,
     bounds,
     dummyBounds,
+  )
+
+  if (walkMeshes.length !== hitMeshes.length) {
+    console.info(
+      `[map] ${map.id} walk colliders ${walkMeshes.length}/${hitMeshes.length} (visual set filtered for CPU)`,
+    )
+  }
+  console.info(
+    `[map] ${map.id} shadows: ${shadowStats.casters} casters / ${shadowStats.receivers} receivers / ${shadowStats.meshCount} meshes`,
   )
 
   return {
@@ -186,6 +203,7 @@ export async function loadGltfMap(
     coverMat: null,
     envTextures: [],
     hitMeshes,
+    walkMeshes,
     spawn,
     spawnYaw,
     dummies,
@@ -715,24 +733,119 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v))
 }
 
-function addMapLights(scene: THREE.Scene, _map: MapDef, bounds: MapBounds) {
+/**
+ * Soft-cap shadow casters on dense marketplace GLBs.
+ * Every mesh casting into a soft shadow map was the dominant GPU cost
+ * on maps like tdm-location (~400+ casters).
+ */
+function configureMapMeshShadows(root: THREE.Object3D): {
+  meshCount: number
+  casters: number
+  receivers: number
+} {
+  const tmp = new THREE.Box3()
+  const size = new THREE.Vector3()
+  type Cand = { mesh: THREE.Mesh; score: number; floorOnly: boolean }
+  const cands: Cand[] = []
+  let meshCount = 0
+
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || !obj.geometry) return
+    meshCount++
+    // Default off — we opt a shortlist back on
+    obj.castShadow = false
+    obj.receiveShadow = false
+    obj.frustumCulled = true
+
+    tmp.setFromObject(obj)
+    if (tmp.isEmpty()) return
+    tmp.getSize(size)
+    const sx = size.x
+    const sy = size.y
+    const sz = size.z
+    if (!Number.isFinite(sx + sy + sz) || sx + sy + sz < 1e-4) return
+
+    const foot = Math.max(sx, sz)
+    const maxDim = Math.max(sx, sy, sz)
+    // Large flat slabs: receive only (ground), never cast (huge shadow cost)
+    const floorOnly = sy < 0.35 && foot > 4
+    // Skip dust / pebbles entirely
+    if (maxDim < 0.2) return
+
+    // Prefer tall cover / walls / buildings for casting
+    const score = foot * Math.max(sy, 0.15) * (floorOnly ? 0.15 : 1)
+    cands.push({ mesh: obj, score, floorOnly })
+  })
+
+  cands.sort((a, b) => b.score - a.score)
+
+  const maxCasters =
+    meshCount > 300 ? 40 : meshCount > 150 ? 56 : meshCount > 80 ? 72 : 96
+  const maxReceivers =
+    meshCount > 300 ? 160 : meshCount > 150 ? 220 : meshCount > 80 ? 280 : 400
+
+  let casters = 0
+  let receivers = 0
+  for (const c of cands) {
+    if (receivers < maxReceivers) {
+      c.mesh.receiveShadow = true
+      receivers++
+    }
+    if (!c.floorOnly && casters < maxCasters) {
+      c.mesh.castShadow = true
+      casters++
+    }
+  }
+
+  for (const c of cands) {
+    if (c.floorOnly) {
+      c.mesh.receiveShadow = true
+      c.mesh.castShadow = false
+    }
+  }
+
+  return { meshCount, casters, receivers }
+}
+
+function addMapLights(
+  scene: THREE.Scene,
+  _map: MapDef,
+  bounds: MapBounds,
+  meshCount = 0,
+) {
   const hemi = new THREE.HemisphereLight(0xddeeff, 0x3a3028, 0.9)
   hemi.name = 'map-hemi'
   scene.add(hemi)
 
   const sun = new THREE.DirectionalLight(0xfff2dd, 1.2)
   sun.name = 'map-sun'
-  const ext = Math.max(bounds.size.x, bounds.size.z, 40) * 0.6
-  sun.position.set(ext * 0.6, ext, ext * 0.4)
+  // Keep shadow ortho around the playable pad — huge frusta pull in every prop
+  const span = Math.max(bounds.size.x, bounds.size.z, 24)
+  const ext = Math.min(span * 0.55, 70)
+  const elev = Math.min(Math.max(span * 0.7, 28), 90)
+  sun.position.set(
+    bounds.center.x + ext * 0.55,
+    bounds.center.y + elev,
+    bounds.center.z + ext * 0.35,
+  )
+  sun.target.position.set(bounds.center.x, bounds.center.y, bounds.center.z)
+  sun.target.updateMatrixWorld()
   sun.castShadow = true
-  sun.shadow.mapSize.set(2048, 2048)
+
+  const dense = meshCount > 150
+  const mapRes = dense ? 1024 : 2048
+  sun.shadow.mapSize.set(mapRes, mapRes)
+  sun.shadow.bias = -0.00025
+  sun.shadow.normalBias = 0.03
   sun.shadow.camera.near = 1
-  sun.shadow.camera.far = ext * 5
+  sun.shadow.camera.far = elev + ext * 2.2
   sun.shadow.camera.left = -ext
   sun.shadow.camera.right = ext
   sun.shadow.camera.top = ext
   sun.shadow.camera.bottom = -ext
+  sun.shadow.camera.updateProjectionMatrix()
   scene.add(sun)
+  scene.add(sun.target)
 }
 
 /**

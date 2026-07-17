@@ -35,6 +35,8 @@ export class DummySystem {
   meshes = new Map<string, THREE.Group>()
   private mixers = new Map<string, THREE.AnimationMixer>()
   private readonly hitscanScratch = createMeshHitscanScratch()
+  /** When false, meshes stay hidden and update/hitscan are no-ops. */
+  private enabled = true
 
   async load(
     scene: THREE.Scene,
@@ -189,6 +191,7 @@ export class DummySystem {
       const g = factory(d.id)
       g.position.set(d.position.x, d.position.y, d.position.z)
       g.rotation.y = d.yaw
+      g.visible = this.enabled
       scene.add(g)
       this.meshes.set(d.id, g)
       g.updateWorldMatrix(true, true)
@@ -246,8 +249,25 @@ export class DummySystem {
     }
   }
 
-  /** Per-frame: loco mixers + root pose/labels/paint. */
+  /**
+   * Fully enable/disable dummies (visuals + sim hooks).
+   * Off = all meshes hidden; caller should also skip stepDummies.
+   */
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled
+    for (const mesh of this.meshes.values()) {
+      mesh.visible = enabled
+    }
+  }
+
+  isEnabled() {
+    return this.enabled
+  }
+
+  /** Per-frame: loco mixers + root pose/labels/paint. No-op when disabled. */
   update(dt: number, dummies: DummyTarget[], paused: boolean) {
+    if (!this.enabled) return
+
     if (!paused) {
       for (const d of dummies) {
         if (d.alive) this.syncLocomotion(d.id, dummies)
@@ -293,6 +313,7 @@ export class DummySystem {
     dir: { x: number; y: number; z: number },
     maxRange: number,
   ): RayHit | null {
+    if (!this.enabled) return null
     const targets = collectDummyHitTargets(dummies, this.meshes)
     return castMeshHitscan(
       this.hitscanScratch,

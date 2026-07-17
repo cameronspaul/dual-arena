@@ -105,3 +105,13 @@ In-game (top-right, when `DEBUG.showPerf` is true — default on):
 - **Low FPS only while walking** + high `sim` / `col near` → add a low-poly `COL_` hull.  
 - **Low FPS while standing still** + high `ren` / `draws` / shadow casters → simplify mesh, cut casters, or lower DPR.  
 - Toggle the panel via `DEBUG.showPerf` in `src/game/core/config.ts`.
+
+### Automatic walk-collider filter
+
+If a map has **no** `COL_` / `collision` / `UCX_` meshes, the loader still uses visuals for collision, but **walk probes** drop tiny decorative props (bullets keep the fuller set). Console:
+
+```
+[map] tdm-location walk colliders 180/427 (visual set filtered for CPU)
+```
+
+Authoring a real low-poly `COL_` hull is still the best fix for high-refresh targets.

@@ -15,6 +15,7 @@ import { stepEditorMove } from '../editor/noclip'
 import { LevelEditorSystem } from '../editor/LevelEditorSystem'
 import {
   analyzeMapStaticPerf,
+  buildMeshWorld,
   buildProceduralRange,
   castMapHitscan,
   countNearbyCollisionMeshes,
@@ -152,7 +153,8 @@ export class GameEngine {
   private coverMat: THREE.MeshStandardMaterial | null = null
   private envTextures: THREE.Texture[] = []
   private thirdPerson = false
-  private dummiesPaused = false
+  /** When false: no dummy AI, anim, hitscan, or drawing. */
+  private dummiesEnabled = true
   private prevSniperPhase: SniperState['phase'] = 'ready'
 
   private mapDef: MapDef
@@ -213,10 +215,12 @@ export class GameEngine {
       antialias: true,
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // Cap DPR — 2× on 1440p/4k blows the 180 Hz budget on fill rate alone
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     this.renderer.setSize(w, h)
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // Soft PCF is ~2× the shadow-pass cost; basic PCF is fine for arena lighting
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     container.appendChild(this.renderer.domElement)
     this.renderer.domElement.classList.add('touch-none', 'outline-none')
     this.renderer.domElement.tabIndex = 0
@@ -376,6 +380,7 @@ export class GameEngine {
         this.mapHitMeshes = built.hitMeshes
         this.meshWorld = null
         this.levelEditor.setHitMeshes(built.hitMeshes)
+        // procedural range: no triangle walk world
         this.applyPlaySpawn({
           spawn: built.spawn,
           spawnYaw: built.spawnYaw,
@@ -393,14 +398,17 @@ export class GameEngine {
           this.skyboxId,
         )
         this.envTextures.push(...textures)
-        this.captureMapPerf(null, built.bounds)
+        this.captureMapPerf(null, built.bounds, [])
       } else {
         const built = await loadGltfMap(this.scene, this.mapDef)
         this.colliders = built.colliders
         this.mapHitMeshes = built.hitMeshes
-        // Walk / bullets use real triangle geometry
-        this.meshWorld =
-          built.hitMeshes.length > 0 ? { meshes: built.hitMeshes } : null
+        // Walk uses filtered set (or COL_ hull); bullets keep full hitMeshes.
+        // Do NOT pass extractColliders as wall AABBs — they fill whole buildings
+        // and shove the player out of the map / off spawn pads.
+        const walk =
+          built.walkMeshes.length > 0 ? built.walkMeshes : built.hitMeshes
+        this.meshWorld = walk.length > 0 ? buildMeshWorld(walk) : null
         this.levelEditor.setHitMeshes(built.hitMeshes)
         // Team pads (authored/editor) preferred over auto-placed catalog spawn
         this.applyPlaySpawn({
@@ -433,18 +441,20 @@ export class GameEngine {
           built.spawn,
           'collisionMeshes',
           built.hitMeshes.length,
+          'walkMeshes',
+          walk.length,
         )
-        this.captureMapPerf(built.root, built.bounds)
+        this.captureMapPerf(built.root, built.bounds, walk)
       }
       this.mapReady = true
       this.levelEditor.sync(this.spawnLayout.spawns)
       this.levelEditor.syncBarriers(this.barrierLayout.barriers)
-      void this.dummiesSys.load(
-        this.scene,
-        this.dummies,
-        this.playerVisuals,
-        this.thirdPerson,
-      )
+      void this.dummiesSys
+        .load(this.scene, this.dummies, this.playerVisuals, this.thirdPerson)
+        .then(() => {
+          // Re-apply in case user toggled off while GLB was loading
+          this.dummiesSys.setEnabled(this.dummiesEnabled)
+        })
     } catch (e) {
       console.error('Map load failed', e)
       this.mapLoadError =
@@ -572,12 +582,27 @@ export class GameEngine {
     return this.thirdPerson
   }
 
-  setDummiesPaused(paused: boolean) {
-    this.dummiesPaused = paused
+  /**
+   * Toggle practice dummies fully on/off.
+   * Off skips AI, respawns, animation mixers, mesh updates, and hitscan.
+   */
+  setDummiesEnabled(enabled: boolean) {
+    this.dummiesEnabled = enabled
+    this.dummiesSys.setEnabled(enabled)
   }
 
+  isDummiesEnabled() {
+    return this.dummiesEnabled
+  }
+
+  /** @deprecated Use setDummiesEnabled — pause is now a full off. */
+  setDummiesPaused(paused: boolean) {
+    this.setDummiesEnabled(!paused)
+  }
+
+  /** @deprecated Use isDummiesEnabled */
   isDummiesPaused() {
-    return this.dummiesPaused
+    return !this.dummiesEnabled
   }
 
   // --- Level editor (noclip + team spawns + barrier walls) ---
@@ -1018,13 +1043,17 @@ export class GameEngine {
   private captureMapPerf(
     root: THREE.Object3D | null,
     bounds: import('../maps').MapBounds | null,
+    walkMeshes: THREE.Object3D[],
   ) {
     if (!DEBUG.showPerf) return
+    // Report walk-collider count (what movement actually raycasts)
+    const colliders =
+      walkMeshes.length > 0 ? walkMeshes : this.mapHitMeshes
     const perf = analyzeMapStaticPerf({
       mapId: this.mapDef.id,
       root,
       scene: this.scene,
-      collisionMeshes: this.mapHitMeshes,
+      collisionMeshes: colliders,
       aabbColliders: this.colliders.length,
       bounds,
     })
@@ -1066,12 +1095,11 @@ export class GameEngine {
     }
 
     stepSniper(this.sniper, input, dt)
-    if (!this.dummiesPaused) {
+    if (this.dummiesEnabled) {
       stepDummies(this.dummies, dt)
       stepRespawns(this.dummies, this.respawns, dt)
+      this.dummiesSys.update(dt, this.dummies, false)
     }
-
-    this.dummiesSys.update(dt, this.dummies, this.dummiesPaused)
 
     if (this.playerVisuals.isMan) {
       this.playerVisuals.syncLocomotion(this.player, input)
@@ -1089,7 +1117,7 @@ export class GameEngine {
         sniper: this.sniper,
         colliders: this.colliders,
         barrierColliders: this.barrierColliders,
-        dummies: this.dummies,
+        dummies: this.dummiesEnabled ? this.dummies : [],
         respawns: this.respawns,
         dummiesSys: this.dummiesSys,
         fx: this.combatFx,
@@ -1172,11 +1200,11 @@ export class GameEngine {
     this.playerVisuals.updatePose(this.player, true)
     if (this.playerVisuals.body) this.playerVisuals.body.visible = true
 
-    if (!this.dummiesPaused) {
+    if (this.dummiesEnabled) {
       stepDummies(this.dummies, dt)
       stepRespawns(this.dummies, this.respawns, dt)
+      this.dummiesSys.update(dt, this.dummies, false)
     }
-    this.dummiesSys.update(dt, this.dummies, this.dummiesPaused)
     this.combatFx.update(dt)
     if (this.freeCam) {
       this.barrierVisuals.update(this.freeCam.position)
@@ -1236,7 +1264,9 @@ export class GameEngine {
     this.camera.updateProjectionMatrix()
 
     if (this.viewmodel.root) this.viewmodel.root.visible = false
-    this.dummiesSys.update(dt, this.dummies, true)
+    if (this.dummiesEnabled) {
+      this.dummiesSys.update(dt, this.dummies, true)
+    }
     this.combatFx.update(dt)
     // Always show signs in the editor so placement is obvious
     this.barrierVisuals.update(this.player.position, true)

@@ -197,18 +197,20 @@ function buildStaticNotes(s: {
   } else if (s.meshes >= 150) {
     notes.push(`Elevated mesh count (${s.meshes})`)
   }
-  if (s.shadowCasters >= 100) {
+  if (s.shadowCasters >= 80) {
     notes.push(
-      `${s.shadowCasters} shadow casters — soft shadows scale badly with this`,
+      `${s.shadowCasters} shadow casters — still high; large props only should cast`,
     )
+  } else if (s.shadowCasters >= 40) {
+    notes.push(`${s.shadowCasters} shadow casters (capped)`)
   }
   if (!s.dedicatedCollision && s.collisionMeshes >= 80) {
     notes.push(
-      `No COL_ hull — all ${s.collisionMeshes} visual meshes used for walk/bullet raycasts (CPU)`,
+      `No COL_ hull — ${s.collisionMeshes} walk colliders (filtered visuals); author COL_ for best CPU`,
     )
   } else if (!s.dedicatedCollision && s.collisionMeshes > 0) {
     notes.push(
-      `Collision uses full visual mesh set (${s.collisionMeshes}); add COL_ for cheaper probes`,
+      `Walk uses ${s.collisionMeshes} visual colliders (no COL_); still OK if nearby stays low`,
     )
   } else if (s.dedicatedCollision) {
     notes.push(
@@ -318,8 +320,11 @@ export function inferBottleneck(opts: {
   if (renderShare > 0.5) {
     return 'GPU: render (shaders / fill / shadows)'
   }
-  if (collisionMeshes > 150 && !dedicatedCollision) {
-    return 'mixed: heavy visual collision set + render'
+  if (collisionMeshes > 150 && !dedicatedCollision && simShare > 0.3) {
+    return 'mixed: walk colliders + render'
+  }
+  if (frameMs > 7 && draws < 120 && renderShare < 0.45 && simShare < 0.35) {
+    return 'overhead / vsync / browser (sim+ren under budget)'
   }
   return 'mixed / other (vsync? browser? thermal?)'
 }

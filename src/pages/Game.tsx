@@ -121,7 +121,7 @@ export default function Game() {
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [thirdPerson, setThirdPerson] = useState(false)
-  const [dummiesPaused, setDummiesPaused] = useState(false)
+  const [dummiesEnabled, setDummiesEnabled] = useState(true)
   const lastKey = useRef('')
 
   const onHud = useCallback((snap: HudSnapshot) => {
@@ -135,10 +135,10 @@ export default function Game() {
     setEngine(eng)
     if (eng) {
       setThirdPerson(eng.isThirdPerson())
-      setDummiesPaused(eng.isDummiesPaused())
+      setDummiesEnabled(eng.isDummiesEnabled())
     } else {
       setThirdPerson(false)
-      setDummiesPaused(false)
+      setDummiesEnabled(true)
     }
   }, [])
 
@@ -208,11 +208,11 @@ export default function Game() {
     setThirdPerson(next)
   }, [engine])
 
-  const toggleDummiesPaused = useCallback(() => {
+  const toggleDummies = useCallback(() => {
     if (!engine) return
-    const next = !engine.isDummiesPaused()
-    engine.setDummiesPaused(next)
-    setDummiesPaused(next)
+    const next = !engine.isDummiesEnabled()
+    engine.setDummiesEnabled(next)
+    setDummiesEnabled(next)
   }, [engine])
 
   if (phase === 'pick') {
@@ -305,11 +305,11 @@ export default function Game() {
           </button>
           <button
             type="button"
-            onClick={toggleDummiesPaused}
-            className={dummiesPaused ? devBtnOn : devBtn}
-            title="Freeze dummy AI and locomotion animations"
+            onClick={toggleDummies}
+            className={dummiesEnabled ? devBtn : devBtnOn}
+            title="Turn practice dummies fully off (no AI, anims, hitscan, or drawing)"
           >
-            {dummiesPaused ? 'Dummies: paused' : 'Pause dummies'}
+            {dummiesEnabled ? 'Dummies: on' : 'Dummies: off'}
           </button>
         </div>
       )}

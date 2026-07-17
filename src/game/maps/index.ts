@@ -18,9 +18,12 @@ export {
 } from './MapWorld'
 export {
   prepareCollisionMeshes,
+  filterWalkCollisionMeshes,
   resolveMeshCollisions,
   castMeshWorldHitscan,
   countNearbyCollisionMeshes,
+  buildMeshWorld,
+  cacheWalkMeshBounds,
   type MeshWorld,
 } from './meshCollision'
 export {
