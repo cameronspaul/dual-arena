@@ -2,45 +2,57 @@
 
 /*
   Dual Arena — tactical duel theme
-  Amber heat (stakes / fire) + cyan tech (readouts) on deep slate void.
+  Amber heat (stakes / fire) + cyan tech (readouts).
+  Light = real white paper stickers; dark = deep slate void.
 */
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
 
 body {
   font-family: var(--font-sans);
+  background-color: var(--background);
+  color: var(--foreground);
 }
 
 :root {
-  --background: oklch(0.985 0.004 80);
+  /* Pure white canvas — cards/panels stay crisp white */
+  --background: oklch(1 0 0);
   --foreground: oklch(0.16 0.02 260);
-  --card: oklch(0.995 0.003 80);
+  --card: oklch(1 0 0);
   --card-foreground: oklch(0.16 0.02 260);
-  --popover: oklch(0.995 0.003 80);
+  --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.16 0.02 260);
   --primary: oklch(0.62 0.17 55);
   --primary-foreground: oklch(0.99 0.01 90);
-  --secondary: oklch(0.94 0.015 250);
+  --secondary: oklch(0.96 0.008 250);
   --secondary-foreground: oklch(0.22 0.03 260);
-  --muted: oklch(0.945 0.01 250);
-  --muted-foreground: oklch(0.48 0.025 260);
-  --accent: oklch(0.93 0.04 200);
+  --muted: oklch(0.96 0.006 250);
+  --muted-foreground: oklch(0.45 0.02 260);
+  --accent: oklch(0.94 0.03 200);
   --accent-foreground: oklch(0.22 0.04 220);
   --destructive: oklch(0.55 0.22 25);
   --destructive-foreground: oklch(0.99 0.01 90);
-  --border: oklch(0.88 0.015 250);
-  --input: oklch(0.9 0.012 250);
+  --border: oklch(0.9 0.01 250);
+  --input: oklch(0.94 0.008 250);
   --ring: oklch(0.62 0.17 55);
   --chart-1: oklch(0.68 0.16 55);
   --chart-2: oklch(0.65 0.12 200);
   --chart-3: oklch(0.55 0.1 260);
   --chart-4: oklch(0.72 0.14 140);
   --chart-5: oklch(0.58 0.18 25);
-  --sidebar: oklch(0.97 0.008 250);
+  --sidebar: oklch(0.985 0.004 250);
   --sidebar-foreground: oklch(0.16 0.02 260);
   --sidebar-primary: oklch(0.62 0.17 55);
   --sidebar-primary-foreground: oklch(0.99 0.01 90);
-  --sidebar-accent: oklch(0.93 0.04 200);
+  --sidebar-accent: oklch(0.94 0.03 200);
   --sidebar-accent-foreground: oklch(0.22 0.04 220);
-  --sidebar-border: oklch(0.88 0.015 250);
+  --sidebar-border: oklch(0.9 0.01 250);
   --sidebar-ring: oklch(0.62 0.17 55);
   --font-sans: "Dosis", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
@@ -50,65 +62,75 @@ body {
   --shadow-y: 1px;
   --shadow-blur: 3px;
   --shadow-spread: 0px;
-  --shadow-opacity: 0.12;
+  --shadow-opacity: 0.1;
   --shadow-color: oklch(0.2 0.03 260);
   --shadow-2xs: 0 1px 2px 0px oklch(0.2 0.03 260 / 0.04);
   --shadow-xs: 0 1px 3px 0px oklch(0.2 0.03 260 / 0.06);
   --shadow-sm: 0 1px 3px 0px oklch(0.2 0.03 260 / 0.08), 0 1px 2px -1px oklch(0.2 0.03 260 / 0.08);
-  --shadow: 0 2px 8px -2px oklch(0.2 0.03 260 / 0.12), 0 1px 3px -1px oklch(0.2 0.03 260 / 0.08);
-  --shadow-md: 0 4px 12px -3px oklch(0.2 0.03 260 / 0.14), 0 2px 4px -2px oklch(0.2 0.03 260 / 0.08);
-  --shadow-lg: 0 10px 24px -6px oklch(0.2 0.03 260 / 0.16), 0 4px 8px -4px oklch(0.2 0.03 260 / 0.1);
-  --shadow-xl: 0 20px 40px -10px oklch(0.2 0.03 260 / 0.2);
-  --shadow-2xl: 0 24px 48px -12px oklch(0.15 0.03 260 / 0.35);
+  --shadow: 0 2px 8px -2px oklch(0.2 0.03 260 / 0.1), 0 1px 3px -1px oklch(0.2 0.03 260 / 0.07);
+  --shadow-md: 0 4px 12px -3px oklch(0.2 0.03 260 / 0.12), 0 2px 4px -2px oklch(0.2 0.03 260 / 0.07);
+  --shadow-lg: 0 10px 24px -6px oklch(0.2 0.03 260 / 0.14), 0 4px 8px -4px oklch(0.2 0.03 260 / 0.08);
+  --shadow-xl: 0 20px 40px -10px oklch(0.2 0.03 260 / 0.16);
+  --shadow-2xl: 0 24px 48px -12px oklch(0.15 0.03 260 / 0.28);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Arena-specific tokens — cartoon sticker HUD (match /public/icons) */
-  --arena-void: oklch(0.14 0.03 275);
-  --arena-panel: oklch(0.22 0.03 275 / 0.94);
-  --arena-panel-border: oklch(0.18 0.02 275);
-  --arena-heat: oklch(0.78 0.17 55);
-  --arena-heat-dim: oklch(0.78 0.17 55 / 0.45);
-  --arena-tech: oklch(0.78 0.12 200);
-  --arena-tech-dim: oklch(0.78 0.12 200 / 0.45);
-  --arena-danger: oklch(0.68 0.23 25);
-  --arena-ok: oklch(0.74 0.17 145);
-  --arena-ink: oklch(0.16 0.02 275);
-  --arena-sticker: oklch(0.98 0.01 90);
+  /*
+   * Arena sticker HUD — light mode is paper-white panels + dark ink outlines.
+   * Semantic fg/surface tokens replace hardcoded text-white / bg-black.
+   */
+  --arena-void: oklch(0.97 0.005 85);
+  --arena-panel: oklch(1 0 0 / 0.98);
+  --arena-panel-border: oklch(0.88 0.01 260);
+  --arena-heat: oklch(0.72 0.17 55);
+  --arena-heat-dim: oklch(0.72 0.17 55 / 0.4);
+  --arena-tech: oklch(0.58 0.11 210);
+  --arena-tech-dim: oklch(0.58 0.11 210 / 0.4);
+  --arena-danger: oklch(0.58 0.22 25);
+  --arena-ok: oklch(0.58 0.16 145);
+  --arena-ink: oklch(0.18 0.02 275);
+  --arena-sticker: oklch(1 0 0);
+  --arena-fg: oklch(0.18 0.02 260);
+  --arena-surface: oklch(0.94 0.008 250);
+  --arena-surface-strong: oklch(0.9 0.01 250);
+  --arena-hover: oklch(0.18 0.02 260 / 0.06);
+  --arena-sheen: oklch(0 0 0 / 0.04);
+  --arena-scrim: oklch(0.98 0.004 85 / 0.72);
+  --arena-vignette: oklch(0.92 0.01 85 / 0.55);
 }
 
 .dark {
-  --background: oklch(0.13 0.022 260);
-  --foreground: oklch(0.96 0.01 90);
-  --card: oklch(0.17 0.025 260);
-  --card-foreground: oklch(0.96 0.01 90);
-  --popover: oklch(0.18 0.028 260);
-  --popover-foreground: oklch(0.96 0.01 90);
+  --background: oklch(0.12 0.02 260);
+  --foreground: oklch(0.97 0.008 90);
+  --card: oklch(0.16 0.024 260);
+  --card-foreground: oklch(0.97 0.008 90);
+  --popover: oklch(0.17 0.026 260);
+  --popover-foreground: oklch(0.97 0.008 90);
   --primary: oklch(0.76 0.155 55);
   --primary-foreground: oklch(0.16 0.03 55);
-  --secondary: oklch(0.24 0.03 260);
+  --secondary: oklch(0.22 0.028 260);
   --secondary-foreground: oklch(0.94 0.01 90);
-  --muted: oklch(0.22 0.028 260);
-  --muted-foreground: oklch(0.68 0.02 250);
-  --accent: oklch(0.28 0.04 200);
-  --accent-foreground: oklch(0.9 0.04 200);
+  --muted: oklch(0.2 0.026 260);
+  --muted-foreground: oklch(0.7 0.02 250);
+  --accent: oklch(0.26 0.038 200);
+  --accent-foreground: oklch(0.92 0.04 200);
   --destructive: oklch(0.62 0.21 25);
   --destructive-foreground: oklch(0.98 0.01 90);
-  --border: oklch(0.3 0.03 260);
-  --input: oklch(0.28 0.03 260);
+  --border: oklch(0.28 0.028 260);
+  --input: oklch(0.26 0.028 260);
   --ring: oklch(0.76 0.155 55);
   --chart-1: oklch(0.76 0.155 55);
   --chart-2: oklch(0.72 0.11 200);
   --chart-3: oklch(0.58 0.08 260);
   --chart-4: oklch(0.7 0.14 150);
   --chart-5: oklch(0.62 0.2 25);
-  --sidebar: oklch(0.15 0.024 260);
-  --sidebar-foreground: oklch(0.96 0.01 90);
+  --sidebar: oklch(0.14 0.022 260);
+  --sidebar-foreground: oklch(0.97 0.008 90);
   --sidebar-primary: oklch(0.76 0.155 55);
   --sidebar-primary-foreground: oklch(0.16 0.03 55);
-  --sidebar-accent: oklch(0.28 0.04 200);
-  --sidebar-accent-foreground: oklch(0.9 0.04 200);
-  --sidebar-border: oklch(0.3 0.03 260);
+  --sidebar-accent: oklch(0.26 0.038 200);
+  --sidebar-accent-foreground: oklch(0.92 0.04 200);
+  --sidebar-border: oklch(0.28 0.028 260);
   --sidebar-ring: oklch(0.76 0.155 55);
   --font-sans: "Dosis", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
@@ -129,8 +151,8 @@ body {
   --shadow-xl: 0 20px 40px -10px oklch(0 0 0 / 0.55);
   --shadow-2xl: 0 28px 56px -14px oklch(0 0 0 / 0.65);
 
-  --arena-void: oklch(0.11 0.025 275);
-  --arena-panel: oklch(0.2 0.03 275 / 0.96);
+  --arena-void: oklch(0.1 0.024 275);
+  --arena-panel: oklch(0.18 0.028 275 / 0.96);
   --arena-panel-border: oklch(0.12 0.02 275);
   --arena-heat: oklch(0.82 0.17 55);
   --arena-heat-dim: oklch(0.82 0.17 55 / 0.5);
@@ -138,8 +160,15 @@ body {
   --arena-tech-dim: oklch(0.82 0.12 200 / 0.5);
   --arena-danger: oklch(0.7 0.23 25);
   --arena-ok: oklch(0.76 0.17 145);
-  --arena-ink: oklch(0.12 0.02 275);
+  --arena-ink: oklch(0.1 0.02 275);
   --arena-sticker: oklch(0.98 0.01 90);
+  --arena-fg: oklch(0.98 0.008 90);
+  --arena-surface: oklch(0 0 0 / 0.38);
+  --arena-surface-strong: oklch(0 0 0 / 0.5);
+  --arena-hover: oklch(1 0 0 / 0.1);
+  --arena-sheen: oklch(1 0 0 / 0.1);
+  --arena-scrim: oklch(0.1 0.024 275 / 0.55);
+  --arena-vignette: oklch(0.08 0.02 275 / 0.7);
 }
 
 @theme inline {
@@ -187,6 +216,13 @@ body {
   --color-arena-ok: var(--arena-ok);
   --color-arena-ink: var(--arena-ink);
   --color-arena-sticker: var(--arena-sticker);
+  --color-arena-fg: var(--arena-fg);
+  --color-arena-surface: var(--arena-surface);
+  --color-arena-surface-strong: var(--arena-surface-strong);
+  --color-arena-hover: var(--arena-hover);
+  --color-arena-sheen: var(--arena-sheen);
+  --color-arena-scrim: var(--arena-scrim);
+  --color-arena-vignette: var(--arena-vignette);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);

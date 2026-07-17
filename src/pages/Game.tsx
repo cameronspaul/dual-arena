@@ -84,7 +84,7 @@ function hudKey(s: HudSnapshot): string {
 
 /** Cartoon sticker chrome — matches GameHud / public/icons outline language. */
 const devBtn =
-  'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-1.5 text-xs font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
+  'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-1.5 text-xs font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
 const devBtnOn =
   'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 py-1.5 text-xs font-extrabold tracking-wide text-arena-ink shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
 
@@ -365,7 +365,7 @@ export default function Game() {
 
       {/* Map + sky badge — top-left so center scoreboard owns the middle */}
       {!vmEdit && !levelEdit && (
-        <div className="pointer-events-none absolute top-3 left-3 z-30 flex max-w-[40vw] items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)]">
+        <div className="pointer-events-none absolute top-3 left-3 z-30 flex max-w-[40vw] items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)]">
           <img
             src={icons.map}
             alt=""
@@ -373,13 +373,13 @@ export default function Game() {
             className="size-3.5 shrink-0 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
           />
           <span className="truncate text-arena-heat">{mapName}</span>
-          <span className="text-white/30">·</span>
+          <span className="text-arena-fg/30">·</span>
           <span className="truncate text-arena-tech">
             {SKYBOX_LABELS[sessionSkybox]}
           </span>
           {isOnline && (
             <>
-              <span className="text-white/30">·</span>
+              <span className="text-arena-fg/30">·</span>
               <span className="inline-flex shrink-0 items-center gap-1 text-arena-ok">
                 <img
                   src={icons.globe}

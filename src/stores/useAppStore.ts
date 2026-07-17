@@ -22,7 +22,7 @@ interface AppState {
   wagerAmount: WagerAmount
   setWagerAmount: (amount: WagerAmount) => void
 
-  /** Soft-currency balance preview (Phase 3 will wire to wallet). */
+  /** Solana wallet balance preview (wired when wallet connect lands). */
   balance: number
 
   /** Game server WebSocket URL for online 1v1. */

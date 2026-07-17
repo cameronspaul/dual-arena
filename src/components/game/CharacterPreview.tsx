@@ -8,10 +8,18 @@ import { DUMMY } from '@/game/core/config'
 import { cn } from '@/lib/utils'
 
 interface CharacterPreviewProps {
-  color: string
+  /** Clothing tint; defaults to arena purple. Skin materials stay untouched. */
+  color?: string
   className?: string
-  /** Slow idle spin so the skin is readable from a few angles. */
+  /** Slow yaw spin (idle showcase). Off by default for walk. */
   spin?: boolean
+  /**
+   * Drag left/right on the canvas to yaw the model. On by default.
+   * Uses pointer capture so rotation stays smooth off the element.
+   */
+  interactive?: boolean
+  /** Locomotion clip to loop. */
+  animation?: 'idle' | 'walk'
 }
 
 type TintEntry = {
@@ -33,14 +41,18 @@ function isSkinMaterial(mat: THREE.MeshStandardMaterial): boolean {
   return r > 0.45 && g > 0.28 && b > 0.2 && r > g && g >= b * 0.85 && r - b > 0.08
 }
 
+const DEFAULT_COLOR = '#a855f7'
+
 /**
- * Mini WebGL stage that loads man.glb (same skin as in-game), plays idle,
- * and tints clothing/body with the lobby character color.
+ * Mini WebGL stage that loads man.glb (same skin as in-game), loops idle/walk,
+ * and optionally tints clothing with a lobby color.
  */
 export function CharacterPreview({
-  color,
+  color = DEFAULT_COLOR,
   className,
-  spin = true,
+  spin = false,
+  interactive = true,
+  animation = 'idle',
 }: CharacterPreviewProps) {
   const mountRef = useRef<HTMLDivElement>(null)
   const colorRef = useRef(color)
@@ -58,15 +70,26 @@ export function CharacterPreview({
     let modelRoot: THREE.Object3D | null = null
     const clock = new THREE.Clock()
 
+    // Drag-to-yaw state (sideways spin around world up)
+    let dragging = false
+    let lastPointerX = 0
+    let yawVelocity = 0
+    // Radians of yaw per pixel of horizontal drag
+    const YAW_PER_PX = 0.008
+    // Inertia after release
+    const YAW_DAMP = 0.92
+    const YAW_STOP = 0.0004
+
     const w = () => Math.max(1, mount.clientWidth)
     const h = () => Math.max(1, mount.clientHeight)
 
     const scene = new THREE.Scene()
     scene.background = null
 
-    const camera = new THREE.PerspectiveCamera(28, w() / h(), 0.1, 50)
-    camera.position.set(0, 1.15, 3.35)
-    camera.lookAt(0, 0.95, 0)
+    // Slightly wider FOV + lower look target so a walking full body reads well
+    const camera = new THREE.PerspectiveCamera(32, w() / h(), 0.1, 50)
+    camera.position.set(0.35, 1.05, 3.5)
+    camera.lookAt(0, 0.9, 0)
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -79,6 +102,10 @@ export function CharacterPreview({
     renderer.domElement.style.display = 'block'
     renderer.domElement.style.width = '100%'
     renderer.domElement.style.height = '100%'
+    if (interactive) {
+      renderer.domElement.style.cursor = 'grab'
+      renderer.domElement.style.touchAction = 'none'
+    }
     mount.appendChild(renderer.domElement)
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x334455, 1.15)
@@ -172,15 +199,24 @@ export function CharacterPreview({
         applyColorRef.current(colorRef.current)
 
         pivot.add(model)
+        // Face slightly toward camera for walk cycle readability
+        pivot.rotation.y = animation === 'walk' ? Math.PI * 0.12 : 0
 
-        // Idle animation if available
+        // Prefer walk / idle clips from man.glb (Quaternius-style names)
         const clips = gltf.animations ?? []
+        const walkClip = findClip(clips, 'Walk', 'Walking', 'Walk_Forward')
         const idleClip =
-          findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0] ?? null
-        if (idleClip) {
+          findClip(clips, 'Idle_Neutral', 'Idle', 'Idle_A') ?? clips[0] ?? null
+        const clip =
+          animation === 'walk'
+            ? (walkClip ?? idleClip)
+            : (idleClip ?? walkClip)
+        if (clip) {
           mixer = new THREE.AnimationMixer(model)
-          const action = mixer.clipAction(idleClip)
+          const action = mixer.clipAction(clip)
           action.setLoop(THREE.LoopRepeat, Infinity)
+          // Walk clips often feel slow in a small UI — nudge rate slightly
+          action.timeScale = animation === 'walk' ? 1.05 : 1
           action.play()
         }
 
@@ -189,9 +225,12 @@ export function CharacterPreview({
         const center = fitted.getCenter(new THREE.Vector3())
         const ext = fitted.getSize(new THREE.Vector3())
         const maxDim = Math.max(ext.x, ext.y, ext.z)
-        const dist = Math.max(2.4, maxDim * 2.15)
-        camera.position.set(0.15, center.y + ext.y * 0.05, dist)
-        camera.lookAt(center.x, center.y + ext.y * 0.02, center.z)
+        const dist = Math.max(
+          animation === 'walk' ? 2.6 : 2.4,
+          maxDim * (animation === 'walk' ? 2.35 : 2.15),
+        )
+        camera.position.set(0.25, center.y + ext.y * 0.02, dist)
+        camera.lookAt(center.x, center.y + ext.y * 0.0, center.z)
         camera.updateProjectionMatrix()
       },
       undefined,
@@ -210,13 +249,58 @@ export function CharacterPreview({
     const ro = new ResizeObserver(onResize)
     ro.observe(mount)
 
+    const canvas = renderer.domElement
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (!interactive || e.button !== 0) return
+      dragging = true
+      yawVelocity = 0
+      lastPointerX = e.clientX
+      canvas.setPointerCapture(e.pointerId)
+      canvas.style.cursor = 'grabbing'
+      e.preventDefault()
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging) return
+      const dx = e.clientX - lastPointerX
+      lastPointerX = e.clientX
+      // Drag right → model turns right (natural product-viewer feel)
+      pivot.rotation.y += dx * YAW_PER_PX
+      yawVelocity = dx * YAW_PER_PX
+    }
+
+    const endDrag = (e: PointerEvent) => {
+      if (!dragging) return
+      dragging = false
+      if (canvas.hasPointerCapture(e.pointerId)) {
+        canvas.releasePointerCapture(e.pointerId)
+      }
+      canvas.style.cursor = interactive ? 'grab' : ''
+    }
+
+    if (interactive) {
+      canvas.addEventListener('pointerdown', onPointerDown)
+      canvas.addEventListener('pointermove', onPointerMove)
+      canvas.addEventListener('pointerup', endDrag)
+      canvas.addEventListener('pointercancel', endDrag)
+    }
+
     const tick = () => {
       if (disposed) return
       frame = requestAnimationFrame(tick)
       const dt = Math.min(clock.getDelta(), 0.05)
       mixer?.update(dt)
-      if (spin && modelRoot) {
-        pivot.rotation.y += dt * 0.45
+      if (modelRoot) {
+        if (spin && !dragging) {
+          pivot.rotation.y += dt * 0.45
+        } else if (!dragging && Math.abs(yawVelocity) > YAW_STOP) {
+          // Coast a bit after a flick, then settle
+          pivot.rotation.y += yawVelocity
+          yawVelocity *= YAW_DAMP
+        } else if (!dragging) {
+          yawVelocity = 0
+        }
       }
       renderer.render(scene, camera)
     }
@@ -226,6 +310,12 @@ export function CharacterPreview({
       disposed = true
       cancelAnimationFrame(frame)
       ro.disconnect()
+      if (interactive) {
+        canvas.removeEventListener('pointerdown', onPointerDown)
+        canvas.removeEventListener('pointermove', onPointerMove)
+        canvas.removeEventListener('pointerup', endDrag)
+        canvas.removeEventListener('pointercancel', endDrag)
+      }
       mixer?.stopAllAction()
       mixer = null
       tintRef.current = []
@@ -243,7 +333,7 @@ export function CharacterPreview({
         mount.removeChild(renderer.domElement)
       }
     }
-  }, [spin])
+  }, [spin, interactive, animation])
 
   // Live color updates without reloading the GLB
   useEffect(() => {
@@ -253,8 +343,16 @@ export function CharacterPreview({
   return (
     <div
       ref={mountRef}
-      className={cn('relative h-full w-full overflow-hidden', className)}
-      aria-label="Character preview"
+      className={cn(
+        'relative h-full w-full overflow-hidden',
+        interactive && 'select-none',
+        className,
+      )}
+      aria-label={
+        interactive
+          ? 'Character preview — drag left or right to spin'
+          : 'Character preview'
+      }
       role="img"
     />
   )

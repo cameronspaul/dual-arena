@@ -66,6 +66,7 @@ function hitZoneLabel(hit: HitEvent): string {
  */
 function HitConfirm({ hit }: { hit: HitEvent }) {
   const head = hit.zone === 'head'
+  /* Pure white/red over the 3D world — not theme ink (light mode is dark). */
   const color = head ? 'text-[#f83839]' : 'text-white'
 
   return (
@@ -112,7 +113,7 @@ function msColor(ms: number, budget: number): string {
 }
 
 function pingColor(ping: number | null): string {
-  if (ping == null) return 'text-white/40'
+  if (ping == null) return 'text-arena-fg/40'
   if (ping < 50) return 'text-arena-ok'
   if (ping < 100) return 'text-arena-heat'
   return 'text-arena-danger'
@@ -162,7 +163,7 @@ function HudPanel({
       )}
     >
       {/* Soft top sheen like icon highlights */}
-      <div className="pointer-events-none absolute inset-x-3 top-0 h-2 rounded-b-full bg-white/10" />
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-2 rounded-b-full bg-arena-sheen" />
       {children}
     </div>
   )
@@ -172,11 +173,11 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
   const map = perf.map
   const budget = 1000 / 180
   return (
-    <div className="mt-2 max-w-[22rem] space-y-1 border-t-2 border-arena-ink/40 pt-2 text-[10px] leading-snug text-white/70">
+    <div className="mt-2 max-w-[22rem] space-y-1 border-t-2 border-arena-ink/40 pt-2 text-[10px] leading-snug text-arena-fg/70">
       <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 font-bold tabular-nums">
         <span className={msColor(perf.frameMs, budget)}>
           {perf.frameMs.toFixed(1)}
-          <span className="text-white/35"> ms</span>
+          <span className="text-arena-fg/35"> ms</span>
         </span>
         <span className={msColor(perf.simMs, budget * 0.4)}>
           sim {perf.simMs.toFixed(1)}
@@ -184,39 +185,39 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
         <span className={msColor(perf.renderMs, budget * 0.6)}>
           ren {perf.renderMs.toFixed(1)}
         </span>
-        <span className="text-white/40">dpr {perf.pixelRatio.toFixed(2)}</span>
+        <span className="text-arena-fg/40">dpr {perf.pixelRatio.toFixed(2)}</span>
       </div>
-      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 font-semibold tabular-nums text-white/55">
+      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 font-semibold tabular-nums text-arena-fg/55">
         <span>
-          draws <span className="text-white/90">{perf.draws}</span>
+          draws <span className="text-arena-fg/90">{perf.draws}</span>
         </span>
         <span>
-          tris <span className="text-white/90">{fmtNum(perf.triangles)}</span>
+          tris <span className="text-arena-fg/90">{fmtNum(perf.triangles)}</span>
         </span>
         <span>
           col{' '}
-          <span className="text-white/90">
+          <span className="text-arena-fg/90">
             {perf.nearbyCollision}/{perf.collisionMeshes}
           </span>
         </span>
       </div>
       {map && (
-        <div className="font-semibold tabular-nums text-white/45">
-          map <span className="text-white/75">{map.id}</span>
+        <div className="font-semibold tabular-nums text-arena-fg/45">
+          map <span className="text-arena-fg/75">{map.id}</span>
           {' · '}
           {fmtNum(map.triangles)} tris · {map.meshes} mesh ·{' '}
           {map.shadowCasters} sh ·{' '}
           {map.dedicatedCollision ? 'COL✓' : 'COL✗'}
         </div>
       )}
-      <div className="font-semibold text-white/50">
-        <span className="text-white/35">limit </span>
+      <div className="font-semibold text-arena-fg/50">
+        <span className="text-arena-fg/35">limit </span>
         <span className={fps >= 140 ? 'text-arena-ok' : 'text-arena-heat'}>
           {perf.bottleneck}
         </span>
       </div>
       {map && map.notes[0] && (
-        <div className="text-white/40" title={map.notes.join('\n')}>
+        <div className="text-arena-fg/40" title={map.notes.join('\n')}>
           {map.notes[0]}
           {map.notes.length > 1 ? ` (+${map.notes.length - 1})` : ''}
         </div>
@@ -378,7 +379,7 @@ function ChromeBtn({
       type="button"
       onClick={onClick}
       title={title}
-      className="inline-flex size-10 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-arena-panel text-white shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 hover:shadow-[2px_4px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+      className="inline-flex size-10 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-arena-panel text-arena-fg shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover hover:shadow-[2px_4px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
     >
       {children}
     </button>
@@ -404,7 +405,7 @@ function ReloadReticleHint({ progress }: { progress: number }) {
         draggable={false}
         className="size-4 object-contain select-none drop-shadow-[0_1px_0_rgba(0,0,0,0.55)]"
       />
-      <div className="h-2 w-12 overflow-hidden rounded-full border-[2px] border-arena-ink bg-black/50 shadow-[1px_2px_0_var(--arena-ink)]">
+      <div className="h-2 w-12 overflow-hidden rounded-full border-[2px] border-arena-ink bg-arena-surface-strong shadow-[1px_2px_0_var(--arena-ink)]">
         <div
           className="h-full rounded-full"
           style={{
@@ -472,7 +473,7 @@ export function GameHud({
     : 0
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
+    <div className="pointer-events-none absolute inset-0 z-10 select-none text-arena-fg">
       <ScopeOverlay
         adsBlend={hud.adsBlend}
         reloadJiggleX={hud.reloadJiggleX}
@@ -498,7 +499,7 @@ export function GameHud({
               <div className="mt-2 text-xl font-black tracking-tight">
                 Waiting for opponent…
               </div>
-              <div className="mt-1 text-sm font-semibold text-white/55">
+              <div className="mt-1 text-sm font-semibold text-arena-fg/55">
                 Share the same match id — first to {firstTo} wins.
               </div>
             </HudPanel>
@@ -529,7 +530,7 @@ export function GameHud({
                 <span
                   className={cn(
                     'inline-flex items-center gap-1 uppercase tracking-wide',
-                    hud.localReady ? 'text-arena-ok' : 'text-white/45',
+                    hud.localReady ? 'text-arena-ok' : 'text-arena-fg/45',
                   )}
                 >
                   {hud.localReady && (
@@ -537,11 +538,11 @@ export function GameHud({
                   )}
                   You: {hud.localReady ? 'Ready' : 'Not ready'}
                 </span>
-                <span className="text-white/25">|</span>
+                <span className="text-arena-fg/25">|</span>
                 <span
                   className={cn(
                     'inline-flex items-center gap-1 uppercase tracking-wide',
-                    hud.enemyReady ? 'text-arena-ok' : 'text-white/45',
+                    hud.enemyReady ? 'text-arena-ok' : 'text-arena-fg/45',
                   )}
                 >
                   {hud.enemyReady && (
@@ -560,7 +561,7 @@ export function GameHud({
                   className={cn(
                     'pointer-events-auto mt-3 inline-flex items-center gap-2 rounded-xl border-[3px] border-arena-ink px-5 py-2 text-xs font-extrabold tracking-wide uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]',
                     hud.localReady
-                      ? 'bg-white/15 text-white/80 hover:bg-white/20'
+                      ? 'bg-arena-sheen text-arena-fg/80 hover:bg-arena-hover'
                       : 'bg-arena-ok text-arena-ink hover:brightness-110',
                   )}
                 >
@@ -587,14 +588,14 @@ export function GameHud({
             className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center"
           >
             <div className="text-center">
-              <div className="flex items-center justify-center gap-2 text-[11px] font-extrabold tracking-wide text-white/60 uppercase">
+              <div className="flex items-center justify-center gap-2 text-[11px] font-extrabold tracking-wide text-arena-fg/60 uppercase">
                 <GameIcon src={icons.bolt} className="size-4" />
                 Round starting
               </div>
-              <div className="mt-1 text-8xl font-black tabular-nums text-white drop-shadow-[0_4px_0_var(--arena-ink)]">
+              <div className="mt-1 text-8xl font-black tabular-nums text-arena-fg drop-shadow-[0_4px_0_var(--arena-ink)]">
                 {countdownN}
               </div>
-              <div className="mt-1 text-sm font-bold text-white/50">
+              <div className="mt-1 text-sm font-bold text-arena-fg/50">
                 Weapons locked until go
               </div>
             </div>
@@ -616,7 +617,7 @@ export function GameHud({
                 <GameIcon src={icons.boom} className="size-4" />
                 Round over
               </div>
-              <div className="mt-0.5 text-sm font-extrabold tabular-nums text-white/80">
+              <div className="mt-0.5 text-sm font-extrabold tabular-nums text-arena-fg/80">
                 Reset in {countdownN}s
               </div>
             </HudPanel>
@@ -635,17 +636,17 @@ export function GameHud({
           >
             <HudPanel className="min-w-[17rem] px-8 py-7 text-center" accent="heat">
               <GameIcon src={icons.trophy} className="mx-auto size-14" />
-              <div className="mt-2 text-xs font-extrabold tracking-wide text-white/50 uppercase">
+              <div className="mt-2 text-xs font-extrabold tracking-wide text-arena-fg/50 uppercase">
                 {matchEndTitle(hud.matchEndReason)}
               </div>
               <div className="mt-1 text-3xl font-black text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
                 {hud.matchWinnerId ? 'Winner!' : 'Draw'}
               </div>
-              <div className="mt-2 text-lg font-extrabold tabular-nums text-white/85">
+              <div className="mt-2 text-lg font-extrabold tabular-nums text-arena-fg/85">
                 {hud.kills}
-                <span className="mx-1.5 text-white/30">–</span>
+                <span className="mx-1.5 text-arena-fg/30">–</span>
                 {hud.enemyKills}
-                <span className="ml-2 text-xs font-bold text-white/40">
+                <span className="ml-2 text-xs font-bold text-arena-fg/40">
                   (first to {firstTo})
                 </span>
               </div>
@@ -688,11 +689,11 @@ export function GameHud({
                 >
                   {hud.kills}
                 </span>
-                <span className="text-xl font-black text-white/25">–</span>
+                <span className="text-xl font-black text-arena-fg/25">–</span>
                 <span
                   className={cn(
                     'min-w-[1.6rem] text-center text-4xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
-                    hud.teamColor === 'red' ? 'text-sky-300' : 'text-white',
+                    hud.teamColor === 'red' ? 'text-sky-300' : 'text-arena-fg',
                   )}
                 >
                   {hud.enemyKills}
@@ -706,10 +707,10 @@ export function GameHud({
                 </span>
               </div>
             )}
-            <div className="mt-0.5 flex items-center justify-center gap-2 text-[10px] font-extrabold tracking-wide text-white/45 uppercase">
+            <div className="mt-0.5 flex items-center justify-center gap-2 text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
               {online && <span>FT{firstTo}</span>}
               {online && hud.matchTimeLeft != null && (
-                <span className="text-white/25">·</span>
+                <span className="text-arena-fg/25">·</span>
               )}
               {hud.matchTimeLeft != null && (
                 <span className="tabular-nums text-arena-tech">
@@ -734,16 +735,16 @@ export function GameHud({
             >
               <span className={fpsColor(hud.fps)}>
                 <span className="text-base">{hud.fps}</span>
-                <span className="ml-0.5 text-[9px] font-bold text-white/40">
+                <span className="ml-0.5 text-[9px] font-bold text-arena-fg/40">
                   FPS
                 </span>
               </span>
               {hud.ping != null && (
                 <>
-                  <span className="text-white/20">|</span>
+                  <span className="text-arena-fg/20">|</span>
                   <span className={pingColor(hud.ping)}>
                     <span className="text-base">{Math.round(hud.ping)}</span>
-                    <span className="ml-0.5 text-[9px] font-bold text-white/40">
+                    <span className="ml-0.5 text-[9px] font-bold text-arena-fg/40">
                       ms
                     </span>
                   </span>
@@ -923,7 +924,7 @@ export function GameHud({
                   {hud.hp}
                 </span>
               </div>
-              <div className="mt-1.5 h-2.5 w-36 overflow-hidden rounded-full border-[2.5px] border-arena-ink bg-black/55 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)]">
+              <div className="mt-1.5 h-2.5 w-36 overflow-hidden rounded-full border-[2.5px] border-arena-ink bg-arena-surface-strong shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)]">
                 <div
                   className={cn(
                     'h-full rounded-full transition-all duration-200',
@@ -968,13 +969,13 @@ export function GameHud({
               })}
             </div>
             <span
-              className="select-none text-lg font-black leading-none text-white/35"
+              className="select-none text-lg font-black leading-none text-arena-fg/35"
               aria-hidden
             >
               /
             </span>
             <span
-              className="select-none text-2xl font-black leading-none tracking-tight text-white drop-shadow-[0_2px_0_var(--arena-ink)]"
+              className="select-none text-2xl font-black leading-none tracking-tight text-arena-fg drop-shadow-[0_2px_0_var(--arena-ink)]"
               title="Infinite reserve ammo"
               aria-label="Infinite reserve ammo"
             >
@@ -992,22 +993,22 @@ export function GameHud({
             <div className="mt-2 text-[11px] font-extrabold tracking-wide text-arena-danger uppercase">
               Knocked out
             </div>
-            <div className="mt-1 text-2xl font-black tracking-tight text-white">
+            <div className="mt-1 text-2xl font-black tracking-tight text-arena-fg">
               {hud.deathReason === 'fall'
                 ? 'Fell out of the world'
                 : 'Eliminated'}
             </div>
-            <div className="mt-4 text-sm font-bold text-white/70">
+            <div className="mt-4 text-sm font-bold text-arena-fg/70">
               Free cam · respawning in{' '}
               <span className="text-2xl font-black tabular-nums text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
                 {Math.ceil(hud.respawnIn)}
               </span>
               s
             </div>
-            <p className="mt-3 text-xs font-semibold text-white/45">
+            <p className="mt-3 text-xs font-semibold text-arena-fg/45">
               WASD + mouse · Space / crouch to fly · Sprint to boost
             </p>
-            <p className="mt-1 text-xs font-semibold text-white/35">
+            <p className="mt-1 text-xs font-semibold text-arena-fg/35">
               Toggle Free cam off (bottom left) to respawn now
             </p>
           </HudPanel>
@@ -1022,7 +1023,7 @@ export function GameHud({
               <GameIcon src={icons.jetpack} className="size-4" />
               Free cam
             </div>
-            <p className="mt-1 text-[11px] font-semibold text-white/55">
+            <p className="mt-1 text-[11px] font-semibold text-arena-fg/55">
               WASD + mouse · Space / crouch fly · Sprint boost
             </p>
           </HudPanel>
@@ -1050,7 +1051,7 @@ export function GameHud({
 
 function Kbd({ children }: { children: string }) {
   return (
-    <kbd className="rounded-lg border-[2px] border-arena-ink bg-white/15 px-1.5 py-0.5 text-[11px] font-extrabold text-white shadow-[1px_2px_0_var(--arena-ink)]">
+    <kbd className="rounded-lg border-[2px] border-arena-ink bg-arena-sheen px-1.5 py-0.5 text-[11px] font-extrabold text-arena-fg shadow-[1px_2px_0_var(--arena-ink)]">
       {children}
     </kbd>
   )
@@ -1063,7 +1064,7 @@ function primary(codes: string[]): string {
 function ControlsHint() {
   const k = getUserSettings().keybinds
   return (
-    <div className="mt-5 space-y-2 text-sm font-semibold text-white/60">
+    <div className="mt-5 space-y-2 text-sm font-semibold text-arena-fg/60">
       <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
         <span className="inline-flex gap-0.5">
           <Kbd>{primary(k.forward)}</Kbd>
@@ -1071,34 +1072,34 @@ function ControlsHint() {
           <Kbd>{primary(k.back)}</Kbd>
           <Kbd>{primary(k.right)}</Kbd>
         </span>
-        <span className="text-white/40">move</span>
-        <span className="text-white/20">·</span>
+        <span className="text-arena-fg/40">move</span>
+        <span className="text-arena-fg/20">·</span>
         <Kbd>{primary(k.sprint)}</Kbd>
-        <span className="text-white/40">sprint</span>
-        <span className="text-white/20">·</span>
+        <span className="text-arena-fg/40">sprint</span>
+        <span className="text-arena-fg/20">·</span>
         <Kbd>{primary(k.crouch)}</Kbd>
         {k.crouch.length > 1 && (
           <>
-            <span className="text-white/20">/</span>
+            <span className="text-arena-fg/20">/</span>
             <Kbd>{formatKeyCode(k.crouch[1])}</Kbd>
           </>
         )}
-        <span className="text-white/40">crouch</span>
+        <span className="text-arena-fg/40">crouch</span>
       </p>
       <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
         <Kbd>{primary(k.jump)}</Kbd>
-        <span className="text-white/40">jump</span>
-        <span className="text-white/20">·</span>
+        <span className="text-arena-fg/40">jump</span>
+        <span className="text-arena-fg/20">·</span>
         <Kbd>{primary(k.fire)}</Kbd>
-        <span className="text-white/40">fire</span>
-        <span className="text-white/20">·</span>
+        <span className="text-arena-fg/40">fire</span>
+        <span className="text-arena-fg/20">·</span>
         <Kbd>{primary(k.ads)}</Kbd>
-        <span className="text-white/40">ADS</span>
-        <span className="text-white/20">·</span>
+        <span className="text-arena-fg/40">ADS</span>
+        <span className="text-arena-fg/20">·</span>
         <Kbd>{primary(k.reload)}</Kbd>
-        <span className="text-white/40">reload</span>
+        <span className="text-arena-fg/40">reload</span>
       </p>
-      <p className="text-[11px] font-bold tracking-wide text-white/35">
+      <p className="text-[11px] font-bold tracking-wide text-arena-fg/35">
         Sprint + crouch to slide · jump out of slide to hop
       </p>
     </div>
