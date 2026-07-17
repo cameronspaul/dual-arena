@@ -9,7 +9,6 @@ export type SfxId =
   | 'reload'
   | 'reloadDone'
   | 'dryFire'
-  | 'hitBody'
   | 'land'
   | 'jump'
   | 'slide'
@@ -66,11 +65,6 @@ const CLIPS: Record<SfxId, ClipDef> = {
       '/sounds/dry_02.mp3',
       '/sounds/gun_click.mp3',
     ],
-  },
-  hitBody: {
-    src: '/sounds/hit_01.ogg',
-    volume: 0.45,
-    variants: ['/sounds/hit_01.ogg', '/sounds/hit_02.ogg', '/sounds/hit_03.ogg'],
   },
   land: {
     src: '/sounds/land.ogg',
@@ -290,10 +284,13 @@ export class GameAudio {
     this.play('dryFire', { rate: 0.95 + Math.random() * 0.1 })
   }
 
-  /** Body / head / kill confirmation stack. */
-  playHitConfirm(_opts: { zone: string; killed: boolean }) {
-    const rate = 0.94 + Math.random() * 0.12
-    this.play('hitBody', { rate })
+  /** Body / head / kill confirmation — synthesized COD-style metallic tick. */
+  playHitConfirm(opts: { zone: string; killed: boolean }) {
+    if (this.muted) return
+    this.unlock()
+    const vol = this.scaleVolume(1)
+    if (vol <= 0) return
+    playHitmarkerSynth(opts.zone, opts.killed, vol)
   }
 
   footstep(speed: number, sprint: boolean) {
@@ -340,6 +337,84 @@ export class GameAudio {
 
 /** Shared instance for the client game session. */
 export const gameAudio = new GameAudio()
+
+// ─── Hitmarker synthesizer (COD-style metallic tick) ─────────────────────────
+
+let hitmarkerCtx: AudioContext | null = null
+
+function getHitmarkerCtx(): AudioContext {
+  if (!hitmarkerCtx || hitmarkerCtx.state === 'closed') {
+    hitmarkerCtx = new AudioContext()
+  }
+  if (hitmarkerCtx.state === 'suspended') void hitmarkerCtx.resume()
+  return hitmarkerCtx
+}
+
+/**
+ * Synthesize a sharp metallic hitmarker tick.
+ *
+ * Design: short burst of band-passed noise through a resonant filter,
+ * shaped with a fast attack / fast decay envelope. Kill shots add a
+ * second layer — a low sine thud — for extra weight.
+ */
+function playHitmarkerSynth(zone: string, killed: boolean, volume: number) {
+  const ctx = getHitmarkerCtx()
+  const now = ctx.currentTime
+
+  // ── Layer 1: metallic tick (noise → bandpass → hp) ──────────────────────
+  const isHead = zone === 'head'
+  const tickDuration = killed ? 0.13 : isHead ? 0.1 : 0.08
+  const tickGain = killed ? 0.7 : isHead ? 0.6 : 0.5
+
+  // Noise buffer (tiny — just enough for the tick)
+  const bufLen = Math.ceil(ctx.sampleRate * tickDuration)
+  const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
+  const noiseData = noiseBuf.getChannelData(0)
+  for (let i = 0; i < bufLen; i++) noiseData[i] = Math.random() * 2 - 1
+
+  const noiseSrc = ctx.createBufferSource()
+  noiseSrc.buffer = noiseBuf
+
+  // Bandpass centred on the "metallic" region
+  const bp = ctx.createBiquadFilter()
+  bp.type = 'bandpass'
+  bp.frequency.value = isHead ? 4200 : 3600
+  bp.Q.value = killed ? 3.5 : isHead ? 4 : 5
+
+  // High-pass to remove any mud
+  const hp = ctx.createBiquadFilter()
+  hp.type = 'highpass'
+  hp.frequency.value = 1200
+  hp.Q.value = 0.7
+
+  // Tick envelope — fast attack, sharp decay
+  const tickEnv = ctx.createGain()
+  tickEnv.gain.setValueAtTime(0, now)
+  tickEnv.gain.linearRampToValueAtTime(tickGain * volume, now + 0.004)
+  tickEnv.gain.exponentialRampToValueAtTime(0.001, now + tickDuration)
+
+  noiseSrc.connect(bp).connect(hp).connect(tickEnv).connect(ctx.destination)
+  noiseSrc.start(now)
+  noiseSrc.stop(now + tickDuration)
+
+  // ── Layer 2 (kills only): low sine thud for weight ──────────────────────
+  if (killed) {
+    const thudDur = 0.15
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(160, now)
+    osc.frequency.exponentialRampToValueAtTime(80, now + thudDur)
+
+    const thudEnv = ctx.createGain()
+    thudEnv.gain.setValueAtTime(0, now)
+    thudEnv.gain.linearRampToValueAtTime(0.35 * volume, now + 0.006)
+    thudEnv.gain.exponentialRampToValueAtTime(0.001, now + thudDur)
+
+    osc.connect(thudEnv).connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + thudDur)
+  }
+}
 
 /** Wire first pointer / key gesture so browsers allow audio. */
 export function installAudioUnlock() {

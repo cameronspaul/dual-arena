@@ -62,6 +62,10 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
   )
   const built = buildRangeScene(scene, colliders)
   colliders.push(...built.extraColliders)
+  // Enclosed facility: X ±14 walls, fire line z≈6, berm z≈-42, rear z≈14
+  const halfW = 14
+  const rearZ = 14
+  const bermZ = -42
   return {
     root: null,
     colliders,
@@ -70,7 +74,8 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
     envTextures: [],
     hitMeshes: [],
     walkMeshes: [],
-    spawn: { x: 0, y: 0, z: 8 },
+    // Center bay, just behind the firing rest
+    spawn: { x: 0, y: 0, z: 8.4 },
     spawnYaw: 0,
     dummies: WORLD.dummies.map((d) => ({
       id: d.id,
@@ -78,12 +83,13 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
       z: d.z,
       yaw: d.yaw,
     })),
-    dummyBounds: 20,
+    // Long-axis clamp so far-lane dummies aren't yanked to origin
+    dummyBounds: 36,
     bounds: {
-      min: { x: -40, y: 0, z: -40 },
-      max: { x: 40, y: 8, z: 40 },
-      size: { x: 80, y: 8, z: 80 },
-      center: { x: 0, y: 4, z: 0 },
+      min: { x: -halfW, y: 0, z: bermZ },
+      max: { x: halfW, y: 6, z: rearZ },
+      size: { x: halfW * 2, y: 6, z: rearZ - bermZ },
+      center: { x: 0, y: 3, z: (rearZ + bermZ) / 2 },
     },
   }
 }

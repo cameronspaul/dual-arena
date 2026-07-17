@@ -372,7 +372,7 @@ export const SLIDE_GUN = {
 
 export const PLAYER = {
   maxHp: 100,
-  spawn: { x: 0, y: 0, z: 8 },
+  spawn: { x: 0, y: 0, z: 8.4 },
   /**
    * Damage hitboxes (pose-driven each frame from live height / eyeHeight).
    * Body is a vertical capsule — not a box.
@@ -410,20 +410,32 @@ export const DEATH = {
 
 export const WORLD = {
   floorSize: 48,
-  /** Dummy placements on the range */
+  /**
+   * Practice-range dummy homes (facing +Z toward the firing line at z=6).
+   * Distances from fire line ≈ 12 / 18 / 18 / 28 / 35 m.
+   */
   dummies: [
     { id: 'd0', x: 0, z: -6, yaw: 0 },
-    { id: 'd1', x: -4, z: -12, yaw: 0.2 },
-    { id: 'd2', x: 5, z: -14, yaw: -0.15 },
-    { id: 'd3', x: -2, z: -22, yaw: 0.1 },
-    { id: 'd4', x: 3, z: -28, yaw: -0.05 },
+    { id: 'd1', x: -5.5, z: -12, yaw: 0.15 },
+    { id: 'd2', x: 5.5, z: -12, yaw: -0.15 },
+    { id: 'd3', x: -3.5, z: -22, yaw: 0.08 },
+    { id: 'd4', x: 4, z: -29, yaw: -0.05 },
   ],
+  /**
+   * Mid-lane peek cover on the practice range (meshed in buildRange).
+   * Facility walls / berm / bays are built procedurally with their own colliders.
+   */
   coverBoxes: [
-    { x: -3, y: 0.6, z: -4, w: 1.2, h: 1.2, d: 1.2 },
-    { x: 4, y: 0.5, z: -9, w: 2, h: 1, d: 1 },
-    { x: -5, y: 0.75, z: -18, w: 1.5, h: 1.5, d: 1.5 },
-    { x: 2, y: 0.4, z: -20, w: 3, h: 0.8, d: 0.8 },
-    { x: 0, y: 1, z: -32, w: 4, h: 2, d: 0.6 },
+    // Near crate left of center lane
+    { x: -3.2, y: 0.55, z: -2, w: 1.1, h: 1.1, d: 1.1 },
+    // Low wall right
+    { x: 4.5, y: 0.5, z: -5, w: 2.2, h: 1.0, d: 0.55 },
+    // Mid crate stack
+    { x: -5.5, y: 0.65, z: -16, w: 1.3, h: 1.3, d: 1.3 },
+    // Long low barricade
+    { x: 2.5, y: 0.4, z: -18, w: 2.8, h: 0.8, d: 0.55 },
+    // Far wide wall (peek edge)
+    { x: 0, y: 1.0, z: -32, w: 3.6, h: 2.0, d: 0.55 },
   ],
 } as const
 
@@ -446,8 +458,12 @@ export const DUMMY = {
   moveEnabled: true,
   /** Max distance from home while wandering */
   wanderRadius: 7,
-  /** Keep dummies on the range floor (half floorSize with margin) */
-  bounds: 20,
+  /**
+   * Absolute wander clamp half-extent from world origin (XZ).
+   * Practice range is long in -Z (~40 m to berm) — keep this generous;
+   * DUMMY.wanderRadius still keeps each dummy near its home.
+   */
+  bounds: 36,
   /** Seconds spent in each state (min, max) before AI picks next */
   stateDuration: {
     idle: [1.2, 2.4],

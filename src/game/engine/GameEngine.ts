@@ -324,8 +324,7 @@ export class GameEngine {
     this.enterFreeCam()
 
     gameAudio.unlock()
-    // Soft confirm — dedicated death sting can replace later.
-    gameAudio.play('hitBody', { volume: 0.55 })
+    gameAudio.playHitConfirm({ zone: 'body', killed: true })
   }
 
   /** Respawn at play pad, full HP / mag, exit free-cam. Keeps match kills. */
