@@ -118,8 +118,9 @@ export const MAPS: Record<MapId, MapDef> = {
     scale: 1,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 0, y: 0, z: 4 },
-    spawnYaw: Math.PI,
+    // Solo fallback ≈ blue-0 (team pads live in authoredSpawns.ts)
+    spawn: { x: -13.247, y: 0.086, z: 3.49 },
+    spawnYaw: -1.5583,
     dummies: arenaDummies(8),
     dummyBounds: 10,
     cameraFar: 120,
@@ -140,8 +141,9 @@ export const MAPS: Record<MapId, MapDef> = {
     scale: 1,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 6, y: 0, z: 0 },
-    spawnYaw: Math.PI,
+    // Solo fallback ≈ blue-0 (team pads in authoredSpawns.ts)
+    spawn: { x: -11.381, y: 1, z: -3.861 },
+    spawnYaw: 4.73,
     dummies: arenaDummies(8),
     dummyBounds: 12,
     cameraFar: 120,
@@ -161,8 +163,9 @@ export const MAPS: Record<MapId, MapDef> = {
     scale: 1,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 6, y: 0, z: 0 },
-    spawnYaw: Math.PI,
+    // Solo fallback ≈ blue-0 (team pads in authoredSpawns.ts)
+    spawn: { x: 20.502, y: 0, z: -15.613 },
+    spawnYaw: 1.6302,
     dummies: arenaDummies(8),
     dummyBounds: 12,
     cameraFar: 120,
@@ -183,8 +186,9 @@ export const MAPS: Record<MapId, MapDef> = {
     scale: 2.5,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 0, y: 0, z: 4 },
-    spawnYaw: Math.PI,
+    // Solo fallback ≈ blue-0 (team pads in authoredSpawns.ts)
+    spawn: { x: -4.327, y: 2.627, z: 16.661 },
+    spawnYaw: 6.3162,
     dummies: arenaDummies(6),
     dummyBounds: 12,
     cameraFar: 160,
@@ -202,8 +206,8 @@ export const MAPS: Record<MapId, MapDef> = {
     kind: 'gltf',
     url: '/models/maps/lowpoly__location__map__tdm.glb',
     // Authored ~cm/mixed units with km-scale backdrop shells; robust fit
-    // centers the real ~60×400 m lane pad. Stay 1:1 after that.
-    scale: 1,
+    // centers the real ~60×400 m lane pad. Shrink for tighter feel.
+    scale: 0.5,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
     spawn: { x: 0, y: 0, z: 6 },

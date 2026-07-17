@@ -6,14 +6,25 @@ import { gameAudio } from '../core/audio'
 import { LOOK } from '../core/config'
 import { InputManager } from '../core/input'
 import type { HitEvent, HudSnapshot, SniperState } from '../core/types'
+import { stepEditorMove } from '../editor/noclip'
+import { LevelEditorSystem } from '../editor/LevelEditorSystem'
 import {
   buildProceduralRange,
   castMapHitscan,
   getMap,
   loadEnvForMap,
   loadGltfMap,
+  authoredLayout,
+  clearSpawnLayout,
+  loadSpawnLayout,
+  makeSpawnId,
+  pickPlaySpawn,
+  saveSpawnLayout,
   type MapDef,
   type MapId,
+  type MapSpawnLayout,
+  type SpawnPoint,
+  type TeamId,
 } from '../maps'
 import type { SkyboxId } from '../scene/skyboxes'
 import { createPlayer, stepPlayer } from '../sim/player'
@@ -93,10 +104,20 @@ export class GameEngine {
   private mapReady = false
   private mapLoadError: string | null = null
 
+  /** Level editor: noclip + team spawn placement */
+  private levelEditor = new LevelEditorSystem()
+  private levelEditorActive = false
+  private spawnLayout: MapSpawnLayout
+  private editorTeam: TeamId = 'blue'
+  private editorSnapFloor = true
+  private lastPlacedSpawnId: string | null = null
+  private spawnLayoutListeners = new Set<(layout: MapSpawnLayout) => void>()
+
   constructor(container: HTMLElement, opts: GameEngineOptions = {}) {
     this.container = container
     this.mapDef = getMap(opts.mapId)
     this.skyboxId = opts.skybox ?? 'day'
+    this.spawnLayout = loadSpawnLayout(this.mapDef.id)
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(this.mapDef.bgColor)
@@ -140,6 +161,8 @@ export class GameEngine {
 
     this.combatFx.build(this.scene)
     this.playerVisuals.buildPlaceholder(this.scene)
+    this.scene.add(this.levelEditor.root)
+    this.levelEditor.sync(this.spawnLayout.spawns)
     void this.bootstrapMap()
     void this.viewmodel.load(this.camera, this.scene)
     this.input.attach(this.renderer.domElement)
@@ -165,6 +188,19 @@ export class GameEngine {
     this.input.setLook(spawnYaw, 0)
   }
 
+  /** Team pads from editor/authored layout, else map catalog fallback. */
+  private applyPlaySpawn(fallback: {
+    spawn: { x: number; y: number; z: number }
+    spawnYaw: number
+  }) {
+    const pad = pickPlaySpawn(this.spawnLayout)
+    if (pad) {
+      this.applySpawn({ x: pad.x, y: pad.y, z: pad.z }, pad.yaw)
+      return
+    }
+    this.applySpawn(fallback.spawn, fallback.spawnYaw)
+  }
+
   private async bootstrapMap() {
     try {
       if (this.mapDef.kind === 'range') {
@@ -174,7 +210,11 @@ export class GameEngine {
         this.coverMat = built.coverMat
         this.mapHitMeshes = built.hitMeshes
         this.meshWorld = null
-        this.applySpawn(built.spawn, built.spawnYaw)
+        this.levelEditor.setHitMeshes(built.hitMeshes)
+        this.applyPlaySpawn({
+          spawn: built.spawn,
+          spawnYaw: built.spawnYaw,
+        })
         this.dummies = createDummies({
           defs: built.dummies,
           bounds: built.dummyBounds,
@@ -195,8 +235,12 @@ export class GameEngine {
         // Walk / bullets use real triangle geometry
         this.meshWorld =
           built.hitMeshes.length > 0 ? { meshes: built.hitMeshes } : null
-        // Place from fitted bounds (catalog coords alone are wrong for most GLBs)
-        this.applySpawn(built.spawn, built.spawnYaw)
+        this.levelEditor.setHitMeshes(built.hitMeshes)
+        // Team pads (authored/editor) preferred over auto-placed catalog spawn
+        this.applyPlaySpawn({
+          spawn: built.spawn,
+          spawnYaw: built.spawnYaw,
+        })
         this.dummies = createDummies({
           defs: built.dummies,
           bounds: built.dummyBounds,
@@ -226,6 +270,7 @@ export class GameEngine {
         )
       }
       this.mapReady = true
+      this.levelEditor.sync(this.spawnLayout.spawns)
       void this.dummiesSys.load(
         this.scene,
         this.dummies,
@@ -367,6 +412,173 @@ export class GameEngine {
     return this.dummiesPaused
   }
 
+  // --- Level editor (noclip + team spawns) ---
+
+  setLevelEditorActive(active: boolean) {
+    this.levelEditorActive = active
+    this.levelEditor.setActive(active)
+    if (active) {
+      // Hide gun / combat clutter; keep first-person free-look
+      this.thirdPerson = false
+      if (this.playerVisuals.body) this.playerVisuals.body.visible = false
+      if (this.viewmodel.root) this.viewmodel.root.visible = false
+      this.player.velocity.x = 0
+      this.player.velocity.y = 0
+      this.player.velocity.z = 0
+    } else if (this.viewmodel.root) {
+      this.viewmodel.root.visible = true
+    }
+    this.levelEditor.sync(this.spawnLayout.spawns)
+  }
+
+  isLevelEditorActive() {
+    return this.levelEditorActive
+  }
+
+  getSpawnLayout(): MapSpawnLayout {
+    return {
+      version: 1,
+      mapId: this.spawnLayout.mapId,
+      spawns: this.spawnLayout.spawns.map((s) => ({ ...s })),
+    }
+  }
+
+  onSpawnLayout(fn: (layout: MapSpawnLayout) => void) {
+    this.spawnLayoutListeners.add(fn)
+    return () => this.spawnLayoutListeners.delete(fn)
+  }
+
+  getEditorTeam(): TeamId {
+    return this.editorTeam
+  }
+
+  setEditorTeam(team: TeamId) {
+    this.editorTeam = team
+  }
+
+  getEditorSnapFloor() {
+    return this.editorSnapFloor
+  }
+
+  setEditorSnapFloor(snap: boolean) {
+    this.editorSnapFloor = snap
+  }
+
+  getEditorPosition() {
+    return {
+      x: this.player.position.x,
+      y: this.player.position.y,
+      z: this.player.position.z,
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+    }
+  }
+
+  /**
+   * Place a spawn at the camera feet (optional floor snap).
+   * Returns the new point, or null if nothing was added.
+   */
+  placeSpawnAtPlayer(team: TeamId = this.editorTeam): SpawnPoint | null {
+    let y = this.player.position.y
+    const x = this.player.position.x
+    const z = this.player.position.z
+    if (this.editorSnapFloor) {
+      const floor = this.levelEditor.sampleFloorY(
+        x,
+        z,
+        Math.max(y + 4, 20),
+      )
+      if (floor !== null) y = floor
+    }
+    const spawn: SpawnPoint = {
+      id: makeSpawnId(team, this.spawnLayout.spawns),
+      team,
+      x,
+      y,
+      z,
+      yaw: this.player.yaw,
+    }
+    this.spawnLayout.spawns.push(spawn)
+    this.lastPlacedSpawnId = spawn.id
+    this.persistAndSyncSpawns()
+    return spawn
+  }
+
+  removeSpawn(id: string): boolean {
+    const before = this.spawnLayout.spawns.length
+    this.spawnLayout.spawns = this.spawnLayout.spawns.filter((s) => s.id !== id)
+    if (this.spawnLayout.spawns.length === before) return false
+    if (this.lastPlacedSpawnId === id) this.lastPlacedSpawnId = null
+    this.persistAndSyncSpawns()
+    return true
+  }
+
+  /** Remove last placed spawn, or last of the active team. */
+  undoLastSpawn(): boolean {
+    if (this.lastPlacedSpawnId) {
+      return this.removeSpawn(this.lastPlacedSpawnId)
+    }
+    for (let i = this.spawnLayout.spawns.length - 1; i >= 0; i--) {
+      if (this.spawnLayout.spawns[i].team === this.editorTeam) {
+        return this.removeSpawn(this.spawnLayout.spawns[i].id)
+      }
+    }
+    return false
+  }
+
+  clearTeamSpawns(team: TeamId) {
+    this.spawnLayout.spawns = this.spawnLayout.spawns.filter(
+      (s) => s.team !== team,
+    )
+    this.lastPlacedSpawnId = null
+    this.persistAndSyncSpawns()
+  }
+
+  clearAllSpawns() {
+    // Drop browser override so baked authored pads (e.g. desert) return
+    clearSpawnLayout(this.mapDef.id)
+    this.spawnLayout = authoredLayout(this.mapDef.id)
+    this.lastPlacedSpawnId = null
+    this.levelEditor.sync(this.spawnLayout.spawns)
+    this.levelEditor.highlight(null)
+    const snap = this.getSpawnLayout()
+    for (const fn of this.spawnLayoutListeners) fn(snap)
+  }
+
+  /** Force authored defaults (clears localStorage override). */
+  resetSpawnsToAuthored() {
+    this.clearAllSpawns()
+  }
+
+  setSpawnLayout(layout: MapSpawnLayout) {
+    this.spawnLayout = {
+      version: 1,
+      mapId: this.mapDef.id,
+      spawns: layout.spawns.map((s) => ({ ...s })),
+    }
+    this.lastPlacedSpawnId = null
+    this.persistAndSyncSpawns()
+  }
+
+  /** Teleport editor camera to a spawn (feet). */
+  goToSpawn(id: string): boolean {
+    const s = this.spawnLayout.spawns.find((p) => p.id === id)
+    if (!s) return false
+    this.applySpawn({ x: s.x, y: s.y, z: s.z }, s.yaw)
+    this.lastPlacedSpawnId = s.id
+    this.levelEditor.highlight(s.id)
+    return true
+  }
+
+  private persistAndSyncSpawns() {
+    this.spawnLayout.mapId = this.mapDef.id
+    saveSpawnLayout(this.spawnLayout)
+    this.levelEditor.sync(this.spawnLayout.spawns)
+    this.levelEditor.highlight(this.lastPlacedSpawnId)
+    const snap = this.getSpawnLayout()
+    for (const fn of this.spawnLayoutListeners) fn(snap)
+  }
+
   start() {
     if (this.running) return
     this.running = true
@@ -384,6 +596,7 @@ export class GameEngine {
     this.stop()
     this.input.detach()
     window.removeEventListener('resize', this.onResize)
+    this.levelEditor.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     for (const t of this.envTextures) t.dispose()
@@ -421,6 +634,11 @@ export class GameEngine {
   private tick(dt: number) {
     const input = this.input.sample()
     this.input.setAdsBlend(this.sniper.adsBlend)
+
+    if (this.levelEditorActive) {
+      this.tickLevelEditor(dt, input)
+      return
+    }
 
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
@@ -493,6 +711,48 @@ export class GameEngine {
     this.playerVisuals.updatePose(this.player, this.thirdPerson)
     this.combatFx.update(dt)
 
+    this.lastHitAge += dt
+    this.emitHud()
+  }
+
+  /** Walk / fly with map collision + place spawns; no combat. */
+  private tickLevelEditor(
+    dt: number,
+    input: import('../core/types').PlayerInput,
+  ) {
+    stepEditorMove(
+      this.player,
+      input,
+      dt,
+      this.colliders,
+      this.meshWorld,
+    )
+
+    // LMB / fire = drop a spawn for the active team
+    if (input.fire) {
+      this.placeSpawnAtPlayer(this.editorTeam)
+      gameAudio.uiClick()
+    }
+    // Reload = undo last
+    if (input.reload) {
+      if (this.undoLastSpawn()) gameAudio.uiClick()
+    }
+
+    // Simple free-look camera (no bob / ADS / viewmodel)
+    this.camera.position.set(
+      this.player.position.x,
+      this.player.position.y + this.player.eyeHeight,
+      this.player.position.z,
+    )
+    this.camera.rotation.order = 'YXZ'
+    this.camera.rotation.y = this.player.yaw
+    this.camera.rotation.x = this.player.pitch
+    this.camera.fov = LOOK.hipFov
+    this.camera.updateProjectionMatrix()
+
+    if (this.viewmodel.root) this.viewmodel.root.visible = false
+    this.dummiesSys.update(dt, this.dummies, true)
+    this.combatFx.update(dt)
     this.lastHitAge += dt
     this.emitHud()
   }

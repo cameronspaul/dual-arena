@@ -22,3 +22,20 @@ export {
   castMeshWorldHitscan,
   type MeshWorld,
 } from './meshCollision'
+export {
+  loadSpawnLayout,
+  saveSpawnLayout,
+  clearSpawnLayout,
+  exportSpawnLayoutJson,
+  parseSpawnLayout,
+  downloadText,
+  makeSpawnId,
+  emptyLayout,
+  authoredLayout,
+  pickPlaySpawn,
+  spawnsForTeam,
+  type TeamId,
+  type SpawnPoint,
+  type MapSpawnLayout,
+} from './spawns'
+export { AUTHORED_SPAWNS, getAuthoredSpawns } from './authoredSpawns'

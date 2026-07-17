@@ -701,10 +701,12 @@ function sampleFloor(
 
   const hits = _ray.intersectObjects(hitMeshes, false)
   for (const h of hits) {
-    // Prefer upward-facing surfaces (floors)
+    // Prefer upward-facing surfaces (floors). Face normals against the
+    // down-ray so DoubleSide / inverted tunnel floors still count.
     const n = h.face?.normal
     if (n) {
       const wn = n.clone().transformDirection(h.object.matrixWorld).normalize()
+      if (wn.dot(_down) > 0) wn.negate()
       if (wn.y < 0.35) continue
     }
     return { y: Math.max(0, h.point.y), hit: true }

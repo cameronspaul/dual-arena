@@ -372,6 +372,23 @@ export function eyePosition(p: PlayerBody): Vec3 {
 }
 
 /**
+ * Integrate velocity against world colliders only (no gravity / wish).
+ * Used by the level editor fly mode so free-look still rests on floors.
+ */
+export function resolvePlayerWorldCollisions(
+  p: PlayerBody,
+  worldColliders: AABB[],
+  meshWorld?: MeshWorld | null,
+  dt = 1 / 60,
+) {
+  if (meshWorld && meshWorld.meshes.length > 0) {
+    resolveMeshCollisions(p, meshWorld, dt)
+  } else {
+    resolveCollisions(p, worldColliders, dt)
+  }
+}
+
+/**
  * Pose-driven damage volumes from live height / eye height.
  * Body is a vertical capsule (not a box) so crouch/slide shrink it cleanly.
  */

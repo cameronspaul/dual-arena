@@ -4,6 +4,7 @@ import { Map as MapIcon } from 'lucide-react'
 
 import { GameCanvas } from '@/components/game/GameCanvas'
 import { GameHud } from '@/components/game/GameHud'
+import { LevelEditor } from '@/components/game/LevelEditor'
 import { MapPicker } from '@/components/game/MapPicker'
 import { ViewmodelEditor } from '@/components/game/ViewmodelEditor'
 import { SettingsDialog } from '@/components/SettingsDialog'
@@ -95,6 +96,10 @@ export default function Game() {
     if (typeof window === 'undefined') return false
     return new URLSearchParams(window.location.search).has('vm-edit')
   })
+  const [levelEdit, setLevelEdit] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return new URLSearchParams(window.location.search).has('level-edit')
+  })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [thirdPerson, setThirdPerson] = useState(false)
   const [dummiesPaused, setDummiesPaused] = useState(false)
@@ -118,11 +123,22 @@ export default function Game() {
     }
   }, [])
 
-  // Release pointer lock / block gameplay while settings are open
+  // Release pointer lock / block gameplay while settings are open.
+  // Viewmodel editor manages input itself; level editor keeps fly controls unless settings open.
   useEffect(() => {
     if (!engine || vmEdit) return
     engine.setGameplayEnabled(!settingsOpen)
   }, [engine, settingsOpen, vmEdit])
+
+  // Only one editor at a time
+  const openLevelEdit = useCallback(() => {
+    setVmEdit(false)
+    setLevelEdit(true)
+  }, [])
+  const openVmEdit = useCallback(() => {
+    setLevelEdit(false)
+    setVmEdit(true)
+  }, [])
 
   const startPlay = useCallback(
     (id: MapId, pref: SkyboxPreference) => {
@@ -202,7 +218,7 @@ export default function Game() {
         onHud={onHud}
         onEngine={onEngine}
       />
-      {!vmEdit && (
+      {!vmEdit && !levelEdit && (
         <GameHud
           hud={hud}
           onOpenSettings={() => setSettingsOpen(true)}
@@ -210,11 +226,21 @@ export default function Game() {
       )}
 
       {/* Map + sky badge */}
-      {!vmEdit && (
+      {!vmEdit && !levelEdit && (
         <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs font-medium text-white/80 backdrop-blur">
           {mapName}
           <span className="mx-1.5 text-white/35">·</span>
           {SKYBOX_LABELS[sessionSkybox]}
+        </div>
+      )}
+
+      {/* Crosshair while level editing (spawn aim) */}
+      {levelEdit && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+          <div className="relative h-5 w-5">
+            <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/70" />
+            <div className="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-white/70" />
+          </div>
         </div>
       )}
 
@@ -223,6 +249,13 @@ export default function Game() {
           engine={engine}
           open={vmEdit}
           onClose={() => setVmEdit(false)}
+        />
+      ) : levelEdit ? (
+        <LevelEditor
+          engine={engine}
+          open={levelEdit}
+          mapName={mapName}
+          onClose={() => setLevelEdit(false)}
         />
       ) : (
         <div className="absolute bottom-3 left-3 z-40 flex flex-wrap items-center gap-2">
@@ -237,7 +270,10 @@ export default function Game() {
               Change map
             </span>
           </button>
-          <button type="button" onClick={() => setVmEdit(true)} className={devBtn}>
+          <button type="button" onClick={openLevelEdit} className={devBtn}>
+            Level editor
+          </button>
+          <button type="button" onClick={openVmEdit} className={devBtn}>
             Viewmodel editor
           </button>
           <button

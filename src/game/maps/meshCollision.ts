@@ -6,6 +6,13 @@
  *
  * Format: keep **glTF binary (.glb)** — Three.js loads it natively. USDZ is
  * for Apple AR and is a poor fit for this stack.
+ *
+ * Caveats (tunnels / marketplace GLBs):
+ * - Materials are DoubleSide so thin shells work, but face normals are *not*
+ *   flipped by Three.js for backfaces. Always re-orient against the ray.
+ * - Floors often have inverted or mixed winding; skip non-walkable hits and
+ *   keep scanning down the ray for a real floor.
+ * - Single center probes fall through mesh seams — use multi-point feet.
  */
 import * as THREE from 'three'
 import type { PlayerBody, Vec3 } from '../core/types'
@@ -36,6 +43,20 @@ const STEP_HEIGHT = 0.4
  */
 const AIR_LAND_SNAP = 0.1
 const SKIN = 0.02
+/** Walkable if surface normal points mostly up (after ray-facing fix). */
+const WALKABLE_NY = 0.45
+/** Horizontal offsets for multi-foot ground probes (× radius). */
+const GROUND_PROBE_XZ: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [0.55, 0],
+  [-0.55, 0],
+  [0, 0.55],
+  [0, -0.55],
+  [0.4, 0.4],
+  [-0.4, 0.4],
+  [0.4, -0.4],
+  [-0.4, -0.4],
+]
 
 /**
  * Prepare loaded map meshes for collision/hitscan raycasts.
@@ -117,6 +138,22 @@ function nearbyMeshes(
   return out.length > 0 ? out : meshes
 }
 
+function allHits(
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  meshes: THREE.Object3D[],
+  maxDist: number,
+  minDist = 0,
+): THREE.Intersection[] {
+  if (meshes.length === 0) return []
+  _ray.set(origin, dir)
+  _ray.near = Math.max(0, minDist)
+  _ray.far = maxDist
+  const hits = _ray.intersectObjects(meshes, false)
+  if (minDist <= 0) return hits
+  return hits.filter((h) => h.distance >= minDist)
+}
+
 function firstHit(
   origin: THREE.Vector3,
   dir: THREE.Vector3,
@@ -125,25 +162,75 @@ function firstHit(
   /** Ignore hits closer than this (standing inside thin floors / self) */
   minDist = 0,
 ): THREE.Intersection | null {
-  if (meshes.length === 0) return null
-  _ray.set(origin, dir)
-  _ray.near = Math.max(0, minDist)
-  _ray.far = maxDist
-  // Sorted by distance — skip any residual under minDist
-  const hits = _ray.intersectObjects(meshes, false)
-  for (const h of hits) {
-    if (h.distance >= minDist) return h
-  }
-  return null
+  const hits = allHits(origin, dir, meshes, maxDist, minDist)
+  return hits.length > 0 ? hits[0] : null
 }
 
-function hitNormal(h: THREE.Intersection): THREE.Vector3 {
+/**
+ * World-space face normal oriented to face *against* the ray (toward origin).
+ * Required because DoubleSide hits still report the geometric (possibly inverted)
+ * winding — without this, tunnel floors look non-walkable and walls eject you.
+ */
+function hitNormalFacingRay(
+  h: THREE.Intersection,
+  rayDir: THREE.Vector3,
+): THREE.Vector3 {
   if (h.face) {
     _n.copy(h.face.normal).transformDirection(h.object.matrixWorld).normalize()
   } else {
     _n.set(0, 1, 0)
   }
+  if (_n.dot(rayDir) > 0) {
+    _n.negate()
+  }
   return _n
+}
+
+/**
+ * First walkable floor along a down-ray (skips debris / inverted / steep hits).
+ */
+function firstWalkableDown(
+  origin: THREE.Vector3,
+  meshes: THREE.Object3D[],
+  maxDist: number,
+): { pointY: number; ny: number; distance: number } | null {
+  const hits = allHits(origin, _down, meshes, maxDist)
+  for (const h of hits) {
+    const n = hitNormalFacingRay(h, _down)
+    if (n.y > WALKABLE_NY) {
+      return { pointY: h.point.y, ny: n.y, distance: h.distance }
+    }
+  }
+  return null
+}
+
+/**
+ * Multi-foot ground sample. Returns the *highest* walkable contact so a seam
+ * under the capsule center cannot drop you through tunnel floors.
+ */
+function sampleGround(
+  pos: Vec3,
+  radius: number,
+  probeStartY: number,
+  maxDown: number,
+  meshes: THREE.Object3D[],
+): { floorY: number; ny: number } | null {
+  let bestY = -Infinity
+  let bestNy = 0
+  let found = false
+
+  for (const [ox, oz] of GROUND_PROBE_XZ) {
+    _origin.set(pos.x + ox * radius, probeStartY, pos.z + oz * radius)
+    const hit = firstWalkableDown(_origin, meshes, maxDown)
+    if (!hit) continue
+    if (hit.pointY > bestY) {
+      bestY = hit.pointY
+      bestNy = hit.ny
+      found = true
+    }
+  }
+
+  return found ? { floorY: bestY, ny: bestNy } : null
 }
 
 /**
@@ -178,55 +265,65 @@ export function resolveMeshCollisions(
   pos.y += vel.y * dt
   p.grounded = false
 
-  // Ceiling
+  // Ceiling — normal faces the up-ray so inverted roof shells still stop you
   _origin.set(pos.x, pos.y + h * 0.5, pos.z)
-  const ceil = firstHit(_origin, _up, meshes, h * 0.55 + 0.15)
-  if (ceil && vel.y > 0) {
-    pos.y = ceil.point.y - h - SKIN
-    vel.y = 0
+  const ceilHits = allHits(_origin, _up, meshes, h * 0.55 + 0.15)
+  for (const ceil of ceilHits) {
+    const cn = hitNormalFacingRay(ceil, _up)
+    // Ceiling-ish: mostly downward after facing the up-ray
+    if (cn.y > -0.2) continue
+    if (vel.y > 0) {
+      pos.y = ceil.point.y - h - SKIN
+      vel.y = 0
+    }
+    break
   }
 
-  // Ground: cast from above the feet downward
+  // Ground: multi-point casts from above the feet
   const probeStartY = pos.y + GROUND_PROBE + STEP_HEIGHT
-  _origin.set(pos.x, probeStartY, pos.z)
-  // Reach far enough to recover one-frame overshoot when falling hard
   const fallStep = Math.max(0, -vel.y * dt)
+  // Slightly longer grounded reach so tunnel lips / small drops don't unstick
   const maxDown =
-    GROUND_PROBE + STEP_HEIGHT + fallStep + (wasGrounded ? 0.35 : 0.2)
-  const ground = firstHit(_origin, _down, meshes, maxDown)
+    GROUND_PROBE + STEP_HEIGHT + fallStep + (wasGrounded ? 0.5 : 0.28)
+
+  const ground = sampleGround(pos, r, probeStartY, maxDown, meshes)
 
   if (ground) {
-    const n = hitNormal(ground)
-    const floorY = ground.point.y
-    // Walkable if mostly upward-facing
-    if (n.y > 0.45) {
-      const feet = pos.y
-      // gap > 0 → feet above floor; gap < 0 → penetrated
-      const gap = feet - floorY
-      // Still rising hard: never stick (apex / launch)
-      if (vel.y <= 0.05) {
-        if (wasGrounded) {
-          // Stick to slopes / small drops and allow step-up while walking
-          if (gap <= STEP_HEIGHT + 0.05 && gap >= -(STEP_HEIGHT + 0.08)) {
-            pos.y = floorY
-            if (vel.y < 0) vel.y = 0
-            p.grounded = true
-          }
-        } else {
-          // Airborne: land only when we actually reach the surface.
-          // Snap-up recovers tunneling; tiny snap-down is skin only.
-          const penMax = Math.max(0.22, fallStep + 0.08)
-          if (gap <= AIR_LAND_SNAP && gap >= -penMax) {
-            pos.y = floorY
-            if (vel.y < 0) vel.y = 0
-            p.grounded = true
-          }
+    const floorY = ground.floorY
+    const feet = pos.y
+    // gap > 0 → feet above floor; gap < 0 → penetrated
+    const gap = feet - floorY
+    // Still rising hard: never stick (apex / launch)
+    if (vel.y <= 0.05) {
+      if (wasGrounded) {
+        // Stick to slopes / small drops and allow step-up while walking.
+        // Extra penetration allowance recovers thin-floor tunnel frames.
+        if (gap <= STEP_HEIGHT + 0.05 && gap >= -(STEP_HEIGHT + 0.2)) {
+          pos.y = floorY
+          if (vel.y < 0) vel.y = 0
+          p.grounded = true
+        }
+      } else {
+        // Airborne: land only when we actually reach the surface.
+        // Snap-up recovers tunneling; tiny snap-down is skin only.
+        const penMax = Math.max(0.35, fallStep + 0.12)
+        if (gap <= AIR_LAND_SNAP && gap >= -penMax) {
+          pos.y = floorY
+          if (vel.y < 0) vel.y = 0
+          p.grounded = true
         }
       }
-    } else if (n.y < 0.2 && ground.distance < r + 0.15) {
-      // Steep surface — push out horizontally a bit
-      pos.x += n.x * (r * 0.25)
-      pos.z += n.z * (r * 0.25)
+    }
+  } else {
+    // No walkable floor in range — still push off steep surfaces near feet
+    _origin.set(pos.x, pos.y + GROUND_PROBE, pos.z)
+    const steep = firstHit(_origin, _down, meshes, GROUND_PROBE + r)
+    if (steep) {
+      const n = hitNormalFacingRay(steep, _down)
+      if (n.y < 0.2 && steep.distance < r + 0.15) {
+        pos.x += n.x * (r * 0.25)
+        pos.z += n.z * (r * 0.25)
+      }
     }
   }
 
@@ -269,30 +366,32 @@ function resolveWalls(
 
       _origin.set(pos.x, y, pos.z)
       _dir.set(dx, 0, dz)
-      const hit = firstHit(_origin, _dir, meshes, reach + 0.05)
-      if (!hit) continue
+      // Walk hits until we find a real wall (skip floors / walkable ramps)
+      const hits = allHits(_origin, _dir, meshes, reach + 0.05)
+      for (const hit of hits) {
+        const n = hitNormalFacingRay(hit, _dir)
+        // Ignore floor-ish hits for wall resolve
+        if (n.y > 0.55) continue
 
-      const n = hitNormal(hit)
-      // Ignore floor-ish hits for wall resolve
-      if (n.y > 0.55) continue
+        const pen = reach - hit.distance
+        if (pen <= 0) continue
 
-      const pen = reach - hit.distance
-      if (pen <= 0) continue
+        // Push out along horizontal normal (faces player after ray fix)
+        const nx = n.x
+        const nz = n.z
+        const nl = Math.hypot(nx, nz)
+        if (nl < 1e-5) continue
+        const inv = 1 / nl
+        pos.x += nx * inv * (pen + SKIN)
+        pos.z += nz * inv * (pen + SKIN)
 
-      // Push out along horizontal normal
-      const nx = n.x
-      const nz = n.z
-      const nl = Math.hypot(nx, nz)
-      if (nl < 1e-5) continue
-      const inv = 1 / nl
-      pos.x += (nx * inv) * (pen + SKIN)
-      pos.z += (nz * inv) * (pen + SKIN)
-
-      // Kill velocity into the wall
-      const vdot = vel.x * (nx * inv) + vel.z * (nz * inv)
-      if (vdot < 0) {
-        vel.x -= (nx * inv) * vdot
-        vel.z -= (nz * inv) * vdot
+        // Kill velocity into the wall
+        const vdot = vel.x * (nx * inv) + vel.z * (nz * inv)
+        if (vdot < 0) {
+          vel.x -= nx * inv * vdot
+          vel.z -= nz * inv * vdot
+        }
+        break
       }
     }
   }
@@ -329,11 +428,10 @@ export function castMeshWorldHitscan(
     0.12,
   )
   if (!hit) return null
-  const n = hitNormal(hit)
+  const n = hitNormalFacingRay(hit, _dir)
   return {
     point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
     distance: hit.distance,
     normal: { x: n.x, y: n.y, z: n.z },
   }
 }
-
