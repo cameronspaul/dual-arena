@@ -34,6 +34,8 @@ export function fireShot(opts: {
   player: PlayerBody
   sniper: SniperState
   colliders: AABB[]
+  /** Editor barrier walls — always block bullets (even on GLB mesh maps). */
+  barrierColliders?: AABB[]
   dummies: DummyTarget[]
   respawns: RespawnTimer[]
   dummiesSys: DummySystem
@@ -49,6 +51,7 @@ export function fireShot(opts: {
     player,
     sniper,
     colliders,
+    barrierColliders,
     dummies,
     respawns,
     dummiesSys,
@@ -77,13 +80,24 @@ export function fireShot(opts: {
     SNIPER.maxRange,
   )
 
-  // When mesh world is active, skip crude AABBs for bullets — they often
-  // swallow the player and return t≈0.
+  // When mesh world is active, skip crude cover AABBs for bullets — they often
+  // swallow the player and return t≈0. Barrier walls still always block.
   const useAabbWorld = !castWorldMesh
   let worldHit: RayHit | null = useAabbWorld
     ? castHitscan(origin, dir, [], colliders)
     : null
   if (worldHit && worldHit.distance < SKIN) worldHit = null
+
+  if (barrierColliders && barrierColliders.length > 0) {
+    const barrierHit = castHitscan(origin, dir, [], barrierColliders)
+    if (
+      barrierHit &&
+      barrierHit.distance >= SKIN &&
+      (!worldHit || barrierHit.distance < worldHit.distance)
+    ) {
+      worldHit = barrierHit
+    }
+  }
 
   let meshWorld = castWorldMesh?.(origin, dir, SNIPER.maxRange) ?? null
   if (meshWorld && meshWorld.distance < SKIN) meshWorld = null

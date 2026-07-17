@@ -38,4 +38,19 @@ export {
   type SpawnPoint,
   type MapSpawnLayout,
 } from './spawns'
+export {
+  loadBarrierLayout,
+  saveBarrierLayout,
+  clearBarrierLayout,
+  exportBarrierLayoutJson,
+  parseBarrierLayout,
+  makeBarrierId,
+  emptyBarrierLayout,
+  barrierToAabb,
+  barriersToAabbs,
+  wallSizeFromYaw,
+  BARRIER_DEFAULTS,
+  type BarrierWall,
+  type MapBarrierLayout,
+} from './barriers'
 export { AUTHORED_SPAWNS, getAuthoredSpawns } from './authoredSpawns'

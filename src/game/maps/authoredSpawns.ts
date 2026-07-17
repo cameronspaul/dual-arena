@@ -159,6 +159,40 @@ export const AUTHORED_SPAWNS: Partial<Record<MapId, readonly SpawnPoint[]>> = {
       yaw: 8.9716,
     },
   ],
+  'tdm-location': [
+    {
+      id: 'blue-0',
+      team: 'blue',
+      x: -5.921,
+      y: 0.167,
+      z: -4.872,
+      yaw: 6.0168,
+    },
+    {
+      id: 'blue-1',
+      team: 'blue',
+      x: -5.007,
+      y: 0.167,
+      z: 0.243,
+      yaw: 5.7765,
+    },
+    {
+      id: 'red-0',
+      team: 'red',
+      x: -5.523,
+      y: 0.167,
+      z: -67.276,
+      yaw: 3.4727,
+    },
+    {
+      id: 'red-1',
+      team: 'red',
+      x: -5.269,
+      y: 0.167,
+      z: -71.716,
+      yaw: 3.2402,
+    },
+  ],
 }
 
 export function getAuthoredSpawns(mapId: string): SpawnPoint[] {

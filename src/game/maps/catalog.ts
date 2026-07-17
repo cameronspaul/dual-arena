@@ -210,8 +210,9 @@ export const MAPS: Record<MapId, MapDef> = {
     scale: 0.5,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 0, y: 0, z: 6 },
-    spawnYaw: Math.PI,
+    // Solo fallback ≈ blue-0 (team pads in authoredSpawns.ts)
+    spawn: { x: -5.921, y: 0.167, z: -4.872 },
+    spawnYaw: 6.0168,
     dummies: arenaDummies(12),
     dummyBounds: 40,
     cameraFar: 280,

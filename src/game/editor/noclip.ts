@@ -29,6 +29,7 @@ export function stepEditorMove(
   dt: number,
   worldColliders: AABB[],
   meshWorld?: MeshWorld | null,
+  extraColliders?: AABB[] | null,
 ) {
   p.yaw = input.yaw
   p.pitch = input.pitch
@@ -86,7 +87,13 @@ export function stepEditorMove(
     }
   }
 
-  resolvePlayerWorldCollisions(p, worldColliders, meshWorld, dt)
+  resolvePlayerWorldCollisions(
+    p,
+    worldColliders,
+    meshWorld,
+    dt,
+    extraColliders,
+  )
 
   // Kill residual slide when standing still on ground
   if (p.grounded && !fly && Math.hypot(input.forward, input.right) < 0.01) {

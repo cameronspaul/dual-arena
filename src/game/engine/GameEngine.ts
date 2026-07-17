@@ -15,17 +15,28 @@ import {
   loadEnvForMap,
   loadGltfMap,
   authoredLayout,
+  BARRIER_DEFAULTS,
+  barriersToAabbs,
+  clearBarrierLayout,
   clearSpawnLayout,
+  emptyBarrierLayout,
+  loadBarrierLayout,
   loadSpawnLayout,
+  makeBarrierId,
   makeSpawnId,
   pickPlaySpawn,
+  saveBarrierLayout,
   saveSpawnLayout,
+  wallSizeFromYaw,
+  type BarrierWall,
+  type MapBarrierLayout,
   type MapDef,
   type MapId,
   type MapSpawnLayout,
   type SpawnPoint,
   type TeamId,
 } from '../maps'
+import { facingXZ } from '../core/math'
 import type { SkyboxId } from '../scene/skyboxes'
 import { createPlayer, stepPlayer } from '../sim/player'
 import {
@@ -104,20 +115,30 @@ export class GameEngine {
   private mapReady = false
   private mapLoadError: string | null = null
 
-  /** Level editor: noclip + team spawn placement */
+  /** Level editor: noclip + team spawn / barrier placement */
   private levelEditor = new LevelEditorSystem()
   private levelEditorActive = false
   private spawnLayout: MapSpawnLayout
+  private barrierLayout: MapBarrierLayout
+  private barrierColliders: import('../core/types').AABB[] = []
   private editorTeam: TeamId = 'blue'
   private editorSnapFloor = true
+  private editorTool: 'spawn' | 'barrier' = 'spawn'
+  private barrierLength: number = BARRIER_DEFAULTS.length
+  private barrierHeight: number = BARRIER_DEFAULTS.height
+  private barrierThickness: number = BARRIER_DEFAULTS.thickness
   private lastPlacedSpawnId: string | null = null
+  private lastPlacedBarrierId: string | null = null
   private spawnLayoutListeners = new Set<(layout: MapSpawnLayout) => void>()
+  private barrierLayoutListeners = new Set<(layout: MapBarrierLayout) => void>()
 
   constructor(container: HTMLElement, opts: GameEngineOptions = {}) {
     this.container = container
     this.mapDef = getMap(opts.mapId)
     this.skyboxId = opts.skybox ?? 'day'
     this.spawnLayout = loadSpawnLayout(this.mapDef.id)
+    this.barrierLayout = loadBarrierLayout(this.mapDef.id)
+    this.rebuildBarrierColliders()
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(this.mapDef.bgColor)
@@ -163,6 +184,7 @@ export class GameEngine {
     this.playerVisuals.buildPlaceholder(this.scene)
     this.scene.add(this.levelEditor.root)
     this.levelEditor.sync(this.spawnLayout.spawns)
+    this.levelEditor.syncBarriers(this.barrierLayout.barriers)
     void this.bootstrapMap()
     void this.viewmodel.load(this.camera, this.scene)
     this.input.attach(this.renderer.domElement)
@@ -271,6 +293,7 @@ export class GameEngine {
       }
       this.mapReady = true
       this.levelEditor.sync(this.spawnLayout.spawns)
+      this.levelEditor.syncBarriers(this.barrierLayout.barriers)
       void this.dummiesSys.load(
         this.scene,
         this.dummies,
@@ -412,7 +435,7 @@ export class GameEngine {
     return this.dummiesPaused
   }
 
-  // --- Level editor (noclip + team spawns) ---
+  // --- Level editor (noclip + team spawns + barrier walls) ---
 
   setLevelEditorActive(active: boolean) {
     this.levelEditorActive = active
@@ -429,6 +452,164 @@ export class GameEngine {
       this.viewmodel.root.visible = true
     }
     this.levelEditor.sync(this.spawnLayout.spawns)
+    this.levelEditor.syncBarriers(this.barrierLayout.barriers)
+  }
+
+  getEditorTool(): 'spawn' | 'barrier' {
+    return this.editorTool
+  }
+
+  setEditorTool(tool: 'spawn' | 'barrier') {
+    this.editorTool = tool
+  }
+
+  getBarrierDefaults() {
+    return {
+      length: this.barrierLength,
+      height: this.barrierHeight,
+      thickness: this.barrierThickness,
+    }
+  }
+
+  setBarrierDefaults(opts: {
+    length?: number
+    height?: number
+    thickness?: number
+  }) {
+    if (opts.length != null && opts.length > 0.1) this.barrierLength = opts.length
+    if (opts.height != null && opts.height > 0.1) this.barrierHeight = opts.height
+    if (opts.thickness != null && opts.thickness > 0.05) {
+      this.barrierThickness = opts.thickness
+    }
+  }
+
+  getBarrierLayout(): MapBarrierLayout {
+    return {
+      version: 1,
+      mapId: this.barrierLayout.mapId,
+      barriers: this.barrierLayout.barriers.map((b) => ({ ...b })),
+    }
+  }
+
+  onBarrierLayout(fn: (layout: MapBarrierLayout) => void) {
+    this.barrierLayoutListeners.add(fn)
+    return () => this.barrierLayoutListeners.delete(fn)
+  }
+
+  /**
+   * Place an axis-aligned barrier wall in front of the player.
+   * Orientation snaps to cardinal axes from look yaw (thin face blocks you).
+   */
+  placeBarrierAtPlayer(): BarrierWall | null {
+    const yaw = this.player.yaw
+    const size = wallSizeFromYaw(
+      yaw,
+      this.barrierLength,
+      this.barrierHeight,
+      this.barrierThickness,
+    )
+    const look = facingXZ(yaw)
+    // Sit just ahead of the thin face so the player is not inside on place
+    const thin = Math.min(size.width, size.depth)
+    const offset = thin * 0.5 + this.player.radius + 0.35
+    let x = this.player.position.x + look.x * offset
+    let z = this.player.position.z + look.z * offset
+    let floorY = this.player.position.y
+    if (this.editorSnapFloor) {
+      const floor = this.levelEditor.sampleFloorY(
+        x,
+        z,
+        Math.max(this.player.position.y + 4, 20),
+      )
+      if (floor !== null) floorY = floor
+    }
+    const wall: BarrierWall = {
+      id: makeBarrierId(this.barrierLayout.barriers),
+      x,
+      y: floorY + size.height * 0.5,
+      z,
+      width: size.width,
+      height: size.height,
+      depth: size.depth,
+    }
+    this.barrierLayout.barriers.push(wall)
+    this.lastPlacedBarrierId = wall.id
+    this.persistAndSyncBarriers()
+    return wall
+  }
+
+  removeBarrier(id: string): boolean {
+    const before = this.barrierLayout.barriers.length
+    this.barrierLayout.barriers = this.barrierLayout.barriers.filter(
+      (b) => b.id !== id,
+    )
+    if (this.barrierLayout.barriers.length === before) return false
+    if (this.lastPlacedBarrierId === id) this.lastPlacedBarrierId = null
+    this.persistAndSyncBarriers()
+    return true
+  }
+
+  undoLastBarrier(): boolean {
+    if (this.lastPlacedBarrierId) {
+      return this.removeBarrier(this.lastPlacedBarrierId)
+    }
+    const last = this.barrierLayout.barriers[this.barrierLayout.barriers.length - 1]
+    if (!last) return false
+    return this.removeBarrier(last.id)
+  }
+
+  clearAllBarriers() {
+    clearBarrierLayout(this.mapDef.id)
+    this.barrierLayout = emptyBarrierLayout(this.mapDef.id)
+    this.lastPlacedBarrierId = null
+    this.rebuildBarrierColliders()
+    this.levelEditor.syncBarriers(this.barrierLayout.barriers)
+    this.levelEditor.highlightBarrier(null)
+    const snap = this.getBarrierLayout()
+    for (const fn of this.barrierLayoutListeners) fn(snap)
+  }
+
+  setBarrierLayout(layout: MapBarrierLayout) {
+    this.barrierLayout = {
+      version: 1,
+      mapId: this.mapDef.id,
+      barriers: layout.barriers.map((b) => ({ ...b })),
+    }
+    this.lastPlacedBarrierId = null
+    this.persistAndSyncBarriers()
+  }
+
+  goToBarrier(id: string): boolean {
+    const b = this.barrierLayout.barriers.find((w) => w.id === id)
+    if (!b) return false
+    // Stand just outside the thin face
+    const halfThin = Math.min(b.width, b.depth) * 0.5 + this.player.radius + 0.4
+    const alongX = b.width < b.depth
+    this.applySpawn(
+      {
+        x: alongX ? b.x + halfThin : b.x,
+        y: b.y - b.height * 0.5,
+        z: alongX ? b.z : b.z + halfThin,
+      },
+      this.player.yaw,
+    )
+    this.lastPlacedBarrierId = b.id
+    this.levelEditor.highlightBarrier(b.id)
+    return true
+  }
+
+  private rebuildBarrierColliders() {
+    this.barrierColliders = barriersToAabbs(this.barrierLayout.barriers)
+  }
+
+  private persistAndSyncBarriers() {
+    this.barrierLayout.mapId = this.mapDef.id
+    saveBarrierLayout(this.barrierLayout)
+    this.rebuildBarrierColliders()
+    this.levelEditor.syncBarriers(this.barrierLayout.barriers)
+    this.levelEditor.highlightBarrier(this.lastPlacedBarrierId)
+    const snap = this.getBarrierLayout()
+    for (const fn of this.barrierLayoutListeners) fn(snap)
   }
 
   isLevelEditorActive() {
@@ -642,7 +823,14 @@ export class GameEngine {
 
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
-    stepPlayer(this.player, input, dt, this.colliders, this.meshWorld)
+    stepPlayer(
+      this.player,
+      input,
+      dt,
+      this.colliders,
+      this.meshWorld,
+      this.barrierColliders,
+    )
     stepSniper(this.sniper, input, dt)
     if (!this.dummiesPaused) {
       stepDummies(this.dummies, dt)
@@ -666,6 +854,7 @@ export class GameEngine {
         player: this.player,
         sniper: this.sniper,
         colliders: this.colliders,
+        barrierColliders: this.barrierColliders,
         dummies: this.dummies,
         respawns: this.respawns,
         dummiesSys: this.dummiesSys,
@@ -715,7 +904,7 @@ export class GameEngine {
     this.emitHud()
   }
 
-  /** Walk / fly with map collision + place spawns; no combat. */
+  /** Walk / fly with map collision + place spawns / barriers; no combat. */
   private tickLevelEditor(
     dt: number,
     input: import('../core/types').PlayerInput,
@@ -726,16 +915,25 @@ export class GameEngine {
       dt,
       this.colliders,
       this.meshWorld,
+      this.barrierColliders,
     )
 
-    // LMB / fire = drop a spawn for the active team
+    // LMB / fire = place active tool
     if (input.fire) {
-      this.placeSpawnAtPlayer(this.editorTeam)
-      gameAudio.uiClick()
+      if (this.editorTool === 'barrier') {
+        if (this.placeBarrierAtPlayer()) gameAudio.uiClick()
+      } else {
+        this.placeSpawnAtPlayer(this.editorTeam)
+        gameAudio.uiClick()
+      }
     }
-    // Reload = undo last
+    // Reload = undo last of active tool
     if (input.reload) {
-      if (this.undoLastSpawn()) gameAudio.uiClick()
+      if (this.editorTool === 'barrier') {
+        if (this.undoLastBarrier()) gameAudio.uiClick()
+      } else if (this.undoLastSpawn()) {
+        gameAudio.uiClick()
+      }
     }
 
     // Simple free-look camera (no bob / ADS / viewmodel)

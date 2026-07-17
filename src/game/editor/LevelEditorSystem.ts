@@ -1,13 +1,17 @@
 /**
- * Visual spawn markers + floor snap for the level editor.
+ * Visual spawn markers, barrier wall previews, + floor snap for the level editor.
  */
 import * as THREE from 'three'
+import type { BarrierWall } from '../maps/barriers'
 import type { SpawnPoint, TeamId } from '../maps/spawns'
 
 const TEAM_COLOR: Record<TeamId, number> = {
   blue: 0x3b82f6,
   red: 0xef4444,
 }
+
+const BARRIER_COLOR = 0xf59e0b
+const BARRIER_EDGE = 0xfbbf24
 
 const _ray = new THREE.Raycaster()
 const _origin = new THREE.Vector3()
@@ -16,17 +20,30 @@ const _down = new THREE.Vector3(0, -1, 0)
 export class LevelEditorSystem {
   readonly root = new THREE.Group()
   private markers = new Map<string, THREE.Object3D>()
+  private barrierMeshes = new Map<string, THREE.Object3D>()
   private hitMeshes: THREE.Object3D[] = []
   private active = false
 
   constructor() {
     this.root.name = 'level-editor-markers'
     this.root.visible = false
+    this.root.frustumCulled = false
   }
 
   setActive(active: boolean) {
     this.active = active
     this.root.visible = active
+    // Re-assert after map loads / scene swaps so gizmos never stay hidden
+    if (active) {
+      this.root.frustumCulled = false
+      for (const obj of this.barrierMeshes.values()) {
+        obj.visible = true
+        obj.frustumCulled = false
+      }
+      for (const obj of this.markers.values()) {
+        obj.visible = true
+      }
+    }
   }
 
   isActive() {
@@ -97,14 +114,132 @@ export class LevelEditorSystem {
     }
   }
 
+  syncBarriers(barriers: BarrierWall[]) {
+    const keep = new Set(barriers.map((b) => b.id))
+    for (const [id, obj] of this.barrierMeshes) {
+      if (!keep.has(id)) {
+        this.root.remove(obj)
+        disposeObject(obj)
+        this.barrierMeshes.delete(id)
+      }
+    }
+    for (const b of barriers) {
+      let obj = this.barrierMeshes.get(b.id)
+      if (!obj) {
+        obj = buildBarrierMesh()
+        obj.name = `barrier-${b.id}`
+        this.barrierMeshes.set(b.id, obj)
+        this.root.add(obj)
+      }
+      // Unit cube scaled to wall extents — keep culled off so thin slabs
+      // never drop out of the frustum from bad local bounds.
+      obj.position.set(b.x, b.y, b.z)
+      obj.scale.set(
+        Math.max(0.05, b.width),
+        Math.max(0.05, b.height),
+        Math.max(0.05, b.depth),
+      )
+      obj.visible = true
+      obj.updateMatrixWorld(true)
+    }
+  }
+
+  highlightBarrier(id: string | null) {
+    for (const [bid, obj] of this.barrierMeshes) {
+      const selected = bid === id
+      const fill = obj.getObjectByName('fill') as THREE.Mesh | undefined
+      if (fill?.material && !Array.isArray(fill.material)) {
+        const mat = fill.material as THREE.MeshBasicMaterial
+        mat.opacity = selected ? 0.55 : 0.38
+      }
+      const edges = obj.getObjectByName('edges') as THREE.LineSegments | undefined
+      if (edges?.material && !Array.isArray(edges.material)) {
+        const mat = edges.material as THREE.LineBasicMaterial
+        mat.opacity = selected ? 1 : 0.95
+        mat.linewidth = 1
+      }
+    }
+  }
+
   dispose() {
     for (const obj of this.markers.values()) {
       this.root.remove(obj)
       disposeObject(obj)
     }
     this.markers.clear()
+    for (const obj of this.barrierMeshes.values()) {
+      this.root.remove(obj)
+      disposeObject(obj)
+    }
+    this.barrierMeshes.clear()
     this.root.removeFromParent()
   }
+}
+
+function buildBarrierMesh(): THREE.Group {
+  const g = new THREE.Group()
+  // Editor gizmo: always draw on top of map geo so thin walls stay visible
+  // (fog / depth / translucency used to hide them intermittently).
+  g.renderOrder = 1000
+  g.frustumCulled = false
+
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1)
+
+  const fill = new THREE.Mesh(
+    boxGeo,
+    new THREE.MeshBasicMaterial({
+      color: BARRIER_COLOR,
+      transparent: true,
+      opacity: 0.38,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+      toneMapped: false,
+    }),
+  )
+  fill.name = 'fill'
+  fill.renderOrder = 1000
+  fill.frustumCulled = false
+  g.add(fill)
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(boxGeo),
+    new THREE.LineBasicMaterial({
+      color: BARRIER_EDGE,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false,
+    }),
+  )
+  edges.name = 'edges'
+  edges.renderOrder = 1001
+  edges.frustumCulled = false
+  g.add(edges)
+
+  // Extra mid-plane so edge-on thin walls still read as a solid strip
+  const stripe = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      color: BARRIER_EDGE,
+      transparent: true,
+      opacity: 0.5,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+      toneMapped: false,
+    }),
+  )
+  stripe.name = 'stripe'
+  stripe.renderOrder = 1002
+  stripe.frustumCulled = false
+  g.add(stripe)
+
+  return g
 }
 
 function buildMarker(team: TeamId): THREE.Group {
@@ -185,10 +320,11 @@ function setMarkerTeam(obj: THREE.Object3D, team: TeamId) {
 
 function disposeObject(obj: THREE.Object3D) {
   obj.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return
-    child.geometry.dispose()
-    const m = child.material
-    if (Array.isArray(m)) m.forEach((x) => x.dispose())
-    else m.dispose()
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      child.geometry.dispose()
+      const m = child.material
+      if (Array.isArray(m)) m.forEach((x) => x.dispose())
+      else m.dispose()
+    }
   })
 }

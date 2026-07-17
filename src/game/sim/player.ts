@@ -135,20 +135,27 @@ function stateAfterSlide(
 }
 
 /**
- * Axis-separated capsule (as vertical segment + radius) vs world AABBs.
- * Simplified: treat as cylinder-ish AABB with radius expansion.
+ * Axis-separated capsule vs world AABBs (no position integration).
+ * Used after mesh resolve for editor barrier walls on GLB maps.
  */
-function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
+function resolveAabbOverlaps(
+  p: PlayerBody,
+  world: AABB[],
+  opts: { infiniteFloor?: boolean; integrate?: boolean } = {},
+  dt = 0,
+) {
+  const infiniteFloor = opts.infiniteFloor ?? false
+  const integrate = opts.integrate ?? false
   const vel = p.velocity
   const pos = p.position
   const r = p.radius
   const h = p.height
 
-  // integrate X
-  pos.x += vel.x * dt
+  if (integrate) {
+    pos.x += vel.x * dt
+  }
   for (const box of world) {
     if (overlapsCapsule(pos, r, h, box)) {
-      // push out on X
       const cx = (box.min.x + box.max.x) * 0.5
       if (pos.x < cx) pos.x = box.min.x - r - 1e-4
       else pos.x = box.max.x + r + 1e-4
@@ -156,8 +163,9 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
     }
   }
 
-  // integrate Z
-  pos.z += vel.z * dt
+  if (integrate) {
+    pos.z += vel.z * dt
+  }
   for (const box of world) {
     if (overlapsCapsule(pos, r, h, box)) {
       const cz = (box.min.z + box.max.z) * 0.5
@@ -167,25 +175,25 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
     }
   }
 
-  // integrate Y — same split as mesh: stick while grounded, no mid-air magnet
   const wasGrounded = p.grounded
-  pos.y += vel.y * dt
-  p.grounded = false
+  if (integrate) {
+    pos.y += vel.y * dt
+    p.grounded = false
+  }
 
-  // floor at y=0
-  if (pos.y < 0) {
+  if (infiniteFloor && pos.y < 0) {
     pos.y = 0
     vel.y = 0
     p.grounded = true
   }
 
-  // Air: only land within skin; grounded: allow step-up / small drop stick
   const landSnap = wasGrounded ? 0.4 : 0.1
-  const penMax = wasGrounded ? 0.45 : Math.max(0.22, Math.max(0, -vel.y * dt) + 0.08)
+  const penMax = wasGrounded
+    ? 0.45
+    : Math.max(0.22, Math.max(0, -vel.y * (integrate ? dt : 0)) + 0.08)
 
   for (const box of world) {
     if (!overlapsCapsule(pos, r, h, box)) continue
-    // top of box (standing on)
     const feet = pos.y
     const head = pos.y + h
     if (vel.y <= 0.05 && head > box.max.y) {
@@ -197,7 +205,6 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
         continue
       }
     }
-    // ceiling
     if (vel.y > 0 && head >= box.min.y && feet < box.min.y) {
       pos.y = box.min.y - h - 1e-4
       vel.y = 0
@@ -214,6 +221,23 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
       }
     }
   }
+}
+
+/**
+ * Axis-separated capsule (as vertical segment + radius) vs world AABBs.
+ * Simplified: treat as cylinder-ish AABB with radius expansion.
+ */
+function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
+  resolveAabbOverlaps(p, world, { infiniteFloor: true, integrate: true }, dt)
+}
+
+/**
+ * Push the player out of extra AABBs without re-integrating velocity.
+ * Used for barrier walls after triangle-mesh collision on GLB maps.
+ */
+export function resolveExtraAabbColliders(p: PlayerBody, walls: AABB[]) {
+  if (!walls.length) return
+  resolveAabbOverlaps(p, walls, { infiniteFloor: false, integrate: false }, 0)
 }
 
 function overlapsCapsule(pos: Vec3, r: number, h: number, box: AABB): boolean {
@@ -241,6 +265,11 @@ export function stepPlayer(
   worldColliders: AABB[],
   /** When set (GLB maps), walk on real triangle floors/walls instead of y=0 + AABBs. */
   meshWorld?: MeshWorld | null,
+  /**
+   * Extra AABB blockers (editor barrier walls). Always applied:
+   * after mesh resolve on GLB maps, or merged into AABB resolve on range.
+   */
+  extraColliders?: AABB[] | null,
 ) {
   p.yaw = input.yaw
   p.pitch = input.pitch
@@ -342,12 +371,15 @@ export function stepPlayer(
   p.velocity.y += MOVE.gravity * dt
 
   // collide + integrate
+  const extras = extraColliders?.length ? extraColliders : null
   if (meshWorld && meshWorld.meshes.length > 0) {
     // Real map geometry (floors, walls, ramps)
     resolveMeshCollisions(p, meshWorld, dt)
+    if (extras) resolveExtraAabbColliders(p, extras)
   } else {
-    // Procedural range: infinite floor + cover AABBs
-    resolveCollisions(p, worldColliders, dt)
+    // Procedural range: infinite floor + cover AABBs (+ barriers)
+    const boxes = extras ? worldColliders.concat(extras) : worldColliders
+    resolveCollisions(p, boxes, dt)
   }
 
   // height / eye lerp — stand up faster when recovering from slide/crouch
@@ -380,11 +412,15 @@ export function resolvePlayerWorldCollisions(
   worldColliders: AABB[],
   meshWorld?: MeshWorld | null,
   dt = 1 / 60,
+  extraColliders?: AABB[] | null,
 ) {
+  const extras = extraColliders?.length ? extraColliders : null
   if (meshWorld && meshWorld.meshes.length > 0) {
     resolveMeshCollisions(p, meshWorld, dt)
+    if (extras) resolveExtraAabbColliders(p, extras)
   } else {
-    resolveCollisions(p, worldColliders, dt)
+    const boxes = extras ? worldColliders.concat(extras) : worldColliders
+    resolveCollisions(p, boxes, dt)
   }
 }
 
