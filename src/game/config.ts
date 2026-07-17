@@ -44,8 +44,12 @@ export const LOOK = {
 export const SNIPER = {
   magSize: 5,
   reserve: 30,
+  /** One-tap */
   headDamage: 100,
-  bodyDamage: 45,
+  /** Torso / chest */
+  chestDamage: 50,
+  /** Arms + legs */
+  limbDamage: 25,
   boltTime: 0.7,
   fireAnimTime: 0.08,
   reloadTime: 2.0,
@@ -60,7 +64,11 @@ export const SNIPER = {
   viewmodelRecoil: 0.05,
 } as const
 
-/** First-person sniper pose (camera-local space). */
+/**
+ * First-person sniper pose (camera-local space).
+ * Live-tune with the in-game Viewmodel Editor (button on /play), then paste the
+ * exported JSON back into this object (or hand the file to an agent).
+ */
 export const VIEWMODEL = {
   /** Target longest axis length after normalize (world units). */
   scale: 0.48,
@@ -70,6 +78,8 @@ export const VIEWMODEL = {
    * Only change if a different glTF needs a flip.
    */
   modelRot: { x: 0, y: 0, z: 0 },
+  /** Post-center local offset on the gun (toward grip). */
+  gunOffset: { x: 0, y: 0.0096, z: 0.0384 },
   /** Bottom-right hip hold; muzzle tips left toward screen center. */
   hipPos: { x: 0.22, y: -0.18, z: -0.42 },
   hipRot: { x: 0.06, y: 0.22, z: 0.04 },
@@ -77,6 +87,46 @@ export const VIEWMODEL = {
   adsRot: { x: 0.0, y: 0.0, z: 0.0 },
   /** Hide mesh when ADS blend exceeds this (scope overlay takes over). */
   hideAds: 0.92,
+  /**
+   * FPS arms (public/models/arms.glb) — offsets relative to viewmodel root
+   * (same space as the sniper after normalize).
+   */
+  arms: {
+    /** Longest-axis target after normalize (world units). */
+    scale: 0.72,
+    pos: { x: 0.02, y: -0.12, z: 0.08 },
+    rot: { x: 0, y: 0, z: 0 },
+    /**
+     * Per-arm bone additives (radians / local units), relative to rest pose.
+     * Matches arms.glb: shoulder → bicep → forearm → wrist + fingers.
+     */
+    left: {
+      shoulder: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      bicep: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      forearm: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      wrist: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      fingers: {
+        thumb: { curl: 0, spread: 0 },
+        index: { curl: 0, spread: 0 },
+        middle: { curl: 0, spread: 0 },
+        ring: { curl: 0, spread: 0 },
+        pinky: { curl: 0, spread: 0 },
+      },
+    },
+    right: {
+      shoulder: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      bicep: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      forearm: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      wrist: { rot: { x: 0, y: 0, z: 0 }, pos: { x: 0, y: 0, z: 0 } },
+      fingers: {
+        thumb: { curl: 0, spread: 0 },
+        index: { curl: 0, spread: 0 },
+        middle: { curl: 0, spread: 0 },
+        ring: { curl: 0, spread: 0 },
+        pinky: { curl: 0, spread: 0 },
+      },
+    },
+  },
 } as const
 
 /** Walk cycle head + gun bob (visual only — hitscan stays on true eye). */
@@ -110,6 +160,21 @@ export const VIEW_BOB = {
 export const PLAYER = {
   maxHp: 100,
   spawn: { x: 0, y: 0, z: 8 },
+  /**
+   * Damage hitboxes (pose-driven each frame from live height / eyeHeight).
+   * Body is a vertical capsule — not a box.
+   */
+  headRadius: 0.15,
+  /** Egg head scale vs headRadius: X width, Y height, Z depth */
+  headEgg: { x: 0.88, y: 1.18, z: 0.95 },
+  /** Head sphere center Y = feet + eyeHeight + this */
+  headAboveEye: 0.05,
+  /** Body capsule radius = movement radius * this */
+  bodyRadiusScale: 0.88,
+  /** Body capsule bottom above feet */
+  bodyBottom: 0.08,
+  /** Gap under head sphere so capsule doesn't fully swallow the head */
+  bodyHeadClearance: 0.1,
 } as const
 
 export const WORLD = {
@@ -133,17 +198,22 @@ export const WORLD = {
 
 export const DUMMY = {
   maxHp: 100,
-  bodyHalfW: 0.32,
-  bodyHalfD: 0.22,
-  bodyHeight: 1.15,
-  headRadius: 0.18,
-  headOffsetY: 1.42,
-  bodyOffsetY: 0.55,
+  /** Placeholder mesh sizes (used only if man.glb fails) */
+  bodyHalfW: 0.28,
+  bodyHalfD: 0.16,
+  bodyHeight: 0.55,
+  headRadius: 0.12,
+  headEgg: { x: 0.82, y: 1.28, z: 0.94 },
+  headOffsetY: 1.44,
+  bodyOffsetY: 1.0,
   respawnTime: 2.5,
 } as const
 
 /** Dev / tuning overlays */
 export const DEBUG = {
-  /** Draw head sphere + body AABB used by hitscan on each dummy */
+  /**
+   * Hitscan uses the real character meshes. When true, zone wireframes draw on
+   * top of the skin: red head / cyan chest / orange arms / yellow legs.
+   */
   showHitboxes: true,
 } as const

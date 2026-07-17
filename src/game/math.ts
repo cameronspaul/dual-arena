@@ -184,3 +184,132 @@ export function raySphere(
   if (t1 >= 0 && t1 <= maxDist) return t1
   return null
 }
+
+/**
+ * Ray vs axis-aligned ellipsoid (egg head).
+ * `radii` are half-extents on X/Y/Z. `dir` should be unit length.
+ */
+export function rayEllipsoid(
+  origin: Vec3,
+  dir: Vec3,
+  center: Vec3,
+  radii: Vec3,
+  maxDist: number,
+): { t: number; normal: Vec3 } | null {
+  const rx = Math.max(radii.x, 1e-6)
+  const ry = Math.max(radii.y, 1e-6)
+  const rz = Math.max(radii.z, 1e-6)
+  // Map to unit sphere space (dir is not unit there)
+  const ox = (origin.x - center.x) / rx
+  const oy = (origin.y - center.y) / ry
+  const oz = (origin.z - center.z) / rz
+  const dx = dir.x / rx
+  const dy = dir.y / ry
+  const dz = dir.z / rz
+  const a = dx * dx + dy * dy + dz * dz
+  const b = ox * dx + oy * dy + oz * dz
+  const c = ox * ox + oy * oy + oz * oz - 1
+  const disc = b * b - a * c
+  if (disc < 0 || a < 1e-12) return null
+  const s = Math.sqrt(disc)
+  const t0 = (-b - s) / a
+  const t1 = (-b + s) / a
+  let t: number | null = null
+  if (t0 >= 0 && t0 <= maxDist) t = t0
+  else if (t1 >= 0 && t1 <= maxDist) t = t1
+  if (t === null) return null
+  const px = origin.x + dir.x * t
+  const py = origin.y + dir.y * t
+  const pz = origin.z + dir.z * t
+  // Gradient of ellipsoid: ((x-c)/r^2, …)
+  const nx = (px - center.x) / (rx * rx)
+  const ny = (py - center.y) / (ry * ry)
+  const nz = (pz - center.z) / (rz * rz)
+  return { t, normal: normalize({ x: nx, y: ny, z: nz }) }
+}
+
+/**
+ * Ray vs capsule (segment a→b thickened by radius).
+ * Assumes `dir` is unit length. Returns nearest hit + outward normal.
+ */
+export function rayCapsule(
+  origin: Vec3,
+  dir: Vec3,
+  a: Vec3,
+  b: Vec3,
+  radius: number,
+  maxDist: number,
+): { t: number; normal: Vec3 } | null {
+  const ba = sub(b, a)
+  const baba = dot(ba, ba)
+
+  // Degenerate segment → sphere
+  if (baba < 1e-12) {
+    const t = raySphere(origin, dir, a, radius, maxDist)
+    if (t === null) return null
+    const hit = {
+      x: origin.x + dir.x * t,
+      y: origin.y + dir.y * t,
+      z: origin.z + dir.z * t,
+    }
+    return { t, normal: normalize(sub(hit, a)) }
+  }
+
+  let bestT = Infinity
+  let bestN = v3()
+
+  const consider = (t: number, normal: Vec3) => {
+    if (t < 0 || t > maxDist || t >= bestT) return
+    bestT = t
+    bestN = normal
+  }
+
+  // Infinite cylinder around AB, then accept hits whose projection lies on the segment
+  const oa = sub(origin, a)
+  const bard = dot(ba, dir)
+  const baoa = dot(ba, oa)
+  const rdoa = dot(dir, oa)
+  const oaoa = dot(oa, oa)
+  const aa = baba - bard * bard
+  const bb = baba * rdoa - baoa * bard
+  const cc = baba * oaoa - baoa * baoa - radius * radius * baba
+  const disc = bb * bb - aa * cc
+
+  if (Math.abs(aa) > 1e-12 && disc >= 0) {
+    const s = Math.sqrt(disc)
+    // Near root first
+    for (const sign of [-1, 1] as const) {
+      const t = (-bb + sign * s) / aa
+      if (t < 0 || t > maxDist) continue
+      const y = baoa + t * bard
+      if (y <= 0 || y >= baba) continue
+      const hit = {
+        x: origin.x + dir.x * t,
+        y: origin.y + dir.y * t,
+        z: origin.z + dir.z * t,
+      }
+      const u = y / baba
+      const axis = {
+        x: a.x + ba.x * u,
+        y: a.y + ba.y * u,
+        z: a.z + ba.z * u,
+      }
+      consider(t, normalize(sub(hit, axis)))
+    }
+  }
+
+  // Hemispherical caps
+  for (const c of [a, b]) {
+    const t = raySphere(origin, dir, c, radius, maxDist)
+    if (t === null) continue
+    const hit = {
+      x: origin.x + dir.x * t,
+      y: origin.y + dir.y * t,
+      z: origin.z + dir.z * t,
+    }
+    consider(t, normalize(sub(hit, c)))
+  }
+
+  if (bestT === Infinity) return null
+  return { t: bestT, normal: bestN }
+}

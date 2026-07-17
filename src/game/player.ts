@@ -1,6 +1,45 @@
 import { MOVE, PLAYER } from './config'
 import { clamp, facingXZ, lenXZ, lerp, wishDir } from './math'
-import type { AABB, PlayerBody, PlayerInput, Vec3 } from './types'
+import type { AABB, Hitbox, HitVolumes, PlayerBody, PlayerInput, Vec3 } from './types'
+
+export function volumesToHitboxes(ownerId: string, v: HitVolumes): Hitbox[] {
+  const boxes: Hitbox[] = [
+    {
+      id: `${ownerId}-head`,
+      ownerId,
+      zone: 'head',
+      ellipsoid: {
+        center: { ...v.headCenter },
+        radii: { ...v.headRadii },
+      },
+    },
+  ]
+  for (let i = 0; i < v.capsules.length; i++) {
+    const c = v.capsules[i]
+    boxes.push({
+      id: `${ownerId}-cap-${i}`,
+      ownerId,
+      zone: 'chest',
+      capsule: {
+        a: { ...c.a },
+        b: { ...c.b },
+        radius: c.radius,
+      },
+    })
+  }
+  if (v.bodySpheres) {
+    for (let i = 0; i < v.bodySpheres.length; i++) {
+      const s = v.bodySpheres[i]
+      boxes.push({
+        id: `${ownerId}-bs-${i}`,
+        ownerId,
+        zone: 'chest',
+        sphere: { center: { ...s.center }, radius: s.radius },
+      })
+    }
+  }
+  return boxes
+}
 
 export function createPlayer(spawn = PLAYER.spawn): PlayerBody {
   return {
@@ -290,4 +329,44 @@ export function eyePosition(p: PlayerBody): Vec3 {
     y: p.position.y + p.eyeHeight,
     z: p.position.z,
   }
+}
+
+/**
+ * Pose-driven damage volumes from live height / eye height.
+ * Body is a vertical capsule (not a box) so crouch/slide shrink it cleanly.
+ */
+export function playerVolumes(p: PlayerBody): HitVolumes {
+  const { x, y, z } = p.position
+  const headRadii = {
+    x: PLAYER.headRadius * PLAYER.headEgg.x,
+    y: PLAYER.headRadius * PLAYER.headEgg.y,
+    z: PLAYER.headRadius * PLAYER.headEgg.z,
+  }
+  const headCenter = {
+    x,
+    y: y + p.eyeHeight + PLAYER.headAboveEye,
+    z,
+  }
+  const bodyBottom = y + PLAYER.bodyBottom
+  const bodyTop = Math.max(
+    bodyBottom + 0.2,
+    headCenter.y - headRadii.y - PLAYER.bodyHeadClearance,
+  )
+  const radius = p.radius * PLAYER.bodyRadiusScale
+  return {
+    headCenter,
+    headRadii,
+    capsules: [
+      {
+        a: { x, y: bodyBottom, z },
+        b: { x, y: bodyTop, z },
+        radius,
+      },
+    ],
+  }
+}
+
+/** Hitscan hitboxes for a player body (multiplayer / self-damage debug). */
+export function playerHitboxes(p: PlayerBody, ownerId: string): Hitbox[] {
+  return volumesToHitboxes(ownerId, playerVolumes(p))
 }

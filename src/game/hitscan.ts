@@ -1,5 +1,5 @@
 import { SNIPER } from './config'
-import { mul, rayAABB, raySphere } from './math'
+import { mul, rayAABB, rayCapsule, rayEllipsoid, raySphere } from './math'
 import type { AABB, Hitbox, RayHit, Vec3 } from './types'
 
 export function castHitscan(
@@ -60,8 +60,33 @@ export function castHitscan(
         })
       }
     }
+    if (hb.ellipsoid) {
+      const hit = rayEllipsoid(
+        origin,
+        dir,
+        hb.ellipsoid.center,
+        hb.ellipsoid.radii,
+        range,
+      )
+      if (hit) {
+        cands.push({ t: hit.t, hb, normal: hit.normal })
+      }
+    }
     if (hb.aabb) {
       const hit = rayAABB(origin, dir, hb.aabb, range)
+      if (hit) {
+        cands.push({ t: hit.t, hb, normal: hit.normal })
+      }
+    }
+    if (hb.capsule) {
+      const hit = rayCapsule(
+        origin,
+        dir,
+        hb.capsule.a,
+        hb.capsule.b,
+        hb.capsule.radius,
+        range,
+      )
       if (hit) {
         cands.push({ t: hit.t, hb, normal: hit.normal })
       }

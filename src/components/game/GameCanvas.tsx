@@ -3,13 +3,17 @@ import { GameEngine, type HudListener } from '@/game/engine'
 
 interface GameCanvasProps {
   onHud: HudListener
+  /** Called once the engine is constructed (and again with null on dispose). */
+  onEngine?: (engine: GameEngine | null) => void
 }
 
-export function GameCanvas({ onHud }: GameCanvasProps) {
+export function GameCanvas({ onHud, onEngine }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const onHudRef = useRef(onHud)
   onHudRef.current = onHud
+  const onEngineRef = useRef(onEngine)
+  onEngineRef.current = onEngine
 
   useEffect(() => {
     const el = containerRef.current
@@ -17,6 +21,7 @@ export function GameCanvas({ onHud }: GameCanvasProps) {
 
     const engine = new GameEngine(el)
     engineRef.current = engine
+    onEngineRef.current?.(engine)
     const unsub = engine.onHud((snap) => onHudRef.current(snap))
     engine.start()
 
@@ -24,6 +29,7 @@ export function GameCanvas({ onHud }: GameCanvasProps) {
       unsub()
       engine.dispose()
       engineRef.current = null
+      onEngineRef.current?.(null)
     }
   }, [])
 

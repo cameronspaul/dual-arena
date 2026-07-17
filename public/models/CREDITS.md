@@ -7,3 +7,9 @@
 - **Author:** [Quaternius](https://quaternius.com/)
 
 Credit not required under CC0; kept here for project hygiene.
+
+## arms.glb
+
+- **Source:** FPS viewmodel arms (low poly, rigged) — `public/models/arms.glb`
+- **License:** Confirm with pack you installed (e.g. WRAD ARMS = CC0)
+- Used as first-person hands parented to the sniper viewmodel.

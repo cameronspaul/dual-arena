@@ -87,10 +87,20 @@ export function GameHud({ hud }: GameHudProps) {
             className={`font-bold tracking-wide ${
               hud.lastHit.zone === 'head'
                 ? 'text-yellow-300 text-lg'
-                : 'text-white/90 text-sm'
+                : hud.lastHit.zone === 'chest'
+                  ? 'text-sky-300 text-sm'
+                  : hud.lastHit.zone === 'arm'
+                    ? 'text-orange-300 text-sm'
+                    : 'text-amber-200 text-sm'
             }`}
           >
-            {hud.lastHit.zone === 'head' ? 'HEADSHOT' : 'HIT'}{' '}
+            {hud.lastHit.zone === 'head'
+              ? 'HEADSHOT'
+              : hud.lastHit.zone === 'chest'
+                ? 'CHEST'
+                : hud.lastHit.zone === 'arm'
+                  ? 'ARM'
+                  : 'LEG'}{' '}
             <span className="tabular-nums">-{hud.lastHit.damage}</span>
           </div>
           {hud.lastHit.killed && (

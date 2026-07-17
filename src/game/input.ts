@@ -17,9 +17,12 @@ export class InputManager {
   private pointerLocked = false
   private canvas: HTMLElement | null = null
   private adsBlend = 0
+  /** When false, gameplay keys/mouse are ignored (UI / viewmodel editor). */
+  private gameplayEnabled = true
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'Escape') return
+    if (!this.gameplayEnabled) return
     // prevent scroll / browser shortcuts while playing
     if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight'].includes(e.code)) {
       e.preventDefault()
@@ -34,6 +37,7 @@ export class InputManager {
   }
 
   private onMouseDown = (e: MouseEvent) => {
+    if (!this.gameplayEnabled) return
     if (!this.pointerLocked && this.canvas) {
       void this.canvas.requestPointerLock()
       return
@@ -98,6 +102,28 @@ export class InputManager {
 
   setAdsBlend(blend: number) {
     this.adsBlend = blend
+  }
+
+  /**
+   * Disable WASD / fire / pointer-lock while a panel (e.g. viewmodel editor) is open.
+   * Releases pointer lock when turning off.
+   */
+  setGameplayEnabled(enabled: boolean) {
+    this.gameplayEnabled = enabled
+    if (!enabled) {
+      this.keys.clear()
+      this.jumpPressed = false
+      this.reloadPressed = false
+      this.firePressed = false
+      this.adsHeld = false
+      if (document.pointerLockElement === this.canvas) {
+        document.exitPointerLock()
+      }
+    }
+  }
+
+  isGameplayEnabled() {
+    return this.gameplayEnabled
   }
 
   isPointerLocked() {

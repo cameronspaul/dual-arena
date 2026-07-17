@@ -5,7 +5,12 @@ import { DEBUG, DUMMY, LOOK, SNIPER, VIEW_BOB, VIEWMODEL } from './config'
 import { castHitscan } from './hitscan'
 import { InputManager } from './input'
 import { lookDirection } from './math'
-import { createPlayer, eyePosition, stepPlayer } from './player'
+import {
+  createPlayer,
+  eyePosition,
+  playerVolumes,
+  stepPlayer,
+} from './player'
 import {
   applyRecoil,
   createSniper,
@@ -15,19 +20,66 @@ import {
 } from './sniper'
 import type {
   HitEvent,
+  HitZone,
+  HitVolumes,
   HudSnapshot,
   PlayerBody,
+  RayHit,
   SniperState,
 } from './types'
+import {
+  cloneViewmodelConfig,
+  FINGER_IDS,
+  normalizeViewmodelConfig,
+  type ArmChainPose,
+  type ArmJointPose,
+  type FingerId,
+  type FingerPose,
+  type ViewmodelConfig,
+} from './viewmodelConfig'
 import {
   buildWorldColliders,
   createDummies,
   damageDummy,
-  dummyHitboxes,
   queueRespawn,
   stepRespawns,
   type RespawnTimer,
 } from './world'
+
+type ArmLimbKey = 'shoulder' | 'bicep' | 'forearm' | 'wrist'
+
+type ArmBoneRest = {
+  bone: THREE.Object3D
+  pos: THREE.Vector3
+  quat: THREE.Quaternion
+  scale: THREE.Vector3
+}
+
+type ArmSideBones = {
+  limb: Record<ArmLimbKey, ArmBoneRest | null>
+  fingers: Record<
+    FingerId,
+    [ArmBoneRest | null, ArmBoneRest | null, ArmBoneRest | null]
+  >
+}
+
+function emptyArmSideBones(): ArmSideBones {
+  return {
+    limb: {
+      shoulder: null,
+      bicep: null,
+      forearm: null,
+      wrist: null,
+    },
+    fingers: {
+      thumb: [null, null, null],
+      index: [null, null, null],
+      middle: [null, null, null],
+      ring: [null, null, null],
+      pinky: [null, null, null],
+    },
+  }
+}
 
 export type HudListener = (hud: HudSnapshot) => void
 
@@ -46,6 +98,31 @@ export class GameEngine {
   private lastTime = 0
   private container: HTMLElement
   private viewmodel: THREE.Group | null = null
+  /** Gun mesh/group after modelRot; scale + gunOffset applied live from vmConfig. */
+  private vmGun: THREE.Object3D | null = null
+  /** Arms scene root; scale + pos/rot applied live from vmConfig. */
+  private vmArms: THREE.Object3D | null = null
+  private armBonesL: ArmSideBones = emptyArmSideBones()
+  private armBonesR: ArmSideBones = emptyArmSideBones()
+  /** Uniform scale that makes longest axis = 1 (before target scale). */
+  private gunUnitScale = 1
+  private armsUnitScale = 1
+  /** Center offset captured after unit normalize (position before gunOffset). */
+  private gunCenter = new THREE.Vector3()
+  private armsCenter = new THREE.Vector3()
+  private vmConfig: ViewmodelConfig = cloneViewmodelConfig(
+    VIEWMODEL as unknown as ViewmodelConfig,
+  )
+  private vmReady = false
+  private vmEditorActive = false
+  /** null = live ADS from input; otherwise force hip(0)…ads(1). */
+  private vmForceAds: number | null = null
+  private vmFreezeBob = false
+  private vmKeepVisible = false
+  /** Editor-only: collapse the other arm while posing one side. */
+  private vmArmSolo: 'both' | 'left' | 'right' = 'both'
+  private readonly _tmpEuler = new THREE.Euler()
+  private readonly _tmpQuat = new THREE.Quaternion()
   private bobPhase = 0
   private bobAmount = 0
   private landOffset = 0
@@ -54,8 +131,8 @@ export class GameEngine {
   private prevVelY = 0
   private dummyMeshes = new Map<string, THREE.Group>()
   private dummyMixers = new Map<string, THREE.AnimationMixer>()
-  /** World-space helpers matching dummyHitboxes (axis-aligned, not yawed). */
-  private dummyHitboxHelpers = new Map<string, THREE.Group>()
+  /** Local player pose volumes (no 3rd-person mesh yet). */
+  private playerHitboxHelper: THREE.Group | null = null
   private impactPool: THREE.Mesh[] = []
   private tracer: THREE.Line | null = null
   private tracerTimer = 0
@@ -66,6 +143,16 @@ export class GameEngine {
   private playerHp = 100
   private clock = new THREE.Clock()
   private coverMeshes: THREE.Mesh[] = []
+  /** Hitscan against the real skinned character meshes. */
+  private readonly _raycaster = new THREE.Raycaster()
+  private readonly _rayOrigin = new THREE.Vector3()
+  private readonly _rayDir = new THREE.Vector3()
+  private readonly _hitPoint = new THREE.Vector3()
+  private readonly _bonePos = new THREE.Vector3()
+  private readonly _yAxis = new THREE.Vector3(0, 1, 0)
+  private readonly _capDir = new THREE.Vector3()
+  private static readonly MAX_CAPSULE_HELPERS = 4
+  private static readonly MAX_BODY_SPHERE_HELPERS = 0
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -92,6 +179,10 @@ export class GameEngine {
 
     this.buildRange()
     this.buildImpacts()
+    if (DEBUG.showHitboxes) {
+      this.playerHitboxHelper = this.makeHitboxHelper()
+      this.scene.add(this.playerHitboxHelper)
+    }
     void this.loadViewmodel()
     void this.loadDummies()
     this.input.attach(this.renderer.domElement)
@@ -102,6 +193,100 @@ export class GameEngine {
   onHud(fn: HudListener) {
     this.hudListeners.add(fn)
     return () => this.hudListeners.delete(fn)
+  }
+
+  isViewmodelReady() {
+    return this.vmReady
+  }
+
+  getViewmodelConfig(): ViewmodelConfig {
+    return cloneViewmodelConfig(this.vmConfig)
+  }
+
+  /**
+   * Apply a full or partial config from the editor. Recomputes gun/arms transforms.
+   * Pass `replace: true` when importing a full JSON file.
+   */
+  setViewmodelConfig(partial: unknown, replace = false) {
+    if (replace) {
+      this.vmConfig = normalizeViewmodelConfig(partial)
+    } else {
+      // Merge via normalize of current + shallow top-level overrides
+      this.vmConfig = normalizeViewmodelConfig({
+        ...this.vmConfig,
+        ...(partial as object),
+        arms: {
+          ...this.vmConfig.arms,
+          ...((partial as ViewmodelConfig)?.arms ?? {}),
+        },
+      })
+    }
+    this.applyViewmodelParts()
+  }
+
+  resetViewmodelConfig() {
+    this.vmConfig = cloneViewmodelConfig(
+      VIEWMODEL as unknown as ViewmodelConfig,
+    )
+    this.applyViewmodelParts()
+  }
+
+  setViewmodelEditorActive(active: boolean) {
+    this.vmEditorActive = active
+    this.input.setGameplayEnabled(!active)
+    if (!active) {
+      this.vmForceAds = null
+      this.vmFreezeBob = false
+      this.vmKeepVisible = false
+      this.vmArmSolo = 'both'
+      this.applyViewmodelParts()
+    }
+  }
+
+  /** Solo one arm while editing (collapses the other via bone scale). */
+  setViewmodelArmSolo(solo: 'both' | 'left' | 'right') {
+    this.vmArmSolo = solo
+    this.applyViewmodelParts()
+  }
+
+  getViewmodelArmSolo() {
+    return this.vmArmSolo
+  }
+
+  hasArmBones() {
+    return !!(this.armBonesL.limb.shoulder || this.armBonesR.limb.shoulder)
+  }
+
+  hasHandBones() {
+    return !!(this.armBonesL.limb.wrist || this.armBonesR.limb.wrist)
+  }
+
+  isViewmodelEditorActive() {
+    return this.vmEditorActive
+  }
+
+  setViewmodelForceAds(value: number | null) {
+    this.vmForceAds = value
+  }
+
+  getViewmodelForceAds() {
+    return this.vmForceAds
+  }
+
+  setViewmodelFreezeBob(freeze: boolean) {
+    this.vmFreezeBob = freeze
+  }
+
+  getViewmodelFreezeBob() {
+    return this.vmFreezeBob
+  }
+
+  setViewmodelKeepVisible(keep: boolean) {
+    this.vmKeepVisible = keep
+  }
+
+  getViewmodelKeepVisible() {
+    return this.vmKeepVisible
   }
 
   start() {
@@ -232,7 +417,7 @@ export class GameEngine {
   }
 
   /** Procedural fallback if man.glb fails to load. */
-  private makePlaceholderDummy(): THREE.Group {
+  private makePlaceholderDummy(ownerId: string): THREE.Group {
     const g = new THREE.Group()
     const bodyMat = new THREE.MeshStandardMaterial({
       color: 0xc45c26,
@@ -250,91 +435,528 @@ export class GameEngine {
       ),
       bodyMat,
     )
+    body.name = 'Body'
     body.position.y = DUMMY.bodyOffsetY
     body.castShadow = true
     const head = new THREE.Mesh(
       new THREE.SphereGeometry(DUMMY.headRadius, 12, 10),
       headMat,
     )
+    head.name = 'Head'
     head.position.y = DUMMY.headOffsetY
     head.castShadow = true
     const armGeo = new THREE.BoxGeometry(0.12, 0.55, 0.12)
-    const left = new THREE.Mesh(armGeo, bodyMat)
+    const left = new THREE.Mesh(armGeo, bodyMat.clone())
+    left.name = 'ArmL'
     left.position.set(-0.4, 0.85, 0)
-    const right = new THREE.Mesh(armGeo, bodyMat)
+    const right = new THREE.Mesh(armGeo, bodyMat.clone())
+    right.name = 'ArmR'
     right.position.set(0.4, 0.85, 0)
     g.add(body, head, left, right)
-    g.userData.mats = [bodyMat, headMat]
-    g.userData.baseColors = [bodyMat.color.clone(), headMat.color.clone()]
+    this.registerHitMeshes(g, ownerId)
     return g
   }
 
+  /** Mesh name → default zone (arms share Suit_Body; refined by bones on hit). */
+  private meshNameToZone(name: string): HitZone {
+    if (/head/i.test(name)) return 'head'
+    if (/arm|hand|wrist/i.test(name)) return 'arm'
+    if (/leg|feet|foot/i.test(name)) return 'leg'
+    return 'chest'
+  }
+
+  /** Debug wireframe: head red · chest cyan · arms orange · legs yellow */
+  private zoneWireColor(zone: HitZone): number {
+    if (zone === 'head') return 0xff4466
+    if (zone === 'arm') return 0xff8844
+    if (zone === 'leg') return 0xffee44
+    return 0x44ccff
+  }
+
+  private damageForZone(zone: HitZone): number {
+    if (zone === 'head') return SNIPER.headDamage
+    if (zone === 'arm' || zone === 'leg') return SNIPER.limbDamage
+    return SNIPER.chestDamage
+  }
+
+  private findBoneNamed(
+    root: THREE.Object3D,
+    name: string,
+  ): THREE.Bone | null {
+    let found: THREE.Bone | null = null
+    root.traverse((o) => {
+      if (found) return
+      if ((o as THREE.Bone).isBone && o.name === name) found = o as THREE.Bone
+    })
+    return found
+  }
+
   /**
-   * Visualize hitscan volumes from dummyHitboxes:
-   * - head: sphere at headOffsetY / headRadius
-   * - body: AABB at bodyOffsetY (axis-aligned; not rotated by dummy yaw)
+   * Bone markers for arm-vs-chest classification (arms are skinned into Suit_Body).
+   */
+  private registerZoneBones(root: THREE.Group) {
+    type Marker = { zone: HitZone; bone: THREE.Bone }
+    const markers: Marker[] = []
+    const add = (zone: HitZone, ...names: string[]) => {
+      for (const n of names) {
+        const b = this.findBoneNamed(root, n)
+        if (b) markers.push({ zone, bone: b })
+      }
+    }
+    add('head', 'Head')
+    add(
+      'chest',
+      'Hips',
+      'Abdomen',
+      'Torso',
+      'Chest',
+      'Body',
+      'Neck',
+    )
+    add(
+      'arm',
+      'ShoulderL',
+      'ShoulderR',
+      'UpperArmL',
+      'UpperArmR',
+      'LowerArmL',
+      'LowerArmR',
+      'WristL',
+      'WristR',
+    )
+    add(
+      'leg',
+      'UpperLegL',
+      'UpperLegR',
+      'LowerLegL',
+      'LowerLegR',
+      'FootL',
+      'FootR',
+    )
+    root.userData.zoneBones = markers
+  }
+
+  /**
+   * Prefer mesh name for head/legs/arms; for torso mesh, nearest bone decides
+   * chest vs arm (arms are skinned into Suit_Body).
+   */
+  private resolveHitZone(
+    root: THREE.Group,
+    mesh: THREE.Object3D,
+    point: THREE.Vector3,
+  ): HitZone {
+    const meshZone = (mesh.userData.hitZone as HitZone) ?? 'chest'
+    if (meshZone === 'head' || meshZone === 'leg' || meshZone === 'arm') {
+      return meshZone
+    }
+
+    const markers = root.userData.zoneBones as
+      | { zone: HitZone; bone: THREE.Bone }[]
+      | undefined
+    if (!markers?.length) return meshZone
+
+    let bestZone: HitZone = meshZone
+    let bestD = Infinity
+    for (const m of markers) {
+      m.bone.getWorldPosition(this._bonePos)
+      const d = this._bonePos.distanceToSquared(point)
+      if (d < bestD) {
+        bestD = d
+        bestZone = m.zone
+      }
+    }
+    // Head mesh already handled; if nearest bone is head while on chest mesh, treat as chest
+    // (avoids stealing torso shots into the neck/head bone).
+    if (bestZone === 'head') return 'chest'
+    return bestZone
+  }
+
+  /**
+   * Tag every drawable mesh as a hitscan surface.
+   * Also builds a skinned wireframe overlay so debug can show hit zones
+   * on top of the real textured skin.
+   */
+  private registerHitMeshes(root: THREE.Group, ownerId: string) {
+    const hitMeshes: THREE.Mesh[] = []
+    const wireOverlays: THREE.Mesh[] = []
+
+    // Collect first — overlays parented mid-traverse would re-enter traverse
+    const candidates: THREE.Mesh[] = []
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return
+      if (o.userData.skipHitbox) return
+      candidates.push(o)
+    })
+
+    for (const o of candidates) {
+      const zone = this.meshNameToZone(o.name)
+      o.userData.hitZone = zone
+      o.userData.ownerId = ownerId
+
+      const list = Array.isArray(o.material) ? o.material : [o.material]
+      const baseColors: THREE.Color[] = []
+      for (const m of list) {
+        if ('color' in m && m.color instanceof THREE.Color) {
+          baseColors.push(m.color.clone())
+        } else {
+          baseColors.push(new THREE.Color(0xffffff))
+        }
+      }
+      o.userData.baseColors = baseColors
+      hitMeshes.push(o)
+
+      // Wireframe twin: same geo (+ skeleton) so debug outlines track the pose
+      const wireMat = new THREE.MeshBasicMaterial({
+        color: this.zoneWireColor(zone),
+        wireframe: true,
+        transparent: true,
+        opacity: zone === 'head' ? 0.95 : 0.85,
+        depthTest: true,
+        depthWrite: false,
+      })
+      let wire: THREE.Mesh
+      if (o instanceof THREE.SkinnedMesh) {
+        const sk = new THREE.SkinnedMesh(o.geometry, wireMat)
+        sk.bind(o.skeleton, o.bindMatrix)
+        sk.bindMode = o.bindMode
+        wire = sk
+      } else {
+        wire = new THREE.Mesh(o.geometry, wireMat)
+      }
+      wire.name = `${o.name || 'mesh'}_hitWire`
+      wire.userData.skipHitbox = true
+      wire.renderOrder = 20
+      wire.frustumCulled = false
+      wire.castShadow = false
+      wire.receiveShadow = false
+      wire.visible = DEBUG.showHitboxes
+      // Identity local — parented to the skinned mesh so TRS matches
+      o.add(wire)
+      wireOverlays.push(wire)
+    }
+
+    root.userData.hitMeshes = hitMeshes
+    root.userData.hitWireOverlays = wireOverlays
+    this.registerZoneBones(root)
+    this.buildArmDebugCapsules(root)
+  }
+
+  /**
+   * Arms are skinned into Suit_Body (chest mesh), so they need their own
+   * orange bone-chain wireframes to read as a distinct debug zone.
+   */
+  private buildArmDebugCapsules(root: THREE.Group) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: this.zoneWireColor('arm'),
+      wireframe: true,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: true,
+      depthWrite: false,
+    })
+    const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true)
+    const sphGeo = new THREE.SphereGeometry(1, 6, 5)
+
+    const group = new THREE.Group()
+    group.name = 'armDebugCaps'
+    group.userData.skipHitbox = true
+    group.renderOrder = 21
+
+    const caps: THREE.Group[] = []
+    // 2 arms × (upper + lower) segments
+    for (let i = 0; i < 4; i++) {
+      const cap = new THREE.Group()
+      cap.visible = false
+      const cyl = new THREE.Mesh(cylGeo, mat)
+      const sA = new THREE.Mesh(sphGeo, mat)
+      sA.position.y = -0.5
+      const sB = new THREE.Mesh(sphGeo, mat)
+      sB.position.y = 0.5
+      cap.add(cyl, sA, sB)
+      group.add(cap)
+      caps.push(cap)
+    }
+    root.add(group)
+
+    type Chain = [THREE.Bone | null, THREE.Bone | null, THREE.Bone | null]
+    const chains: Chain[] = [
+      [
+        this.findBoneNamed(root, 'UpperArmL'),
+        this.findBoneNamed(root, 'LowerArmL'),
+        this.findBoneNamed(root, 'WristL'),
+      ],
+      [
+        this.findBoneNamed(root, 'UpperArmR'),
+        this.findBoneNamed(root, 'LowerArmR'),
+        this.findBoneNamed(root, 'WristR'),
+      ],
+    ]
+    root.userData.armDebugCaps = caps
+    root.userData.armDebugChains = chains
+  }
+
+  private syncArmDebugCapsules(root: THREE.Group) {
+    const caps = root.userData.armDebugCaps as THREE.Group[] | undefined
+    const chains = root.userData.armDebugChains as
+      | [THREE.Bone | null, THREE.Bone | null, THREE.Bone | null][]
+      | undefined
+    if (!caps || !chains) return
+
+    if (!DEBUG.showHitboxes) {
+      for (const c of caps) c.visible = false
+      return
+    }
+
+    // Capsules live under root — convert bone world → root local
+    const aLocal = this._rayOrigin
+    const bLocal = this._bonePos
+    const radius = 0.055
+    let ci = 0
+    for (const chain of chains) {
+      for (let s = 0; s < 2; s++) {
+        const cap = caps[ci++]
+        const ba = chain[s]
+        const bb = chain[s + 1]
+        if (!cap || !ba || !bb) {
+          if (cap) cap.visible = false
+          continue
+        }
+        ba.getWorldPosition(aLocal)
+        bb.getWorldPosition(bLocal)
+        root.worldToLocal(aLocal)
+        root.worldToLocal(bLocal)
+        this.orientCapsuleHelper(
+          cap,
+          { x: aLocal.x, y: aLocal.y, z: aLocal.z },
+          { x: bLocal.x, y: bLocal.y, z: bLocal.z },
+          radius,
+        )
+      }
+    }
+  }
+
+  /**
+   * Damage tint on the real skin materials + toggle zone wireframe overlays.
+   * Skin always stays visible; debug only adds the outline layer.
+   */
+  private paintDummyMeshes(root: THREE.Group, hpRatio: number) {
+    const hitMeshes = root.userData.hitMeshes as THREE.Mesh[] | undefined
+    if (!hitMeshes) return
+    const hurt = Math.max(0, Math.min(1, hpRatio))
+    const debug = DEBUG.showHitboxes
+
+    for (const mesh of hitMeshes) {
+      const bases = mesh.userData.baseColors as THREE.Color[] | undefined
+      const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (let i = 0; i < list.length; i++) {
+        const mat = list[i]
+        if (!('color' in mat) || !(mat.color instanceof THREE.Color)) continue
+        // Never force wireframe on the skin — overlays handle debug outlines
+        if ('wireframe' in mat) {
+          ;(mat as THREE.MeshStandardMaterial).wireframe = false
+        }
+        const base = bases?.[i]
+        if (base) {
+          const c = mat.color as THREE.Color
+          c.setRGB(
+            base.r * hurt + 0.2 * (1 - hurt),
+            base.g * hurt,
+            base.b * hurt,
+          )
+        }
+      }
+    }
+
+    const overlays = root.userData.hitWireOverlays as THREE.Mesh[] | undefined
+    if (overlays) {
+      for (const w of overlays) {
+        w.visible = debug
+      }
+    }
+    this.syncArmDebugCapsules(root)
+  }
+
+  /**
+   * Single overlay style: wireframe only (no fill + outline double-draw).
+   * Head = red sphere; body = cyan capsules / shoulder spheres.
    */
   private makeHitboxHelper(): THREE.Group {
     const g = new THREE.Group()
     g.renderOrder = 20
 
-    const bodyW = DUMMY.bodyHalfW * 2
-    const bodyH = DUMMY.bodyHeight
-    const bodyD = DUMMY.bodyHalfD * 2
-    const bodyGeo = new THREE.BoxGeometry(bodyW, bodyH, bodyD)
+    const bodyMat = new THREE.MeshBasicMaterial({
+      color: 0x44ccff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    })
+    const headMat = new THREE.MeshBasicMaterial({
+      color: 0xff4466,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    })
 
-    const bodyFill = new THREE.Mesh(
-      bodyGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0x33aaff,
-        transparent: true,
-        opacity: 0.22,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    )
-    bodyFill.position.y = DUMMY.bodyOffsetY
-    bodyFill.renderOrder = 20
+    const headGeo = new THREE.SphereGeometry(1, 12, 10)
+    const head = new THREE.Mesh(headGeo, headMat)
+    head.renderOrder = 20
+    head.name = 'head'
+    g.add(head)
 
-    const bodyWire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(bodyGeo),
-      new THREE.LineBasicMaterial({
-        color: 0x66ccff,
-        transparent: true,
-        opacity: 0.95,
-        depthTest: true,
-      }),
-    )
-    bodyWire.position.y = DUMMY.bodyOffsetY
-    bodyWire.renderOrder = 21
+    const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true)
+    const sphGeo = new THREE.SphereGeometry(1, 8, 6)
 
-    const headGeo = new THREE.SphereGeometry(DUMMY.headRadius, 16, 12)
-    const headFill = new THREE.Mesh(
-      headGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0xff3344,
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-      }),
-    )
-    headFill.position.y = DUMMY.headOffsetY
-    headFill.renderOrder = 20
+    for (let i = 0; i < GameEngine.MAX_CAPSULE_HELPERS; i++) {
+      const cap = new THREE.Group()
+      cap.name = `cap${i}`
+      cap.visible = false
 
-    const headWire = new THREE.LineSegments(
-      new THREE.WireframeGeometry(headGeo),
-      new THREE.LineBasicMaterial({
-        color: 0xff8899,
-        transparent: true,
-        opacity: 0.75,
-        depthTest: true,
-      }),
-    )
-    headWire.position.y = DUMMY.headOffsetY
-    headWire.renderOrder = 21
+      const cyl = new THREE.Mesh(cylGeo, bodyMat.clone())
+      cyl.name = 'cyl'
+      const sA = new THREE.Mesh(sphGeo, bodyMat.clone())
+      sA.name = 'sA'
+      sA.position.y = -0.5
+      const sB = new THREE.Mesh(sphGeo, bodyMat.clone())
+      sB.name = 'sB'
+      sB.position.y = 0.5
 
-    g.add(bodyFill, bodyWire, headFill, headWire)
+      cap.add(cyl, sA, sB)
+      g.add(cap)
+    }
+
+    for (let i = 0; i < GameEngine.MAX_BODY_SPHERE_HELPERS; i++) {
+      const s = new THREE.Mesh(sphGeo, bodyMat.clone())
+      s.name = `bs${i}`
+      s.visible = false
+      g.add(s)
+    }
+
     return g
+  }
+
+  private orientCapsuleHelper(
+    cap: THREE.Object3D,
+    a: { x: number; y: number; z: number },
+    b: { x: number; y: number; z: number },
+    radius: number,
+  ) {
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const dz = b.z - a.z
+    const len = Math.hypot(dx, dy, dz)
+    if (len < 1e-5 || radius < 1e-5) {
+      cap.visible = false
+      return
+    }
+    cap.visible = true
+    cap.position.set((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5)
+    cap.scale.set(radius, len, radius)
+    this._capDir.set(dx / len, dy / len, dz / len)
+    cap.quaternion.setFromUnitVectors(this._yAxis, this._capDir)
+  }
+
+  private syncHitboxHelper(g: THREE.Group, v: HitVolumes) {
+    const head = g.getObjectByName('head')
+    if (head) {
+      head.position.set(v.headCenter.x, v.headCenter.y, v.headCenter.z)
+      // Non-uniform scale → egg / ellipsoid
+      head.scale.set(
+        Math.max(0.01, v.headRadii.x),
+        Math.max(0.01, v.headRadii.y),
+        Math.max(0.01, v.headRadii.z),
+      )
+    }
+
+    for (let i = 0; i < GameEngine.MAX_CAPSULE_HELPERS; i++) {
+      const cap = g.getObjectByName(`cap${i}`)
+      if (!cap) continue
+      const c = v.capsules[i]
+      if (!c) {
+        cap.visible = false
+        continue
+      }
+      this.orientCapsuleHelper(cap, c.a, c.b, c.radius)
+    }
+
+    const spheres = v.bodySpheres ?? []
+    for (let i = 0; i < GameEngine.MAX_BODY_SPHERE_HELPERS; i++) {
+      const s = g.getObjectByName(`bs${i}`)
+      if (!s) continue
+      const src = spheres[i]
+      if (!src) {
+        s.visible = false
+        continue
+      }
+      s.visible = true
+      s.position.set(src.center.x, src.center.y, src.center.z)
+      s.scale.setScalar(Math.max(0.01, src.radius))
+    }
+  }
+
+  /**
+   * Hitscan against the real character meshes (skinned pose included).
+   * Head meshes win near-ties so hairline shots still count as headshots.
+   */
+  private castMeshHitscan(
+    origin: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+    maxRange: number,
+  ): RayHit | null {
+    this._rayOrigin.set(origin.x, origin.y, origin.z)
+    this._rayDir.set(dir.x, dir.y, dir.z).normalize()
+    this._raycaster.set(this._rayOrigin, this._rayDir)
+    this._raycaster.near = 0
+    this._raycaster.far = maxRange
+
+    const targets: THREE.Object3D[] = []
+    for (const d of this.dummies) {
+      if (!d.alive) continue
+      const root = this.dummyMeshes.get(d.id)
+      if (!root || !root.visible) continue
+      // Skinned raycast needs up-to-date bone world matrices
+      root.updateWorldMatrix(true, true)
+      const meshes = root.userData.hitMeshes as THREE.Mesh[] | undefined
+      if (!meshes) continue
+      for (const m of meshes) {
+        if (m.visible) targets.push(m)
+      }
+    }
+    if (targets.length === 0) return null
+
+    const hits = this._raycaster.intersectObjects(targets, false)
+    if (hits.length === 0) return null
+
+    const closest = hits[0].distance
+    const near = hits.filter((h) => h.distance - closest < 0.05)
+    const headHit = near.find(
+      (h) => (h.object.userData.hitZone as HitZone) === 'head',
+    )
+    const best = headHit ?? hits[0]
+    const obj = best.object
+    const ownerId = obj.userData.ownerId as string
+    if (!ownerId) return null
+
+    const root = this.dummyMeshes.get(ownerId)
+    this._hitPoint.copy(best.point)
+    const zone = root
+      ? this.resolveHitZone(root, obj, this._hitPoint)
+      : ((obj.userData.hitZone as HitZone) ?? 'chest')
+
+    const n = best.normal ?? this._rayDir.clone().negate()
+    const nl = Math.hypot(n.x, n.y, n.z) || 1
+
+    return {
+      point: { x: best.point.x, y: best.point.y, z: best.point.z },
+      distance: best.distance,
+      normal: { x: n.x / nl, y: n.y / nl, z: n.z / nl },
+      hitbox: {
+        id: `${ownerId}-${zone}`,
+        ownerId,
+        zone,
+      },
+    }
   }
 
   /** Match clip by exact name or trailing `|Name` (Quaternius-style). */
@@ -374,7 +996,9 @@ export class GameEngine {
 
       const box = new THREE.Box3().setFromObject(source)
       const size = box.getSize(new THREE.Vector3())
-      const targetHeight = DUMMY.headOffsetY + DUMMY.headRadius
+      // Full character height: head center + vertical egg half
+      const targetHeight =
+        DUMMY.headOffsetY + DUMMY.headRadius * DUMMY.headEgg.y
       const scale = targetHeight / Math.max(size.y, 0.001)
       const footY = box.min.y
 
@@ -385,30 +1009,22 @@ export class GameEngine {
         model.scale.setScalar(scale)
         model.position.y = -footY * scale
 
-        const mats: THREE.Material[] = []
-        const baseColors: THREE.Color[] = []
         model.traverse((o) => {
           if (!(o instanceof THREE.Mesh)) return
           o.castShadow = true
           o.receiveShadow = true
+          // Skinned pose can leave AABB stale — don't cull mid-animation
           o.frustumCulled = false
           const list = Array.isArray(o.material) ? o.material : [o.material]
-          const cloned = list.map((m) => {
-            const c = m.clone()
-            if ('color' in c && c.color instanceof THREE.Color) {
-              mats.push(c)
-              baseColors.push(c.color.clone())
-            }
-            return c
-          })
+          const cloned = list.map((m) => m.clone())
           o.material = Array.isArray(o.material) ? cloned : cloned[0]
         })
 
         root.add(model)
-        root.userData.mats = mats
-        root.userData.baseColors = baseColors
         root.userData.animState = 'idle'
         root.userData.wasAlive = true
+        // Hitscan + debug wireframe sit on these exact meshes
+        this.registerHitMeshes(root, id)
 
         if (idleClip) {
           const mixer = new THREE.AnimationMixer(model)
@@ -459,7 +1075,7 @@ export class GameEngine {
       }
     } catch (e) {
       console.warn('Dummy model load failed, using placeholder', e)
-      factory = () => this.makePlaceholderDummy()
+      factory = (id: string) => this.makePlaceholderDummy(id)
     }
 
     for (const d of this.dummies) {
@@ -468,14 +1084,8 @@ export class GameEngine {
       g.rotation.y = d.yaw
       this.scene.add(g)
       this.dummyMeshes.set(d.id, g)
-
-      if (DEBUG.showHitboxes) {
-        // World-aligned like dummyHitboxes — do not inherit dummy yaw
-        const hb = this.makeHitboxHelper()
-        hb.position.set(d.position.x, d.position.y, d.position.z)
-        this.scene.add(hb)
-        this.dummyHitboxHelpers.set(d.id, hb)
-      }
+      g.updateWorldMatrix(true, true)
+      this.paintDummyMeshes(g, d.hp / d.maxHp)
     }
   }
 
@@ -573,59 +1183,269 @@ export class GameEngine {
     this.scene.add(this.tracer)
   }
 
+  /** Disable shadows / frustum cull on viewmodel meshes. */
+  private prepareViewmesh(root: THREE.Object3D) {
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.SkinnedMesh) {
+        o.castShadow = false
+        o.receiveShadow = false
+        o.frustumCulled = false
+      }
+    })
+  }
+
+  /**
+   * Bake model to unit scale (longest axis = 1) and capture center.
+   * Live target scale / offsets are applied via applyViewmodelParts().
+   */
+  private measureUnitAsset(obj: THREE.Object3D): {
+    unitScale: number
+    center: THREE.Vector3
+  } {
+    obj.scale.set(1, 1, 1)
+    obj.position.set(0, 0, 0)
+    obj.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(obj)
+    const size = box.getSize(new THREE.Vector3())
+    const maxDim = Math.max(size.x, size.y, size.z) || 1
+    const unitScale = 1 / maxDim
+    obj.scale.setScalar(unitScale)
+    obj.updateMatrixWorld(true)
+    box.setFromObject(obj)
+    const center = box.getCenter(new THREE.Vector3())
+    // Keep mesh centered at origin for now; applyViewmodelParts adds offset.
+    obj.position.copy(center).multiplyScalar(-1)
+    const storedCenter = obj.position.clone()
+    return { unitScale, center: storedCenter }
+  }
+
+  private findBoneByName(
+    root: THREE.Object3D,
+    exact: string,
+  ): THREE.Object3D | null {
+    const want = exact.toLowerCase()
+    let found: THREE.Object3D | null = null
+    root.traverse((o) => {
+      if (found || !o.name) return
+      if (o.name.toLowerCase() === want) found = o
+    })
+    return found
+  }
+
+  private captureArmRest(node: THREE.Object3D | null): ArmBoneRest | null {
+    if (!node) return null
+    return {
+      bone: node,
+      pos: node.position.clone(),
+      quat: node.quaternion.clone(),
+      scale: node.scale.clone(),
+    }
+  }
+
+  private bindSideBones(root: THREE.Object3D, side: 'l' | 'r'): ArmSideBones {
+    const s = emptyArmSideBones()
+    const pick = (name: string) => this.captureArmRest(this.findBoneByName(root, name))
+
+    s.limb.shoulder = pick(`shoulder.${side}`)
+    s.limb.bicep = pick(`bicep.${side}`)
+    // Prefer forearm.l over forearm.Twist0.l — exact name match handles this
+    s.limb.forearm = pick(`forearm.${side}`)
+    s.limb.wrist = pick(`wrist.${side}`)
+
+    for (const finger of FINGER_IDS) {
+      s.fingers[finger] = [
+        pick(`finger_${finger}1.${side}`),
+        pick(`finger_${finger}2.${side}`),
+        pick(`finger_${finger}3.${side}`),
+      ]
+    }
+    return s
+  }
+
+  private bindArmBones(root: THREE.Object3D) {
+    this.armBonesL = this.bindSideBones(root, 'l')
+    this.armBonesR = this.bindSideBones(root, 'r')
+
+    if (!this.armBonesL.limb.shoulder && !this.armBonesR.limb.shoulder) {
+      console.warn(
+        'Arms skeleton: no shoulder.l/r bones found — per-arm editing disabled',
+      )
+    } else {
+      const fingers =
+        this.armBonesL.fingers.index[0] || this.armBonesR.fingers.index[0]
+      console.info(
+        'Arms bones bound',
+        {
+          leftWrist: !!this.armBonesL.limb.wrist,
+          rightWrist: !!this.armBonesR.limb.wrist,
+          fingers: !!fingers,
+        },
+      )
+    }
+  }
+
+  private applyJoint(
+    rest: ArmBoneRest | null,
+    pose: ArmJointPose,
+    soloScale: number,
+  ) {
+    if (!rest) return
+    const b = rest.bone
+    b.position.set(
+      rest.pos.x + pose.pos.x,
+      rest.pos.y + pose.pos.y,
+      rest.pos.z + pose.pos.z,
+    )
+    this._tmpEuler.set(pose.rot.x, pose.rot.y, pose.rot.z, 'XYZ')
+    this._tmpQuat.setFromEuler(this._tmpEuler)
+    b.quaternion.copy(rest.quat).multiply(this._tmpQuat)
+    b.scale.set(
+      rest.scale.x * soloScale,
+      rest.scale.y * soloScale,
+      rest.scale.z * soloScale,
+    )
+  }
+
+  /**
+   * Apply finger curl/spread across 3 segments.
+   * Curl → local X bend; spread → local Z on the base joint only.
+   * Thumb uses a slightly different spread axis (Y) for opposition.
+   */
+  private applyFinger(
+    segs: [ArmBoneRest | null, ArmBoneRest | null, ArmBoneRest | null],
+    pose: FingerPose,
+    finger: FingerId,
+  ) {
+    const weights = [1, 0.85, 0.7]
+    for (let i = 0; i < 3; i++) {
+      const rest = segs[i]
+      if (!rest) continue
+      const curl = pose.curl * weights[i]
+      const spread = i === 0 ? pose.spread : 0
+      let rx = curl
+      let ry = 0
+      let rz = spread
+      if (finger === 'thumb') {
+        // Thumb opposition: curl on Y, spread on X tends to look better on many rigs
+        rx = spread
+        ry = curl
+        rz = 0
+      }
+      this._tmpEuler.set(rx, ry, rz, 'XYZ')
+      this._tmpQuat.setFromEuler(this._tmpEuler)
+      rest.bone.position.copy(rest.pos)
+      rest.bone.quaternion.copy(rest.quat).multiply(this._tmpQuat)
+      rest.bone.scale.copy(rest.scale)
+    }
+  }
+
+  private applyArmChain(
+    bones: ArmSideBones,
+    chain: ArmChainPose,
+    visible: boolean,
+  ) {
+    // Collapse at shoulder so the whole limb disappears when soloing the other side.
+    const shoulderScale = visible ? 1 : 0.001
+    this.applyJoint(bones.limb.shoulder, chain.shoulder, shoulderScale)
+    this.applyJoint(bones.limb.bicep, chain.bicep, 1)
+    this.applyJoint(bones.limb.forearm, chain.forearm, 1)
+    this.applyJoint(bones.limb.wrist, chain.wrist, 1)
+    for (const finger of FINGER_IDS) {
+      this.applyFinger(bones.fingers[finger], chain.fingers[finger], finger)
+    }
+  }
+
+  /** Push current vmConfig onto gun / arms Object3Ds + per-arm bones. */
+  private applyViewmodelParts() {
+    const c = this.vmConfig
+    if (this.vmGun) {
+      this.vmGun.scale.setScalar(this.gunUnitScale * c.scale)
+      // Center was computed at unit scale; re-center after scale change.
+      this.vmGun.position.set(
+        this.gunCenter.x * c.scale + c.gunOffset.x,
+        this.gunCenter.y * c.scale + c.gunOffset.y,
+        this.gunCenter.z * c.scale + c.gunOffset.z,
+      )
+      this.vmGun.rotation.set(c.modelRot.x, c.modelRot.y, c.modelRot.z)
+    }
+    if (this.vmArms) {
+      const s = c.arms.scale
+      this.vmArms.scale.setScalar(this.armsUnitScale * s)
+      this.vmArms.position.set(
+        this.armsCenter.x * s + c.arms.pos.x,
+        this.armsCenter.y * s + c.arms.pos.y,
+        this.armsCenter.z * s + c.arms.pos.z,
+      )
+      this.vmArms.rotation.set(c.arms.rot.x, c.arms.rot.y, c.arms.rot.z)
+
+      const showL = this.vmArmSolo !== 'right'
+      const showR = this.vmArmSolo !== 'left'
+      this.applyArmChain(this.armBonesL, c.arms.left, showL)
+      this.applyArmChain(this.armBonesR, c.arms.right, showR)
+      this.vmArms.updateMatrixWorld(true)
+    }
+  }
+
   private async loadViewmodel() {
-    try {
-      const loader = new GLTFLoader()
-      const gltf = await loader.loadAsync('/models/sniper.glb')
-      const model = gltf.scene
-      model.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          o.castShadow = false
-          o.frustumCulled = false
-        }
-      })
+    const root = new THREE.Group()
+    const loader = new GLTFLoader()
+    this.vmConfig = cloneViewmodelConfig(
+      VIEWMODEL as unknown as ViewmodelConfig,
+    )
 
+    // Gun + arms load independently so one failure still leaves a usable viewmodel.
+    const [gunResult, armsResult] = await Promise.allSettled([
+      loader.loadAsync('/models/sniper.glb'),
+      loader.loadAsync('/models/arms.glb'),
+    ])
+
+    if (gunResult.status === 'fulfilled') {
+      const model = gunResult.value.scene
+      this.prepareViewmesh(model)
       // Quaternius sniper: stock→barrel is already -Z, scope +Y (camera-forward).
-      // Do NOT yaw 180° — that points the muzzle at the player.
-      const { modelRot } = VIEWMODEL
-      model.rotation.set(modelRot.x, modelRot.y, modelRot.z)
-      model.updateMatrixWorld(true)
-
-      // Normalize size, then center AABB so hip/ADS offsets use a stable pivot.
-      const box = new THREE.Box3().setFromObject(model)
-      const size = box.getSize(new THREE.Vector3())
-      const maxDim = Math.max(size.x, size.y, size.z) || 1
-      model.scale.setScalar(VIEWMODEL.scale / maxDim)
-      model.updateMatrixWorld(true)
-      box.setFromObject(model)
-      model.position.sub(box.getCenter(new THREE.Vector3()))
-
-      // Bias pivot slightly toward the grip so rotation feels hand-held.
-      model.position.y += VIEWMODEL.scale * 0.02
-      model.position.z += VIEWMODEL.scale * 0.08
-
-      const root = new THREE.Group()
+      model.rotation.set(0, 0, 0)
+      const measured = this.measureUnitAsset(model)
+      this.gunUnitScale = measured.unitScale
+      this.gunCenter.copy(measured.center)
+      this.vmGun = model
       root.add(model)
-      const { hipPos, hipRot } = VIEWMODEL
-      root.position.set(hipPos.x, hipPos.y, hipPos.z)
-      root.rotation.set(hipRot.x, hipRot.y, hipRot.z)
-
-      this.camera.add(root)
-      this.scene.add(this.camera)
-      this.viewmodel = root
-    } catch (e) {
-      console.warn('Viewmodel load failed, using placeholder', e)
-      const root = new THREE.Group()
+    } else {
+      console.warn('Sniper viewmodel load failed, using placeholder', gunResult.reason)
       const gun = new THREE.Mesh(
         new THREE.BoxGeometry(0.08, 0.08, 0.7),
         new THREE.MeshStandardMaterial({ color: 0x2a2a2a }),
       )
-      gun.position.set(0.22, -0.18, -0.4)
+      const measured = this.measureUnitAsset(gun)
+      this.gunUnitScale = measured.unitScale
+      this.gunCenter.copy(measured.center)
+      this.vmGun = gun
       root.add(gun)
-      this.camera.add(root)
-      this.scene.add(this.camera)
-      this.viewmodel = root
     }
+
+    if (armsResult.status === 'fulfilled') {
+      const arms = armsResult.value.scene
+      this.prepareViewmesh(arms)
+      arms.rotation.set(0, 0, 0)
+      const measured = this.measureUnitAsset(arms)
+      this.armsUnitScale = measured.unitScale
+      this.armsCenter.copy(measured.center)
+      this.bindArmBones(arms)
+      this.vmArms = arms
+      root.add(arms)
+    } else {
+      console.warn('Arms viewmodel load failed', armsResult.reason)
+    }
+
+    this.applyViewmodelParts()
+
+    const { hipPos, hipRot } = this.vmConfig
+    root.position.set(hipPos.x, hipPos.y, hipPos.z)
+    root.rotation.set(hipRot.x, hipRot.y, hipRot.z)
+
+    this.camera.add(root)
+    this.scene.add(this.camera)
+    this.viewmodel = root
+    this.vmReady = true
   }
 
   private loop = () => {
@@ -649,6 +1469,11 @@ export class GameEngine {
     stepPlayer(this.player, input, dt, this.colliders)
     stepSniper(this.sniper, input, dt)
     stepRespawns(this.dummies, this.respawns, dt)
+
+    // Animate before fire so skinned-mesh hitscan uses this frame's pose
+    for (const mixer of this.dummyMixers.values()) {
+      mixer.update(dt)
+    }
 
     if (tryFire(this.sniper, input)) {
       // Fire with current aim (sway / existing recoil), then kick for next frames.
@@ -693,7 +1518,7 @@ export class GameEngine {
         VIEW_BOB.frequency * (speed / VIEW_BOB.freqSpeedRef) * dt
     }
 
-    const bobA = this.bobAmount
+    const bobA = this.vmFreezeBob ? 0 : this.bobAmount
     const s1 = Math.sin(this.bobPhase)
     const s2 = Math.sin(this.bobPhase * 2)
     const c2 = Math.cos(this.bobPhase * 2)
@@ -727,50 +1552,35 @@ export class GameEngine {
 
     // viewmodel pose — hip sits lower-right; ADS pulls to center then hides for scope UI
     if (this.viewmodel) {
-      const ads = this.sniper.adsBlend
-      const { hipPos, hipRot, adsPos, adsRot, hideAds } = VIEWMODEL
+      const ads =
+        this.vmForceAds != null ? this.vmForceAds : this.sniper.adsBlend
+      const { hipPos, hipRot, adsPos, adsRot, hideAds } = this.vmConfig
       const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
       const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
       this.viewmodel.position.lerpVectors(hip, scoped, ads)
       this.viewmodel.position.x += bobGunX
       this.viewmodel.position.y +=
-        bobGunY - this.landOffset * VIEW_BOB.landGunMul
+        bobGunY - this.landOffset * (this.vmFreezeBob ? 0 : VIEW_BOB.landGunMul)
       this.viewmodel.position.z += bobGunZ
+      const recoilKick = this.vmFreezeBob
+        ? 0
+        : this.sniper.recoil * SNIPER.viewmodelRecoil
       this.viewmodel.rotation.set(
-        hipRot.x * (1 - ads) +
-          adsRot.x * ads +
-          this.sniper.recoil * SNIPER.viewmodelRecoil +
-          bobGunPitch,
+        hipRot.x * (1 - ads) + adsRot.x * ads + recoilKick + bobGunPitch,
         hipRot.y * (1 - ads) + adsRot.y * ads,
         hipRot.z * (1 - ads) + adsRot.z * ads + bobGunRoll,
       )
-      this.viewmodel.visible = ads < hideAds
+      this.viewmodel.visible = this.vmKeepVisible || ads < hideAds
     }
 
-    // dummy mixers + visuals
-    for (const mixer of this.dummyMixers.values()) {
-      mixer.update(dt)
-    }
-
+    // dummy visuals — hit surfaces ARE the model meshes
     for (const d of this.dummies) {
       const mesh = this.dummyMeshes.get(d.id)
       if (!mesh) continue
 
       const wasAlive = mesh.userData.wasAlive !== false
       if (d.alive && !wasAlive) {
-        // respawned — back to idle, full color
         this.playDummyIdle(mesh)
-        const bases = mesh.userData.baseColors as THREE.Color[] | undefined
-        const mats = mesh.userData.mats as THREE.Material[] | undefined
-        if (mats && bases) {
-          for (let i = 0; i < mats.length; i++) {
-            const mat = mats[i]
-            const base = bases[i]
-            if (base && 'color' in mat) {
-              ;(mat as THREE.MeshStandardMaterial).color.copy(base)
-            }
-          }
-        }
       }
       mesh.userData.wasAlive = d.alive
 
@@ -778,30 +1588,13 @@ export class GameEngine {
       const dying = !d.alive && mesh.userData.animState === 'death'
       mesh.visible = d.alive || dying
 
-      const hb = this.dummyHitboxHelpers.get(d.id)
-      if (hb) {
-        hb.position.set(d.position.x, d.position.y, d.position.z)
-        // Match combat: only living dummies contribute hitboxes
-        hb.visible = d.alive
-      }
+      if (!d.alive && !dying) continue
+      this.paintDummyMeshes(mesh, d.alive ? d.hp / d.maxHp : 0)
+    }
 
-      if (!d.alive) continue
-
-      const hurt = d.hp / d.maxHp
-      const mats = mesh.userData.mats as THREE.Material[] | undefined
-      const bases = mesh.userData.baseColors as THREE.Color[] | undefined
-      if (!mats || !bases) continue
-      for (let i = 0; i < mats.length; i++) {
-        const mat = mats[i]
-        const base = bases[i]
-        if (!base || !('color' in mat)) continue
-        const c = (mat as THREE.MeshStandardMaterial).color
-        c.setRGB(
-          base.r * hurt + 0.2 * (1 - hurt),
-          base.g * hurt,
-          base.b * hurt,
-        )
-      }
+    // Local player pose hitboxes (crouch / slide / jump) — debug + future 1v1
+    if (this.playerHitboxHelper) {
+      this.syncHitboxHelper(this.playerHitboxHelper, playerVolumes(this.player))
     }
 
     // tracer fade
@@ -822,12 +1615,12 @@ export class GameEngine {
     const look = effectiveLook(this.player, this.sniper)
     const origin = eyePosition(this.player)
     const dir = lookDirection(look.yaw, look.pitch)
-    const hit = castHitscan(
-      origin,
-      dir,
-      dummyHitboxes(this.dummies),
-      this.colliders,
-    )
+
+    // World cover blocks first (AABB), then ray vs real character meshes
+    const worldHit = castHitscan(origin, dir, [], this.colliders)
+    const range = worldHit?.distance ?? SNIPER.maxRange
+    const meshHit = this.castMeshHitscan(origin, dir, range)
+    const hit = meshHit ?? worldHit
 
     const end = hit
       ? hit.point
@@ -842,7 +1635,7 @@ export class GameEngine {
 
     if (hit?.hitbox) {
       const zone = hit.hitbox.zone
-      const dmg = zone === 'head' ? SNIPER.headDamage : SNIPER.bodyDamage
+      const dmg = this.damageForZone(zone)
       const ownerId = hit.hitbox.ownerId
       const result = damageDummy(this.dummies, ownerId, dmg)
       this.lastHit = {

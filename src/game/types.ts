@@ -39,22 +39,45 @@ export interface PlayerBody {
   slideSpeed: number
 }
 
-export type HitZone = 'head' | 'body'
+/** Damage region on a character mesh / bone cluster. */
+export type HitZone = 'head' | 'chest' | 'arm' | 'leg'
 
 export interface AABB {
   min: Vec3
   max: Vec3
 }
 
+/** Capsule = segment a→b with constant radius (torso, limbs). */
+export interface HitCapsule {
+  a: Vec3
+  b: Vec3
+  radius: number
+}
+
 export interface Hitbox {
   id: string
   zone: HitZone
-  /** Sphere hitbox (head) */
+  /** Sphere hitbox (shoulder blobs) */
   sphere?: { center: Vec3; radius: number }
-  /** AABB hitbox (body / world) */
+  /** Axis-aligned ellipsoid (egg head) */
+  ellipsoid?: { center: Vec3; radii: Vec3 }
+  /** AABB hitbox (legacy body / world cover) */
   aabb?: AABB
+  /** Capsule hitbox (pose-driven body) */
+  capsule?: HitCapsule
   /** Link to dummy/player owner */
   ownerId: string
+}
+
+/** Live damage volumes — updated each frame from pose / bones. */
+export interface HitVolumes {
+  headCenter: Vec3
+  /** Egg head: half-extents (X width, Y height, Z depth) */
+  headRadii: Vec3
+  /** Body / limb capsules along the skeleton */
+  capsules: HitCapsule[]
+  /** Extra body spheres (shoulders, etc.) */
+  bodySpheres?: { center: Vec3; radius: number }[]
 }
 
 export interface DummyTarget {

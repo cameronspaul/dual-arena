@@ -1,6 +1,6 @@
 import { DUMMY, WORLD } from './config'
 import { aabbFromCenter } from './math'
-import type { AABB, DummyTarget, Hitbox, Vec3 } from './types'
+import type { AABB, DummyTarget, Vec3 } from './types'
 
 export function buildWorldColliders(): AABB[] {
   return WORLD.coverBoxes.map((b) =>
@@ -17,41 +17,6 @@ export function createDummies(): DummyTarget[] {
     alive: true,
     yaw: d.yaw,
   }))
-}
-
-export function dummyHitboxes(dummies: DummyTarget[]): Hitbox[] {
-  const boxes: Hitbox[] = []
-  for (const d of dummies) {
-    if (!d.alive) continue
-    const p = d.position
-    boxes.push({
-      id: `${d.id}-head`,
-      ownerId: d.id,
-      zone: 'head',
-      sphere: {
-        center: {
-          x: p.x,
-          y: p.y + DUMMY.headOffsetY,
-          z: p.z,
-        },
-        radius: DUMMY.headRadius,
-      },
-    })
-    boxes.push({
-      id: `${d.id}-body`,
-      ownerId: d.id,
-      zone: 'body',
-      aabb: aabbFromCenter(
-        p.x,
-        p.y + DUMMY.bodyOffsetY,
-        p.z,
-        DUMMY.bodyHalfW,
-        DUMMY.bodyHeight / 2,
-        DUMMY.bodyHalfD,
-      ),
-    })
-  }
-  return boxes
 }
 
 export interface RespawnTimer {
