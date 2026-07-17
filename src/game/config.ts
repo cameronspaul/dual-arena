@@ -87,8 +87,8 @@ export const SNIPER = {
   walkSpreadMul: 1.35,
   moveSpreadMul: 1.75,
   crouchSpreadMul: 0.72,
-  airSpreadMul: 2.1,
-  slideSpreadMul: 2.4,
+  airSpreadMul: 3.4,
+  slideSpreadMul: 3.8,
   /** Extra cone while recoil kick is active. */
   recoilSpreadMul: 0.55,
   /** Brief bloom after each shot (radians added, decays with recoil). */

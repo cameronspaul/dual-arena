@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent } from '@/game/types'
 import { Target } from 'lucide-react'
 import { ScopeOverlay } from './ScopeOverlay'
@@ -11,8 +12,9 @@ interface GameHudProps {
 
 /** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
 function spreadToGap(spreadRad: number): number {
-  // ~3.2° (0.055) hip → ~52px gap; ADS laser → ~4px rest gap
-  return Math.min(90, 4 + spreadRad * 880)
+  // Keep headroom past sprint so air/slide multipliers actually read on screen.
+  // hip stand ~0.055 → ~48px, run ~0.096 → ~82px, air ~0.19 → ~155px, slide ~0.21 → ~174px
+  return Math.min(190, 3 + spreadRad * 820)
 }
 
 function hitmarkerColor(hit: HitEvent): string {
@@ -84,8 +86,8 @@ export function GameHud({ hud }: GameHudProps) {
   const fullyScoped = hud.adsBlend > 0.55
   const gap = spreadToGap(hud.aimSpread)
   // Arms lengthen slightly as the cone opens so the reticle still reads.
-  const arm = Math.min(14, 8 + gap * 0.06)
-  const thick = 2
+  const arm = Math.min(18, 8 + gap * 0.05)
+  const thick = gap > 100 ? 2.5 : 2
   // Dim chrome HUD while in the glass so the scope owns the frame.
   const chromeOpacity = fullyScoped ? 0.35 : 1
   const hit = hud.lastHit
@@ -126,6 +128,8 @@ export function GameHud({ hud }: GameHudProps) {
 
         <Link
           to="/"
+          onClick={() => gameAudio.uiClick()}
+          onMouseEnter={() => gameAudio.uiHover()}
           className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
         >
           Exit
@@ -140,7 +144,11 @@ export function GameHud({ hud }: GameHudProps) {
         >
           <div
             className="relative"
-            style={{ width: gap * 2 + arm * 2 + 8, height: gap * 2 + arm * 2 + 8 }}
+            style={{
+              width: gap * 2 + arm * 2 + 8,
+              height: gap * 2 + arm * 2 + 8,
+              transition: 'width 70ms linear, height 70ms linear',
+            }}
           >
             {/* Center micro-dot */}
             <div
@@ -154,7 +162,7 @@ export function GameHud({ hud }: GameHudProps) {
                 width: thick,
                 height: arm,
                 top: `calc(50% - ${gap}px - ${arm}px)`,
-                transition: 'top 60ms linear, height 60ms linear',
+                transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
               }}
             />
             {/* Bottom arm */}
@@ -164,7 +172,7 @@ export function GameHud({ hud }: GameHudProps) {
                 width: thick,
                 height: arm,
                 top: `calc(50% + ${gap}px)`,
-                transition: 'top 60ms linear, height 60ms linear',
+                transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
               }}
             />
             {/* Left arm */}
@@ -174,7 +182,7 @@ export function GameHud({ hud }: GameHudProps) {
                 height: thick,
                 width: arm,
                 left: `calc(50% - ${gap}px - ${arm}px)`,
-                transition: 'left 60ms linear, width 60ms linear',
+                transition: 'left 70ms linear, width 70ms linear, height 70ms linear',
               }}
             />
             {/* Right arm */}
@@ -184,7 +192,7 @@ export function GameHud({ hud }: GameHudProps) {
                 height: thick,
                 width: arm,
                 left: `calc(50% + ${gap}px)`,
-                transition: 'left 60ms linear, width 60ms linear',
+                transition: 'left 70ms linear, width 70ms linear, height 70ms linear',
               }}
             />
           </div>

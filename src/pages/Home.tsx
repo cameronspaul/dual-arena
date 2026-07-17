@@ -3,6 +3,7 @@ import { useAppStore } from '../stores/useAppStore'
 import { Crosshair, Moon, Sun, Target } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { motion } from 'framer-motion'
+import { gameAudio } from '../game/audio'
 
 function Home() {
   const { theme, toggleTheme } = useAppStore()
@@ -15,7 +16,11 @@ function Home() {
 
       <div className="absolute top-4 left-4 z-10">
         <motion.button
-          onClick={() => toggleTheme()}
+          onClick={() => {
+            gameAudio.uiClick()
+            toggleTheme()
+          }}
+          onMouseEnter={() => gameAudio.uiHover()}
           className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
           aria-label="Toggle theme"
           whileHover={{ scale: 1.05 }}
@@ -69,7 +74,11 @@ function Home() {
           transition={{ delay: 0.24, duration: 0.5 }}
         >
           <Button asChild size="lg" className="min-w-48 gap-2 text-base">
-            <Link to="/play">
+            <Link
+              to="/play"
+              onClick={() => gameAudio.uiConfirm()}
+              onMouseEnter={() => gameAudio.uiHover()}
+            >
               <Target className="h-5 w-5" />
               Enter Range
             </Link>

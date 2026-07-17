@@ -169,6 +169,10 @@ export class GameEngine {
   private wasGrounded = true
   /** Fall speed sampled before collision zeros velocity.y on land. */
   private prevVelY = 0
+  /** Sniper phase edge detection for bolt / reload SFX. */
+  private prevSniperPhase: SniperState['phase'] = 'ready'
+  private prevAdsScoped = false
+  private footstepBobSign = 0
   private dummyMeshes = new Map<string, THREE.Group>()
   private dummyMixers = new Map<string, THREE.AnimationMixer>()
   private impactPool: THREE.Mesh[] = []
@@ -2104,16 +2108,32 @@ export class GameEngine {
     this.syncViewmodelAnim()
     this.vmMixer?.update(dt)
 
-    if (tryFire(this.sniper, input)) {
+    const prevGrounded = this.wasGrounded
+    const prevMoveState = this.player.state
+    const fireResult = tryFire(this.sniper, input)
+    if (fireResult === 'shot') {
       // Fire with current aim (sway / existing recoil), then kick for next frames.
+      gameAudio.playFire()
       this.fireShot()
       applyRecoil(this.sniper)
+    } else if (fireResult === 'dry') {
+      gameAudio.playDryFire()
     }
+    // After tryFire so empty-mag reload still gets phase SFX.
+    this.playSniperPhaseSfx()
 
     // --- View bob (visual only; fireShot still uses true eyePosition) ---
     const p = this.player
     const speed = Math.hypot(p.velocity.x, p.velocity.z)
     const grounded = p.grounded
+
+    // Jump / slide start
+    if (prevGrounded && !grounded && p.velocity.y > 3) {
+      gameAudio.play('jump', { volume: 0.5 })
+    }
+    if (p.state === 'slide' && prevMoveState !== 'slide') {
+      gameAudio.play('slide', { volume: 0.6 })
+    }
 
     // Landing kick is viewmodel-only (camera stays on true eye for aim parity).
     // Impulse into a spring — offset ramps smoothly instead of snapping.
@@ -2126,8 +2146,18 @@ export class GameEngine {
       // Critically damped peak ≈ v0 / (ω e) with x0=0 → v0 = peak · ω · e
       const w = VIEW_BOB.landOmega
       this.landVel += peak * w * Math.E
+      gameAudio.play('land', {
+        volume: Math.min(1, 0.35 + impact * 0.08),
+      })
     }
     this.wasGrounded = grounded
+
+    // ADS glass in / out
+    const scoped = this.sniper.adsBlend > 0.55
+    if (scoped !== this.prevAdsScoped) {
+      gameAudio.play(scoped ? 'adsIn' : 'adsOut', { volume: 0.5 })
+      this.prevAdsScoped = scoped
+    }
     {
       const w = VIEW_BOB.landOmega
       const damp = 2 * w * VIEW_BOB.landDamp
@@ -2168,6 +2198,20 @@ export class GameEngine {
         VIEW_BOB.freqSpeedCap,
       )
       this.bobPhase += VIEW_BOB.frequency * freqScale * dt
+      // Footsteps on each bob half-cycle
+      if (
+        p.state !== 'slide' &&
+        !this.vmFreezeBob &&
+        this.sniper.adsBlend < 0.85
+      ) {
+        const sign = Math.sin(this.bobPhase) >= 0 ? 1 : -1
+        if (this.footstepBobSign !== 0 && sign !== this.footstepBobSign) {
+          gameAudio.footstep(speed, p.state === 'run')
+        }
+        this.footstepBobSign = sign
+      }
+    } else {
+      this.footstepBobSign = 0
     }
 
     // Sprint weight: deeper vertical / pitch, not faster cycle.
@@ -2460,6 +2504,22 @@ export class GameEngine {
     } else if (hit) {
       this.showImpact(hit.point, 'world', false)
       gameAudio.playWorldImpact()
+    }
+  }
+
+  /** Bolt / reload SFX on sniper phase edges. */
+  private playSniperPhaseSfx() {
+    const phase = this.sniper.phase
+    if (phase === this.prevSniperPhase) return
+    const prev = this.prevSniperPhase
+    this.prevSniperPhase = phase
+
+    if (phase === 'bolt') {
+      gameAudio.playBolt()
+    } else if (phase === 'reloading') {
+      gameAudio.playReload()
+    } else if (phase === 'ready' && prev === 'reloading') {
+      gameAudio.play('reloadDone', { volume: 0.55 })
     }
   }
 

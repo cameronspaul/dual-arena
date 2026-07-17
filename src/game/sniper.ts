@@ -127,21 +127,23 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
   stepReloadJiggle(s, dt)
 }
 
-/** Returns true if a shot was consumed this frame. */
-export function tryFire(s: SniperState, input: PlayerInput): boolean {
-  if (!input.fire) return false
+export type FireResult = 'shot' | 'dry' | 'reload' | 'none'
+
+/** Attempt a shot this frame. Returns what happened for SFX hooks. */
+export function tryFire(s: SniperState, input: PlayerInput): FireResult {
+  if (!input.fire) return 'none'
   if (s.phase !== 'ready') {
     // Empty click during bolt after the last round — still queue a reload
     // so scoped dry-fires aren't lost.
     if (s.ammo <= 0 && s.reserve > 0 && s.phase !== 'reloading') {
       s.reloadQueued = true
     }
-    return false
+    return 'none'
   }
   if (s.ammo <= 0) {
     // Dry-fire while ADS: start reload without leaving the ADS hold intent.
-    beginReload(s)
-    return false
+    if (beginReload(s)) return 'reload'
+    return 'dry'
   }
 
   s.ammo -= 1
@@ -154,7 +156,7 @@ export function tryFire(s: SniperState, input: PlayerInput): boolean {
   }
   // Recoil is applied after the shot so the bullet still goes where the
   // crosshair was aiming this frame (kick affects subsequent frames).
-  return true
+  return 'shot'
 }
 
 export function applyRecoil(s: SniperState) {
