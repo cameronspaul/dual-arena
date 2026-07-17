@@ -65,17 +65,18 @@ export function fireShot(opts: {
         z: origin.z + dir.z * SNIPER.maxRange,
       }
 
-  fx.showTracer(origin, dir, end)
   gameAudio.unlock()
 
   let lastHit: HitEvent | null = null
   let killsDelta = 0
+  let killed = false
 
   if (hit?.hitbox) {
     const zone = hit.hitbox.zone
     const dmg = damageForZone(zone)
     const ownerId = hit.hitbox.ownerId
     const result = damageDummy(dummies, ownerId, dmg)
+    killed = result.killed
     lastHit = {
       targetId: ownerId,
       zone,
@@ -87,6 +88,9 @@ export function fireShot(opts: {
     gameAudio.playHitConfirm({ zone, killed: result.killed })
     if (result.killed) {
       killsDelta = 1
+      // Freeze silhouette from the live pose, then play death on the real dummy.
+      const victim = dummiesSys.meshes.get(ownerId)
+      if (victim) fx.spawnKillGhost(victim)
       dummiesSys.onDeath(ownerId)
       queueRespawn(respawns, ownerId)
     } else if (result.hp > 0) {
@@ -95,6 +99,9 @@ export function fireShot(opts: {
   } else if (hit) {
     fx.showImpact(hit.point, 'world', false)
   }
+
+  // Tracer after damage so kills can leave a permanent red mark.
+  fx.showTracer(origin, dir, end, { killed })
 
   return { lastHit, killsDelta }
 }
