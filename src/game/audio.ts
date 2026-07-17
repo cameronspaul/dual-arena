@@ -36,14 +36,8 @@ type ClipDef = {
 
 const CLIPS: Record<SfxId, ClipDef> = {
   fire: {
-    src: '/sounds/fire_01.mp3',
+    src: '/sounds/fire_03.mp3',
     volume: 0.9,
-    variants: [
-      '/sounds/fire_01.mp3',
-      '/sounds/fire_02.mp3',
-      '/sounds/fire_03.mp3',
-      '/sounds/fire_04.mp3',
-    ],
     pool: 6,
   },
   bolt: {
