@@ -115,14 +115,19 @@ function firstHit(
   dir: THREE.Vector3,
   meshes: THREE.Object3D[],
   maxDist: number,
+  /** Ignore hits closer than this (standing inside thin floors / self) */
+  minDist = 0,
 ): THREE.Intersection | null {
   if (meshes.length === 0) return null
   _ray.set(origin, dir)
-  _ray.near = 0
+  _ray.near = Math.max(0, minDist)
   _ray.far = maxDist
-  // First hit only — sorted by distance
+  // Sorted by distance — skip any residual under minDist
   const hits = _ray.intersectObjects(meshes, false)
-  return hits.length > 0 ? hits[0] : null
+  for (const h of hits) {
+    if (h.distance >= minDist) return h
+  }
+  return null
 }
 
 function hitNormal(h: THREE.Intersection): THREE.Vector3 {
@@ -288,7 +293,14 @@ export function castMeshWorldHitscan(
   _origin.set(origin.x, origin.y, origin.z)
   _dir.set(direction.x, direction.y, direction.z).normalize()
   const near = nearbyMeshes(meshes, origin, maxRange)
-  const hit = firstHit(_origin, _dir, near.length ? near : meshes, maxRange)
+  // Skin so eye rays that start in/near floor tris don't "hit world" at t≈0
+  const hit = firstHit(
+    _origin,
+    _dir,
+    near.length ? near : meshes,
+    maxRange,
+    0.12,
+  )
   if (!hit) return null
   const n = hitNormal(hit)
   return {

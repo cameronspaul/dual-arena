@@ -61,18 +61,44 @@ export function fireShot(opts: {
   const spread = aimSpread(sniper, player)
   const dir = spreadLookDirection(look.yaw, look.pitch, spread)
 
-  const aabbHit = castHitscan(origin, dir, [], colliders)
-  const meshWorld = castWorldMesh?.(origin, dir, SNIPER.maxRange) ?? null
-  // Prefer the closer of mesh vs AABB world hits
-  let worldHit = aabbHit
-  if (meshWorld) {
-    if (!worldHit || meshWorld.distance < worldHit.distance) {
-      worldHit = meshWorld
-    }
+  /**
+   * Hits can start slightly inside map geo (mesh floors / fat AABBs). A
+   * distance-0 world hit used to clamp the dummy ray to ~0 so NPCs never
+   * registered. Cast dummies at full range, ignore skin-close world hits,
+   * then pick the closest valid result.
+   */
+  const SKIN = 0.15
+
+  // Dummies first at full range (not limited by a bad world hit)
+  const dummyHit = dummiesSys.castHitscan(
+    dummies,
+    origin,
+    dir,
+    SNIPER.maxRange,
+  )
+
+  // When mesh world is active, skip crude AABBs for bullets — they often
+  // swallow the player and return t≈0.
+  const useAabbWorld = !castWorldMesh
+  let worldHit: RayHit | null = useAabbWorld
+    ? castHitscan(origin, dir, [], colliders)
+    : null
+  if (worldHit && worldHit.distance < SKIN) worldHit = null
+
+  let meshWorld = castWorldMesh?.(origin, dir, SNIPER.maxRange) ?? null
+  if (meshWorld && meshWorld.distance < SKIN) meshWorld = null
+  if (meshWorld && (!worldHit || meshWorld.distance < worldHit.distance)) {
+    worldHit = meshWorld
   }
-  const range = worldHit?.distance ?? SNIPER.maxRange
-  const meshHit = dummiesSys.castHitscan(dummies, origin, dir, range)
-  const hit = meshHit ?? worldHit
+
+  // Closest of dummy vs world (dummy wins near-ties so cover edges still kill)
+  let hit: RayHit | null = null
+  if (dummyHit && worldHit) {
+    hit =
+      dummyHit.distance <= worldHit.distance + 0.04 ? dummyHit : worldHit
+  } else {
+    hit = dummyHit ?? worldHit
+  }
 
   const end = hit
     ? hit.point
