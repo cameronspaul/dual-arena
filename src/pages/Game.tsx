@@ -21,7 +21,9 @@ function hudKey(s: HudSnapshot): string {
     Math.round(s.speed * 2),
     s.pointerLocked ? 1 : 0,
     s.kills,
-    s.lastHitAge < 1.2 ? `${s.lastHit?.zone}${s.lastHit?.damage}` : '',
+    // Serial id so consecutive same-zone hits still re-render the hitmarker
+    s.lastHitId,
+    s.lastHitAge < 0.605 ? 1 : 0,
     s.hp,
   ].join('|')
 }

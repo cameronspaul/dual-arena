@@ -166,4 +166,9 @@ export interface HudSnapshot {
   kills: number
   lastHit: HitEvent | null
   lastHitAge: number
+  /**
+   * Monotonic id bumped on every confirmed hit so React can re-fire
+   * hitmarker animations even when zone/damage repeat.
+   */
+  lastHitId: number
 }

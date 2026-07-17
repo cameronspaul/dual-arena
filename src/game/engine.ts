@@ -52,18 +52,26 @@ import {
   stepRespawns,
   type RespawnTimer,
 } from './world'
+import { gameAudio } from './audio'
 
 type ArmLimbKey = 'shoulder' | 'bicep' | 'forearm' | 'wrist'
 
 type DummyActions = {
   idle: THREE.AnimationAction
   walk: THREE.AnimationAction | null
+  /** Forward run (CharacterArmature|Run) */
   run: THREE.AnimationAction | null
+  runBack: THREE.AnimationAction | null
+  runLeft: THREE.AnimationAction | null
+  runRight: THREE.AnimationAction | null
   slide: THREE.AnimationAction | null
   hit: THREE.AnimationAction | null
   hitAlt: THREE.AnimationAction | null
   death: THREE.AnimationAction | null
 }
+
+/** Local move octant relative to facing (for man.glb Run_* clips). */
+type LocoDir = 'forward' | 'back' | 'left' | 'right'
 
 type ArmBoneRest = {
   bone: THREE.Object3D
@@ -169,6 +177,8 @@ export class GameEngine {
   private hudListeners = new Set<HudListener>()
   private lastHit: HitEvent | null = null
   private lastHitAge = 999
+  /** Bumped each confirmed hit so HUD can re-trigger animations. */
+  private lastHitId = 0
   private kills = 0
   private playerHp = 100
   private clock = new THREE.Clock()
@@ -629,6 +639,9 @@ export class GameEngine {
       this.findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0]
     const walkClip = this.findClip(clips, 'Walk')
     const runClip = this.findClip(clips, 'Run')
+    const runBackClip = this.findClip(clips, 'Run_Back')
+    const runLeftClip = this.findClip(clips, 'Run_Left')
+    const runRightClip = this.findClip(clips, 'Run_Right')
     const slideClip = this.findClip(clips, 'Roll')
 
     if (idleClip) {
@@ -657,6 +670,9 @@ export class GameEngine {
         idle,
         walk: mkLoop(walkClip),
         run: mkLoop(runClip),
+        runBack: mkLoop(runBackClip),
+        runLeft: mkLoop(runLeftClip),
+        runRight: mkLoop(runRightClip),
         slide: mkOnce(slideClip),
         hit: null,
         hitAlt: null,
@@ -670,8 +686,15 @@ export class GameEngine {
     this.playerBodyIsMan = true
   }
 
-  /** Match player move state → Idle / Walk / Run / Roll on the TP man body. */
-  private syncPlayerLocomotion() {
+  /**
+   * Match player move state → Idle / Walk / Run_* / Roll on the TP man body.
+   * Uses man.glb directional Run clips (forward / back / left / right) from
+   * wish input; falls back to velocity when airborne.
+   */
+  private syncPlayerLocomotion(input: {
+    forward: number
+    right: number
+  }) {
     const root = this.playerBody
     if (!root?.userData.isMan) return
     const actions = this.getDummyActions(root)
@@ -686,30 +709,53 @@ export class GameEngine {
       else want = 'idle'
     }
 
-    if (root.userData.locoState !== want) {
-      root.userData.locoState = want
+    const dir = this.resolveLocoDir(
+      input.forward,
+      input.right,
+      this.player.velocity.x,
+      this.player.velocity.z,
+      this.player.yaw,
+      want === 'idle' || want === 'slide',
+    )
+    // Include direction so strafe ↔ forward crossfades while still "running"
+    const locoKey =
+      want === 'idle' || want === 'slide' ? want : `${want}_${dir}`
+
+    if (root.userData.locoState !== locoKey) {
+      root.userData.locoState = locoKey
       root.userData.animState = want
 
       if (want === 'slide') {
         const slide = actions.slide
         if (slide) {
-          const loops = [actions.idle, actions.walk, actions.run]
-          for (const a of loops) {
+          for (const a of this.locoLoopActions(actions)) {
             if (a) a.fadeOut(0.08)
           }
           this.playSlideRoll(slide)
         } else {
-          this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+          this.fadeDummyLoco(
+            actions,
+            this.pickDirectionalRun(actions, dir) ??
+              actions.walk ??
+              actions.idle,
+          )
         }
       } else if (want === 'run') {
-        this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
-        if (actions.run) actions.run.setEffectiveTimeScale(1)
+        const run =
+          this.pickDirectionalRun(actions, dir) ??
+          actions.walk ??
+          actions.idle
+        this.fadeDummyLoco(actions, run)
+        if (run && run !== actions.idle) run.setEffectiveTimeScale(1)
       } else if (want === 'walk' || want === 'crouch') {
-        const walk = actions.walk ?? actions.idle
-        this.fadeDummyLoco(actions, walk)
-        // Crouch: slower walk cycle (no dedicated crouch clip in man.glb)
-        if (walk && walk !== actions.idle) {
-          walk.setEffectiveTimeScale(want === 'crouch' ? 0.55 : 1)
+        const { action, timeScale } = this.pickWalkAction(
+          actions,
+          dir,
+          want === 'crouch' ? 0.55 : 1,
+        )
+        this.fadeDummyLoco(actions, action)
+        if (action && action !== actions.idle) {
+          action.setEffectiveTimeScale(timeScale)
         }
       } else {
         this.fadeDummyLoco(actions, actions.idle)
@@ -725,6 +771,92 @@ export class GameEngine {
         1 - this.player.slideTimer / MOVE.slideDuration,
       )
     }
+  }
+
+  /** All looping locomotion clips (for fade-out lists). */
+  private locoLoopActions(
+    actions: DummyActions,
+  ): (THREE.AnimationAction | null)[] {
+    return [
+      actions.idle,
+      actions.walk,
+      actions.run,
+      actions.runBack,
+      actions.runLeft,
+      actions.runRight,
+    ]
+  }
+
+  /**
+   * Dominant local move direction from WASD (or velocity if no wish).
+   * 4-way only — matches man.glb Run / Run_Back / Run_Left / Run_Right.
+   */
+  private resolveLocoDir(
+    forward: number,
+    right: number,
+    velX: number,
+    velZ: number,
+    yaw: number,
+    skip: boolean,
+  ): LocoDir {
+    if (skip) return 'forward'
+    let f = forward
+    let r = right
+    if (Math.abs(f) < 0.01 && Math.abs(r) < 0.01) {
+      // No keys (air / friction): project velocity onto facing basis
+      const sin = Math.sin(yaw)
+      const cos = Math.cos(yaw)
+      // facing (-sin, -cos), right (cos, -sin) — same as wishDir
+      f = -velX * sin - velZ * cos
+      r = velX * cos - velZ * sin
+      if (Math.hypot(f, r) < 0.15) return 'forward'
+    }
+    if (Math.abs(f) >= Math.abs(r)) {
+      return f >= 0 ? 'forward' : 'back'
+    }
+    return r >= 0 ? 'right' : 'left'
+  }
+
+  private pickDirectionalRun(
+    actions: DummyActions,
+    dir: LocoDir,
+  ): THREE.AnimationAction | null {
+    switch (dir) {
+      case 'back':
+        return actions.runBack ?? actions.run
+      case 'left':
+        return actions.runLeft ?? actions.run
+      case 'right':
+        return actions.runRight ?? actions.run
+      default:
+        return actions.run
+    }
+  }
+
+  /**
+   * man.glb only has a single Walk clip — reverse it for backpedal; use
+   * Run_Left / Run_Right at a reduced rate for strafe walk.
+   */
+  private pickWalkAction(
+    actions: DummyActions,
+    dir: LocoDir,
+    baseScale: number,
+  ): { action: THREE.AnimationAction | null; timeScale: number } {
+    if (dir === 'left' && actions.runLeft) {
+      return { action: actions.runLeft, timeScale: baseScale * 0.62 }
+    }
+    if (dir === 'right' && actions.runRight) {
+      return { action: actions.runRight, timeScale: baseScale * 0.62 }
+    }
+    if (dir === 'back' && actions.runBack) {
+      return { action: actions.runBack, timeScale: baseScale * 0.62 }
+    }
+    const walk = actions.walk ?? actions.idle
+    // No Walk_Back — reverse the forward walk cycle
+    if (dir === 'back' && walk && walk !== actions.idle) {
+      return { action: walk, timeScale: -baseScale }
+    }
+    return { action: walk, timeScale: baseScale }
   }
 
   /** Procedural fallback if man.glb fails to load. */
@@ -1225,7 +1357,7 @@ export class GameEngine {
 
   /**
    * Load public/models/man.glb once, clone per dummy (with skeleton).
-   * Clips: Idle / Walk / Run / Roll (slide) + hit / death.
+   * Clips: Idle / Walk / Run(+_Back/_Left/_Right) / Roll (slide) + hit / death.
    * Crouch reuses Walk (no crouch clip in this asset).
    */
   private async loadDummies() {
@@ -1243,6 +1375,9 @@ export class GameEngine {
         this.findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0]
       const walkClip = this.findClip(clips, 'Walk')
       const runClip = this.findClip(clips, 'Run')
+      const runBackClip = this.findClip(clips, 'Run_Back')
+      const runLeftClip = this.findClip(clips, 'Run_Left')
+      const runRightClip = this.findClip(clips, 'Run_Right')
       // man.glb has no slide — Roll is the closest one-shot dive/dodge
       const slideClip = this.findClip(clips, 'Roll')
       const hitClip = this.findClip(clips, 'HitRecieve')
@@ -1253,6 +1388,9 @@ export class GameEngine {
         idle: idleClip?.name,
         walk: walkClip?.name,
         run: runClip?.name,
+        runBack: runBackClip?.name,
+        runLeft: runLeftClip?.name,
+        runRight: runRightClip?.name,
         slide: slideClip?.name,
         available: clips.map((c) => c.name),
       })
@@ -1323,6 +1461,9 @@ export class GameEngine {
 
           const walk = mkLoop(walkClip)
           const run = mkLoop(runClip)
+          const runBack = mkLoop(runBackClip)
+          const runLeft = mkLoop(runLeftClip)
+          const runRight = mkLoop(runRightClip)
           const slide = mkOnce(slideClip)
           const hit = mkOnce(hitClip)
           const hitAlt =
@@ -1335,6 +1476,9 @@ export class GameEngine {
             idle,
             walk,
             run,
+            runBack,
+            runLeft,
+            runRight,
             slide,
             hit,
             hitAlt,
@@ -1434,8 +1578,7 @@ export class GameEngine {
     fade = 0.18,
   ) {
     if (!next) return
-    const loops = [actions.idle, actions.walk, actions.run]
-    for (const a of loops) {
+    for (const a of this.locoLoopActions(actions)) {
       if (!a || a === next) continue
       if (a.isRunning()) a.fadeOut(fade)
     }
@@ -1443,10 +1586,15 @@ export class GameEngine {
     if (actions.slide && actions.slide !== next) {
       actions.slide.fadeOut(fade * 0.5)
     }
-    next.reset().setEffectiveWeight(1).fadeIn(fade).play()
+    // Preserve timeScale (e.g. reversed walk for backpedal)
+    const ts = next.getEffectiveTimeScale()
+    next.reset().setEffectiveWeight(1).setEffectiveTimeScale(ts).fadeIn(fade).play()
   }
 
-  /** Match sim move state → Walk / Run / Idle / Roll clips. */
+  /**
+   * Match sim move state → Walk / Run / Idle / Roll clips.
+   * Dummies face their velocity, so they always use forward Run/Walk.
+   */
   private syncDummyLocomotion(id: string) {
     const d = this.dummies.find((x) => x.id === id)
     const root = this.dummyMeshes.get(id)
@@ -1471,8 +1619,7 @@ export class GameEngine {
       if (want === 'slide') {
         const slide = actions.slide
         if (slide) {
-          const loops = [actions.idle, actions.walk, actions.run]
-          for (const a of loops) {
+          for (const a of this.locoLoopActions(actions)) {
             if (a) a.fadeOut(0.08)
           }
           this.playSlideRoll(slide)
@@ -1559,8 +1706,9 @@ export class GameEngine {
     actions.hitAlt?.stop()
     actions.death?.stop()
     actions.slide?.stop()
-    actions.walk?.stop()
-    actions.run?.stop()
+    for (const a of this.locoLoopActions(actions)) {
+      if (a && a !== actions.idle) a.stop()
+    }
     actions.idle.reset().fadeIn(0.2).play()
     this.applyDummyCrouchScale(root, false)
   }
@@ -1582,10 +1730,10 @@ export class GameEngine {
     if (!pick) return
 
     root.userData.animState = 'hit'
-    const loops = [actions.idle, actions.walk, actions.run, actions.slide]
-    for (const a of loops) {
+    for (const a of this.locoLoopActions(actions)) {
       if (a?.isRunning()) a.fadeOut(0.08)
     }
+    if (actions.slide?.isRunning()) actions.slide.fadeOut(0.08)
     actions.hit?.stop()
     actions.hitAlt?.stop()
     pick.reset().setEffectiveWeight(1).fadeIn(0.05).play()
@@ -1601,10 +1749,10 @@ export class GameEngine {
     }
     root.userData.animState = 'death'
     root.userData.locoState = null
-    const loops = [actions.idle, actions.walk, actions.run, actions.slide]
-    for (const a of loops) {
+    for (const a of this.locoLoopActions(actions)) {
       if (a?.isRunning()) a.fadeOut(0.08)
     }
+    if (actions.slide?.isRunning()) actions.slide.fadeOut(0.08)
     actions.hit?.stop()
     actions.hitAlt?.stop()
     actions.death.reset().setEffectiveWeight(1).fadeIn(0.05).play()
@@ -1950,7 +2098,7 @@ export class GameEngine {
     }
     // Local TP man body — always animate so clips stay current when toggling cam
     if (this.playerBodyIsMan && this.playerBody) {
-      this.syncPlayerLocomotion()
+      this.syncPlayerLocomotion(input)
       this.playerMixer?.update(dt)
     }
     this.syncViewmodelAnim()
@@ -2284,7 +2432,7 @@ export class GameEngine {
         }
 
     this.showTracer(origin, dir, end)
-    if (hit) this.showImpact(hit.point)
+    gameAudio.unlock()
 
     if (hit?.hitbox) {
       const zone = hit.hitbox.zone
@@ -2299,6 +2447,9 @@ export class GameEngine {
         point: hit.point,
       }
       this.lastHitAge = 0
+      this.lastHitId += 1
+      this.showImpact(hit.point, zone === 'head' ? 'head' : 'body', result.killed)
+      gameAudio.playHitConfirm({ zone, killed: result.killed })
       if (result.killed) {
         this.kills += 1
         this.playDummyDeath(ownerId)
@@ -2306,6 +2457,9 @@ export class GameEngine {
       } else if (result.hp > 0) {
         this.playDummyHit(ownerId)
       }
+    } else if (hit) {
+      this.showImpact(hit.point, 'world', false)
+      gameAudio.playWorldImpact()
     }
   }
 
@@ -2326,15 +2480,26 @@ export class GameEngine {
     this.tracerTimer = 0.12
   }
 
-  private showImpact(p: { x: number; y: number; z: number }) {
+  private showImpact(
+    p: { x: number; y: number; z: number },
+    kind: 'world' | 'body' | 'head' = 'world',
+    killed = false,
+  ) {
     const m = this.impactPool.find((x) => !x.visible) ?? this.impactPool[0]
     m.position.set(p.x, p.y, p.z)
     m.visible = true
     const mat = m.material as THREE.MeshBasicMaterial
-    mat.color.setHex(0xffee88)
+    if (killed) mat.color.setHex(0xff3344)
+    else if (kind === 'head') mat.color.setHex(0xffee55)
+    else if (kind === 'body') mat.color.setHex(0xff8866)
+    else mat.color.setHex(0xffee88)
+    // Slight size punch: headshots / kills read larger at impact point
+    const s = killed ? 1.8 : kind === 'head' ? 1.45 : kind === 'body' ? 1.15 : 1
+    m.scale.setScalar(s)
     window.setTimeout(() => {
       m.visible = false
-    }, 200)
+      m.scale.setScalar(1)
+    }, killed ? 320 : 200)
   }
 
   private emitHud() {
@@ -2356,6 +2521,7 @@ export class GameEngine {
       kills: this.kills,
       lastHit: this.lastHit,
       lastHitAge: this.lastHitAge,
+      lastHitId: this.lastHitId,
     }
     for (const fn of this.hudListeners) fn(snap)
   }
