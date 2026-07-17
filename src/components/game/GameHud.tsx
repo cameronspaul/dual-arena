@@ -401,7 +401,7 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
       </div>
 
       {/* Death free-cam spectate → round restart countdown */}
-      {hud.spectating && (
+      {hud.spectating && !hud.alive && (
         <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center">
           <div className="rounded-xl border border-red-500/40 bg-black/75 px-10 py-7 text-center shadow-[0_0_40px_rgba(255,40,40,0.2)] backdrop-blur-md">
             <div className="text-xs font-semibold tracking-[0.35em] text-red-400/90 uppercase">
@@ -422,15 +422,30 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
             <p className="mt-2 text-[11px] text-white/45">
               WASD + mouse · Space / crouch to fly · Sprint to boost
             </p>
+            <p className="mt-1 text-[11px] text-white/35">
+              Toggle Free cam off (bottom left) to respawn now
+            </p>
           </div>
         </div>
       )}
 
-      {/* Click to play */}
-      {!hud.pointerLocked && !hud.spectating && (
+      {/* Voluntary free-cam hint (alive explore mode) */}
+      {hud.spectating && hud.alive && (
+        <div className="pointer-events-none absolute top-14 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-white/15 bg-black/60 px-4 py-2 text-center backdrop-blur-md">
+          <div className="text-xs font-medium text-white/85">Free cam</div>
+          <p className="mt-0.5 text-[11px] text-white/50">
+            WASD + mouse · Space / crouch fly · Sprint boost
+          </p>
+        </div>
+      )}
+
+      {/* Click to play — keep available in free-cam so look can re-lock after UI clicks */}
+      {!hud.pointerLocked && !(!hud.alive && hud.spectating) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
           <div className="rounded-xl border border-white/15 bg-black/70 px-8 py-6 text-center backdrop-blur-md">
-            <div className="text-lg font-semibold">Click to play</div>
+            <div className="text-lg font-semibold">
+              {hud.spectating ? 'Click to look' : 'Click to play'}
+            </div>
             <ControlsHint />
           </div>
         </div>

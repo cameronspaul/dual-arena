@@ -246,6 +246,7 @@ export class InputManager {
       forward: (held('forward') ? 1 : 0) - (held('back') ? 1 : 0),
       right: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
       jump: this.jumpPressed,
+      jumpHeld: held('jump'),
       crouch: held('crouch'),
       sprint: held('sprint'),
       yaw: this.yaw,

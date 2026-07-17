@@ -1,7 +1,7 @@
 /**
- * Free-cam death spectate — fly anywhere, look freely, no collision.
- * Used after death so the player can track tracers / the kill scene
- * before the round restarts.
+ * Free-cam spectate — fly anywhere, look freely, no collision.
+ * Used after death (countdown then respawn) and via the Free cam
+ * toggle (bottom-left) for voluntary exploration.
  */
 import { DEATH, MOVE } from '../core/config'
 import { clampPitch, lookDirection } from '../core/math'
@@ -26,7 +26,7 @@ export function createFreeCam(
 }
 
 /**
- * WASD along look + strafe, Space up / crouch down, sprint to boost.
+ * WASD along look + strafe, Space (held) up / crouch down, sprint to boost.
  * No gravity, no world collision — pure free-cam.
  */
 export function stepFreeCam(
@@ -45,7 +45,8 @@ export function stepFreeCam(
   let my = look.y * input.forward
   let mz = look.z * input.forward + rz * input.right
 
-  if (input.jump) my += 1
+  // jump is edge-triggered for gameplay; freecam needs continuous hold (Space).
+  if (input.jumpHeld || input.jump) my += 1
   if (input.crouch) my -= 1
 
   const len = Math.hypot(mx, my, mz)

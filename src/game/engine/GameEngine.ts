@@ -153,6 +153,11 @@ export class GameEngine {
   private coverMat: THREE.MeshStandardMaterial | null = null
   private envTextures: THREE.Texture[] = []
   private thirdPerson = false
+  /**
+   * Voluntary free-cam (bottom-left toggle). Independent of death:
+   * when on while alive, fly without combat; death still forces free-cam.
+   */
+  private voluntaryFreeCam = false
   /** When false: no dummy AI, anim, hitscan, or drawing. */
   private dummiesEnabled = true
   private prevSniperPhase: SniperState['phase'] = 'ready'
@@ -314,22 +319,9 @@ export class GameEngine {
     this.playerHp = 0
     this.deathReason = reason
     this.spectateTimer = DEATH.spectateDuration
-
-    // Freeze body at death pose; free-cam detaches from the corpse.
-    this.player.velocity.x = 0
-    this.player.velocity.y = 0
-    this.player.velocity.z = 0
-    this.sniper.ads = false
-    this.sniper.adsBlend = 0
-
-    const eye = eyePosition(this.player)
-    this.freeCam = createFreeCam(eye, this.player.yaw, this.player.pitch)
-
-    // Show third-person body so freecam can orbit the death spot / tracers.
-    if (this.playerVisuals.body) {
-      this.playerVisuals.body.visible = true
-    }
-    if (this.viewmodel.root) this.viewmodel.root.visible = false
+    // Death cam is not voluntary — keep the flag so UI can still show Free cam on.
+    this.voluntaryFreeCam = true
+    this.enterFreeCam()
 
     gameAudio.unlock()
     // Soft confirm — dedicated death sting can replace later.
@@ -342,6 +334,7 @@ export class GameEngine {
     this.playerHp = PLAYER.maxHp
     this.deathReason = null
     this.spectateTimer = 0
+    this.voluntaryFreeCam = false
     this.freeCam = null
     resetSniper(this.sniper)
     this.prevSniperPhase = 'ready'
@@ -367,7 +360,7 @@ export class GameEngine {
   }
 
   isSpectating() {
-    return !this.playerAlive && this.freeCam !== null
+    return this.freeCam !== null
   }
 
   private async bootstrapMap() {
@@ -570,6 +563,12 @@ export class GameEngine {
 
   setThirdPerson(enabled: boolean) {
     this.thirdPerson = enabled
+    // Free-cam hides the body and viewmodel entirely.
+    if (this.freeCam) {
+      if (this.playerVisuals.body) this.playerVisuals.body.visible = false
+      if (this.viewmodel.root) this.viewmodel.root.visible = false
+      return
+    }
     if (this.playerVisuals.body) {
       this.playerVisuals.body.visible = enabled
     }
@@ -580,6 +579,70 @@ export class GameEngine {
 
   isThirdPerson() {
     return this.thirdPerson
+  }
+
+  /**
+   * Enter / exit free-cam spectate (fly + look, no combat).
+   * While alive: toggle explore mode. While dead: turning off respawns early.
+   */
+  setFreeCam(enabled: boolean) {
+    if (this.levelEditorActive) return
+
+    if (enabled) {
+      this.voluntaryFreeCam = true
+      this.enterFreeCam()
+      return
+    }
+
+    this.voluntaryFreeCam = false
+    if (!this.playerAlive) {
+      // Skip remaining death countdown and restart the round.
+      this.restartRound()
+      return
+    }
+    this.exitFreeCam()
+  }
+
+  /** True while free-cam is active (voluntary or death). */
+  isFreeCam() {
+    return this.freeCam !== null
+  }
+
+  isVoluntaryFreeCam() {
+    return this.voluntaryFreeCam
+  }
+
+  /** Detach camera into free-fly from the current eye (idempotent). */
+  private enterFreeCam() {
+    this.player.velocity.x = 0
+    this.player.velocity.y = 0
+    this.player.velocity.z = 0
+    this.sniper.ads = false
+    this.sniper.adsBlend = 0
+
+    if (!this.freeCam) {
+      const eye = eyePosition(this.player)
+      this.freeCam = createFreeCam(eye, this.player.yaw, this.player.pitch)
+    }
+
+    // Ghost mode — no body or gun while flying.
+    if (this.playerVisuals.body) this.playerVisuals.body.visible = false
+    if (this.viewmodel.root) this.viewmodel.root.visible = false
+  }
+
+  /** Return to player-controlled camera after voluntary free-cam. */
+  private exitFreeCam() {
+    if (this.freeCam) {
+      this.player.yaw = this.freeCam.yaw
+      this.player.pitch = this.freeCam.pitch
+      this.freeCam = null
+    }
+    if (this.playerVisuals.body) {
+      this.playerVisuals.body.visible = this.thirdPerson
+    }
+    if (this.viewmodel.root && !this.thirdPerson) {
+      this.viewmodel.root.visible = true
+    }
   }
 
   /**
@@ -613,6 +676,8 @@ export class GameEngine {
     if (active) {
       // Hide gun / combat clutter; keep first-person free-look
       this.thirdPerson = false
+      this.voluntaryFreeCam = false
+      this.freeCam = null
       if (this.playerVisuals.body) this.playerVisuals.body.visible = false
       if (this.viewmodel.root) this.viewmodel.root.visible = false
       this.player.velocity.x = 0
@@ -1070,8 +1135,8 @@ export class GameEngine {
       return
     }
 
-    // Dead: free-cam spectate, world still runs, no combat / player move.
-    if (!this.playerAlive) {
+    // Free-cam (death or voluntary toggle): world still runs, no combat / player move.
+    if (!this.playerAlive || this.voluntaryFreeCam) {
       this.tickSpectate(dt, input)
       return
     }
@@ -1168,17 +1233,18 @@ export class GameEngine {
   }
 
   /**
-   * Free-cam death spectate: fly + look, world/dummies/FX keep updating,
-   * then restart the round after the countdown.
+   * Free-cam spectate: fly + look, world/dummies/FX keep updating.
+   * After death, restarts the round when the countdown ends.
+   * Voluntary free-cam has no timer (toggle off to exit).
    */
   private tickSpectate(
     dt: number,
     input: import('../core/types').PlayerInput,
   ) {
     if (!this.freeCam) {
-      const eye = eyePosition(this.player)
-      this.freeCam = createFreeCam(eye, this.player.yaw, this.player.pitch)
+      this.enterFreeCam()
     }
+    if (!this.freeCam) return
 
     stepFreeCam(this.freeCam, input, dt)
 
@@ -1195,10 +1261,8 @@ export class GameEngine {
     this.camera.updateProjectionMatrix()
 
     if (this.viewmodel.root) this.viewmodel.root.visible = false
-
-    // Corpse stays at death feet — pose without live locomotion.
-    this.playerVisuals.updatePose(this.player, true)
-    if (this.playerVisuals.body) this.playerVisuals.body.visible = true
+    // Keep player model hidden for the whole free-cam session.
+    if (this.playerVisuals.body) this.playerVisuals.body.visible = false
 
     if (this.dummiesEnabled) {
       stepDummies(this.dummies, dt)
@@ -1206,17 +1270,20 @@ export class GameEngine {
       this.dummiesSys.update(dt, this.dummies, false)
     }
     this.combatFx.update(dt)
-    if (this.freeCam) {
-      this.barrierVisuals.update(this.freeCam.position)
-    }
+    this.barrierVisuals.update(this.freeCam.position)
 
-    this.spectateTimer = Math.max(0, this.spectateTimer - dt)
     this.lastHitAge += dt
-    this.emitHud()
 
-    if (this.spectateTimer <= 0) {
-      this.restartRound()
+    if (!this.playerAlive) {
+      this.spectateTimer = Math.max(0, this.spectateTimer - dt)
+      this.emitHud()
+      if (this.spectateTimer <= 0) {
+        this.restartRound()
+      }
+      return
     }
+
+    this.emitHud()
   }
 
   /** Walk / fly with map collision + place spawns / barriers; no combat. */
@@ -1275,21 +1342,27 @@ export class GameEngine {
   }
 
   private emitHud() {
-    const speed = this.playerAlive
-      ? Math.hypot(this.player.velocity.x, this.player.velocity.z)
-      : 0
+    const freecam = this.freeCam !== null
+    const speed =
+      this.playerAlive && !freecam
+        ? Math.hypot(this.player.velocity.x, this.player.velocity.z)
+        : 0
     const snap: HudSnapshot = {
       hp: this.playerHp,
       ammo: this.sniper.ammo,
       magSize: this.sniper.magSize,
       reserve: this.sniper.reserve,
       phase: this.sniper.phase,
-      ads: this.playerAlive ? this.sniper.ads : false,
-      adsBlend: this.playerAlive ? this.sniper.adsBlend : 0,
+      ads: this.playerAlive && !freecam ? this.sniper.ads : false,
+      adsBlend: this.playerAlive && !freecam ? this.sniper.adsBlend : 0,
       reloadJiggleX: this.sniper.reloadJiggleX,
       reloadJiggleY: this.sniper.reloadJiggleY,
-      aimSpread: this.playerAlive ? aimSpread(this.sniper, this.player) : 0,
-      moveState: this.playerAlive ? this.player.state : 'idle',
+      aimSpread:
+        this.playerAlive && !freecam
+          ? aimSpread(this.sniper, this.player)
+          : 0,
+      moveState:
+        this.playerAlive && !freecam ? this.player.state : 'idle',
       speed,
       pointerLocked: this.input.isPointerLocked(),
       kills: this.kills,
@@ -1297,7 +1370,7 @@ export class GameEngine {
       lastHitAge: this.lastHitAge,
       lastHitId: this.lastHitId,
       alive: this.playerAlive,
-      spectating: !this.playerAlive,
+      spectating: freecam,
       respawnIn: this.playerAlive ? 0 : this.spectateTimer,
       deathReason: this.deathReason,
       fps: this.fps,

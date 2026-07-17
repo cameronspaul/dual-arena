@@ -13,7 +13,10 @@ export interface PlayerInput {
   forward: number
   /** -1..1 right (D/A) */
   right: number
+  /** Edge: true only on the frame jump was pressed (gameplay jump). */
   jump: boolean
+  /** Held: true while jump key is down (free-cam / fly up). */
+  jumpHeld: boolean
   crouch: boolean
   sprint: boolean
   yaw: number
@@ -176,13 +179,13 @@ export interface HudSnapshot {
    * hitmarker animations even when zone/damage repeat.
    */
   lastHitId: number
-  /** False while dead / free-cam spectating. */
+  /** False while dead (free-cam may still be active). */
   alive: boolean
-  /** Free-cam death cam after dying. */
+  /** Free-cam active — voluntary toggle or death spectate. */
   spectating: boolean
-  /** Seconds until round restart while spectating (0 when alive). */
+  /** Seconds until round restart while dead (0 when alive). */
   respawnIn: number
-  /** Present while dead / spectating. */
+  /** Present while dead. */
   deathReason: DeathReason | null
   /** Smoothed client frames per second. */
   fps: number

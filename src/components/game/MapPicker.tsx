@@ -207,7 +207,7 @@ function MapCard({
   )
 }
 
-/** Procedural color thumb until real screenshots exist. */
+/** Screenshot thumb when available; otherwise procedural color gradient. */
 function MapThumb({ map, selected }: { map: MapDef; selected: boolean }) {
   const a = `#${map.bgColor.toString(16).padStart(6, '0')}`
   const b = `#${map.fogColor.toString(16).padStart(6, '0')}`
@@ -221,7 +221,17 @@ function MapThumb({ map, selected }: { map: MapDef; selected: boolean }) {
         background: `linear-gradient(145deg, ${a} 0%, ${b} 55%, oklch(0.2 0.02 250) 100%)`,
       }}
     >
-      <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_40%,white_0.5px,transparent_1px)] [background-size:12px_12px]" />
+      {map.thumbUrl ? (
+        <img
+          src={map.thumbUrl}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_40%,white_0.5px,transparent_1px)] [background-size:12px_12px]" />
+      )}
+      <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/55 to-transparent" />
       <div className="absolute bottom-2 left-3 flex items-center gap-1.5 text-xs font-medium text-white/90 drop-shadow">
         <MapIcon className="h-3.5 w-3.5" />
         {map.kind === 'range' ? 'Procedural' : 'GLB arena'}

@@ -41,7 +41,7 @@ export function stepEditorMove(
 
   const speed =
     EDITOR_MOVE.speed * (input.sprint ? EDITOR_MOVE.sprintMul : 1)
-  const fly = input.jump || input.crouch
+  const fly = input.jumpHeld || input.jump || input.crouch
 
   if (fly) {
     // Free 3D move along look + strafe, still clipped by geometry
@@ -53,7 +53,7 @@ export function stepEditorMove(
     let my = look.y * input.forward
     let mz = look.z * input.forward + rz * input.right
 
-    if (input.jump) my += 1
+    if (input.jumpHeld || input.jump) my += 1
     if (input.crouch) my -= 1
 
     const len = Math.hypot(mx, my, mz)

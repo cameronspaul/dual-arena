@@ -7,6 +7,7 @@ import { WORLD } from '../core/config'
 export type MapId =
   | 'range'
   | 'desert'
+  | 'desert-2'
   | 'arena-v3'
   | 'arena-v4'
   | 'tdm'
@@ -122,6 +123,7 @@ export const MAPS: Record<MapId, MapDef> = {
     tags: ['1v1', 'long range'],
     kind: 'gltf',
     url: '/models/maps/desert_arena_environment__low_poly_game_asset.glb',
+    thumbUrl: '/maps/thumbs/desert.png',
     // World size ~29×21 m after Sketchfab Z-up fix — stay at 1:1.
     scale: 1,
     rotateY: 0,
@@ -139,6 +141,29 @@ export const MAPS: Record<MapId, MapDef> = {
     loadEnvTextures: false,
     fallDeath: true,
   },
+  'desert-2': {
+    id: 'desert-2',
+    name: 'Desert Outpost',
+    blurb: 'Second desert environment — open sightlines with outpost cover.',
+    tags: ['1v1', 'long range'],
+    kind: 'gltf',
+    url: '/models/maps/fps_desert_2_Map.glb',
+    thumbUrl: '/maps/thumbs/desert-2.png',
+    scale: 1.5,
+    rotateY: 0,
+    offset: { x: 0, y: 0, z: 0 },
+    spawn: { x: 0, y: 0, z: 4 },
+    spawnYaw: 0,
+    dummies: arenaDummies(8),
+    dummyBounds: 12,
+    cameraFar: 120,
+    fogNear: 25,
+    fogFar: 90,
+    fogColor: 0xc4a87a,
+    bgColor: 0xb09060,
+    loadEnvTextures: false,
+    fallDeath: true,
+  },
   'arena-v3': {
     id: 'arena-v3',
     name: 'Shooter Arena',
@@ -146,6 +171,7 @@ export const MAPS: Record<MapId, MapDef> = {
     tags: ['close', 'duel'],
     kind: 'gltf',
     url: '/models/maps/fps_shooter_game_arena_map_v3.glb',
+    thumbUrl: '/maps/thumbs/arena-v3.png',
     // World ~30×30×11 m after fit.
     scale: 1,
     rotateY: 0,
@@ -170,6 +196,7 @@ export const MAPS: Record<MapId, MapDef> = {
     tags: ['close', 'duel'],
     kind: 'gltf',
     url: '/models/maps/fps_shooter_game_arena_map_v4.glb',
+    thumbUrl: '/maps/thumbs/arena-v4.png',
     scale: 1,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
@@ -193,6 +220,7 @@ export const MAPS: Record<MapId, MapDef> = {
     tags: ['mid range', 'cover'],
     kind: 'gltf',
     url: '/models/maps/lowpoly__fps__tdm__game__map_by_resoforge.glb',
+    thumbUrl: '/maps/thumbs/tdm.png',
     // World ~8.5×16×4 m — mild scale so lanes feel playable without skyscraper walls.
     scale: 2.5,
     rotateY: 0,
@@ -215,6 +243,7 @@ export const MAPS: Record<MapId, MapDef> = {
 export const MAP_LIST: MapDef[] = [
   MAPS.range,
   MAPS.desert,
+  MAPS['desert-2'],
   MAPS['arena-v3'],
   MAPS['arena-v4'],
   MAPS.tdm,

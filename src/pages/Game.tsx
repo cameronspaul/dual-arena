@@ -121,6 +121,7 @@ export default function Game() {
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [thirdPerson, setThirdPerson] = useState(false)
+  const [freeCam, setFreeCam] = useState(false)
   const [dummiesEnabled, setDummiesEnabled] = useState(true)
   const lastKey = useRef('')
 
@@ -129,15 +130,19 @@ export default function Game() {
     if (k === lastKey.current) return
     lastKey.current = k
     setHud(snap)
+    // Keep free-cam button in sync when death enters / exits cam.
+    setFreeCam(snap.spectating)
   }, [])
 
   const onEngine = useCallback((eng: GameEngine | null) => {
     setEngine(eng)
     if (eng) {
       setThirdPerson(eng.isThirdPerson())
+      setFreeCam(eng.isFreeCam())
       setDummiesEnabled(eng.isDummiesEnabled())
     } else {
       setThirdPerson(false)
+      setFreeCam(false)
       setDummiesEnabled(true)
     }
   }, [])
@@ -206,6 +211,14 @@ export default function Game() {
     const next = !engine.isThirdPerson()
     engine.setThirdPerson(next)
     setThirdPerson(next)
+  }, [engine])
+
+  const toggleFreeCam = useCallback(() => {
+    if (!engine) return
+    gameAudio.uiClick()
+    const next = !engine.isFreeCam()
+    engine.setFreeCam(next)
+    setFreeCam(engine.isFreeCam())
   }, [engine])
 
   const toggleDummies = useCallback(() => {
@@ -302,6 +315,18 @@ export default function Game() {
             title="Toggle over-the-shoulder third-person camera"
           >
             {thirdPerson ? 'Third person: on' : 'Third person'}
+          </button>
+          <button
+            type="button"
+            onClick={toggleFreeCam}
+            className={freeCam ? devBtnOn : devBtn}
+            title={
+              freeCam
+                ? 'Exit free cam (while dead: respawn now)'
+                : 'Fly freely — WASD, Space/crouch, sprint boost'
+            }
+          >
+            {freeCam ? 'Free cam: on' : 'Free cam'}
           </button>
           <button
             type="button"
