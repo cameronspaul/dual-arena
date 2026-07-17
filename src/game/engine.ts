@@ -82,6 +82,7 @@ export class GameEngine {
     this.buildRange()
     this.buildImpacts()
     void this.loadViewmodel()
+    void this.loadDummies()
     this.input.attach(this.renderer.domElement)
 
     window.addEventListener('resize', this.onResize)
@@ -207,14 +208,7 @@ export class GameEngine {
       max: { x: 15, y: 4, z: -35.75 },
     })
 
-    // dummies as simple low-poly figures
-    for (const d of this.dummies) {
-      const g = this.makeDummyMesh()
-      g.position.set(d.position.x, d.position.y, d.position.z)
-      g.rotation.y = d.yaw
-      this.scene.add(g)
-      this.dummyMeshes.set(d.id, g)
-    }
+    // dummies loaded async from /models/man.glb (see loadDummies)
 
     // spawn pad
     const pad = new THREE.Mesh(
@@ -226,7 +220,8 @@ export class GameEngine {
     this.scene.add(pad)
   }
 
-  private makeDummyMesh(): THREE.Group {
+  /** Procedural fallback if man.glb fails to load. */
+  private makePlaceholderDummy(): THREE.Group {
     const g = new THREE.Group()
     const bodyMat = new THREE.MeshStandardMaterial({
       color: 0xc45c26,
@@ -252,16 +247,77 @@ export class GameEngine {
     )
     head.position.y = DUMMY.headOffsetY
     head.castShadow = true
-    // simple arms
     const armGeo = new THREE.BoxGeometry(0.12, 0.55, 0.12)
     const left = new THREE.Mesh(armGeo, bodyMat)
     left.position.set(-0.4, 0.85, 0)
     const right = new THREE.Mesh(armGeo, bodyMat)
     right.position.set(0.4, 0.85, 0)
     g.add(body, head, left, right)
-    g.userData.bodyMat = bodyMat
-    g.userData.headMat = headMat
+    g.userData.mats = [bodyMat, headMat]
+    g.userData.baseColors = [bodyMat.color.clone(), headMat.color.clone()]
     return g
+  }
+
+  /**
+   * Load public/models/man.glb once, clone per dummy, normalize to hitbox height.
+   * Falls back to a low-poly placeholder if the asset is missing.
+   */
+  private async loadDummies() {
+    let factory: () => THREE.Group
+
+    try {
+      const loader = new GLTFLoader()
+      const gltf = await loader.loadAsync('/models/man.glb')
+      const source = gltf.scene
+
+      const box = new THREE.Box3().setFromObject(source)
+      const size = box.getSize(new THREE.Vector3())
+      const targetHeight = DUMMY.headOffsetY + DUMMY.headRadius
+      const scale = targetHeight / Math.max(size.y, 0.001)
+      const footY = box.min.y
+
+      factory = () => {
+        const root = new THREE.Group()
+        const model = source.clone(true)
+        model.scale.setScalar(scale)
+        // Sit feet on the ground (group origin at floor)
+        model.position.y = -footY * scale
+
+        const mats: THREE.Material[] = []
+        const baseColors: THREE.Color[] = []
+        model.traverse((o) => {
+          if (!(o instanceof THREE.Mesh)) return
+          o.castShadow = true
+          o.receiveShadow = true
+          const list = Array.isArray(o.material) ? o.material : [o.material]
+          const cloned = list.map((m) => {
+            const c = m.clone()
+            if ('color' in c && c.color instanceof THREE.Color) {
+              mats.push(c)
+              baseColors.push(c.color.clone())
+            }
+            return c
+          })
+          o.material = Array.isArray(o.material) ? cloned : cloned[0]
+        })
+
+        root.add(model)
+        root.userData.mats = mats
+        root.userData.baseColors = baseColors
+        return root
+      }
+    } catch (e) {
+      console.warn('Dummy model load failed, using placeholder', e)
+      factory = () => this.makePlaceholderDummy()
+    }
+
+    for (const d of this.dummies) {
+      const g = factory()
+      g.position.set(d.position.x, d.position.y, d.position.z)
+      g.rotation.y = d.yaw
+      this.scene.add(g)
+      this.dummyMeshes.set(d.id, g)
+    }
   }
 
   private buildImpacts() {
@@ -386,15 +442,26 @@ export class GameEngine {
       this.viewmodel.visible = ads < 0.92
     }
 
-    // dummy visuals
+    // dummy visuals (HP tint toward dark red)
     for (const d of this.dummies) {
       const mesh = this.dummyMeshes.get(d.id)
       if (!mesh) continue
       mesh.visible = d.alive
-      if (d.alive) {
-        const hurt = d.hp / d.maxHp
-        const bodyMat = mesh.userData.bodyMat as THREE.MeshStandardMaterial
-        bodyMat.color.setRGB(0.77 * hurt + 0.2, 0.36 * hurt, 0.15 * hurt)
+      if (!d.alive) continue
+      const hurt = d.hp / d.maxHp
+      const mats = mesh.userData.mats as THREE.Material[] | undefined
+      const bases = mesh.userData.baseColors as THREE.Color[] | undefined
+      if (!mats || !bases) continue
+      for (let i = 0; i < mats.length; i++) {
+        const mat = mats[i]
+        const base = bases[i]
+        if (!base || !('color' in mat)) continue
+        const c = (mat as THREE.MeshStandardMaterial).color
+        c.setRGB(
+          base.r * hurt + 0.2 * (1 - hurt),
+          base.g * hurt,
+          base.b * hurt,
+        )
       }
     }
 
