@@ -12,7 +12,6 @@ import {
 } from '../character/dummyVisuals'
 import {
   findClip,
-  locoLoopActions,
   pickDirectionalRun,
   pickWalkAction,
   resolveLocoDir,
@@ -198,10 +197,7 @@ export class PlayerVisuals {
       if (want === 'slide') {
         const slide = actions.slide
         if (slide) {
-          for (const a of locoLoopActions(actions)) {
-            if (a) a.fadeOut(0.08)
-          }
-          playSlideRoll(slide)
+          playSlideRoll(slide, actions)
         } else {
           fadeDummyLoco(
             actions,

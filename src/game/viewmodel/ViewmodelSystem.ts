@@ -33,6 +33,8 @@ export class ViewmodelSystem {
   ready = false
   editorActive = false
   forceAds: number | null = null
+  /** Editor: force hip→run blend 0..1 (null = live sprint). */
+  forceRun: number | null = null
   freezeBob = false
   keepVisible = false
   armSolo: 'both' | 'left' | 'right' = 'both'
@@ -77,6 +79,7 @@ export class ViewmodelSystem {
     this.editorActive = active
     if (!active) {
       this.forceAds = null
+      this.forceRun = null
       this.freezeBob = false
       this.keepVisible = false
       this.armSolo = 'both'
@@ -230,5 +233,13 @@ export class ViewmodelSystem {
   /** Effective ADS blend for pose (editor force or live sniper). */
   adsBlend(sniperAds: number) {
     return this.forceAds != null ? this.forceAds : sniperAds
+  }
+
+  /**
+   * Effective hip→run blend (editor force or live sprint amount).
+   * ADS still wins in ViewFeel (run is applied under ADS).
+   */
+  runBlend(liveRun: number) {
+    return this.forceRun != null ? this.forceRun : liveRun
   }
 }

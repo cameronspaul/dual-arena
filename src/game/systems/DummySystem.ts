@@ -25,7 +25,7 @@ import {
   splitChestMeshesByArmWeights,
   type MeshHitscanScratch,
 } from '../character/hitMeshes'
-import { findClip, locoLoopActions } from '../character/locomotion'
+import { findClip } from '../character/locomotion'
 import { DUMMY, MOVE } from '../core/config'
 import type { DummyTarget, RayHit } from '../core/types'
 import type { PlayerVisuals } from './PlayerVisuals'
@@ -222,10 +222,7 @@ export class DummySystem {
       if (want === 'slide') {
         const slide = actions.slide
         if (slide) {
-          for (const a of locoLoopActions(actions)) {
-            if (a) a.fadeOut(0.08)
-          }
-          playSlideRoll(slide)
+          playSlideRoll(slide, actions)
         } else {
           fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
         }

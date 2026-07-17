@@ -39,6 +39,10 @@ export const LOOK = {
   adsFov: 28,
   hipFov: 75,
   adsBlendSpeed: 10,
+  /** Extra degrees of FOV while sprinting (fades with ADS) */
+  sprintFovBoost: 7,
+  /** Ease into / out of sprint FOV (higher = snappier) */
+  sprintFovLerp: 8,
 } as const
 
 /** Over-the-shoulder third-person camera (toggle in-game). */
@@ -86,6 +90,8 @@ export const SNIPER = {
   standSpreadMul: 1,
   walkSpreadMul: 1.35,
   moveSpreadMul: 1.75,
+  /** Sprint — looser than walk/move; crosshair opens with this. */
+  runSpreadMul: 2.55,
   crouchSpreadMul: 0.72,
   airSpreadMul: 3.4,
   slideSpreadMul: 3.8,
@@ -113,12 +119,19 @@ export const VIEWMODEL = {
    */
   modelRot: { x: -0.03490658503988659, y: Math.PI, z: 0 },
   /** Post-center local offset (nudge in camera space after normalize). */
-  gunOffset: { x: 0.175, y: -0.16, z: -0.185 },
+  gunOffset: { x: 0.085, y: -0.16, z: -0.185 },
   /** Bottom-right hip hold. */
   hipPos: { x: 0.05, y: -0.12, z: -0.28 },
   hipRot: { x: 0.02, y: 0.04, z: 0.02 },
-  adsPos: { x: -0.14, y: -0.025, z: -0.14 },
+  adsPos: { x: -0.075, y: -0.04, z: -0.14 },
   adsRot: { x: 0.0, y: 0.0, z: 0.0 },
+  /** Sprint hold — tuned via viewmodel editor 2026-07-17. */
+  runPos: { x: -0.005, y: -0.14, z: -0.185 },
+  runRot: {
+    x: -0.2530727415391778,
+    y: 0.5585053606381855,
+    z: 0.02,
+  },
   /** Hide mesh when ADS blend exceeds this (scope overlay takes over). */
   hideAds: 0.92,
   /**
@@ -228,28 +241,50 @@ export const VIEW_BOB = {
   airRiseLerpOut: 11,
   /** ADS almost freezes air float */
   airRiseAdsMul: 0.12,
+  /** Ease hip → run pose (higher = snappier raise/lower) */
+  runPoseLerp: 9,
 } as const
 
 /**
- * Subtle continuous viewmodel sway (gun only — never the camera).
- * Amplitudes are intentionally tiny so the rifle feels alive, not floaty.
+ * Viewmodel sway (gun only — never the camera).
+ * Idle micro-sway + procedural lean into local move direction (strafe / forward).
  */
 export const GUN_SWAY = {
   /** Primary / secondary cycle rates (rad/s) */
   freqYaw: 1.35,
   freqPitch: 1.05,
   freqRoll: 0.85,
-  /** Position (local units) */
+  /** Idle position (local units) */
   posX: 0.0016,
   posY: 0.0011,
-  /** Rotation (radians) */
+  /** Idle rotation (radians) */
   yaw: 0.004,
   pitch: 0.0032,
   roll: 0.0025,
   /** ADS almost freezes sway */
   adsMul: 0.08,
-  /** Slight extra while moving */
+  /** Slight extra idle sway while moving */
   moveMul: 1.35,
+  /**
+   * Procedural lean into velocity (camera-local).
+   * Positive local-right → gun banks right; forward → slight pitch / push-back.
+   * Strongest while running; ADS heavily damps via adsMul above.
+   */
+  leanLerp: 10,
+  /** |local speed| / this → full lean (matches MOVE.runSpeed) */
+  leanSpeedRef: 7.4,
+  /** Position lean at full strafe / forward (local units) */
+  leanPosX: 0.014,
+  leanPosY: -0.004,
+  leanPosZ: 0.01,
+  /** Rotation lean at full strafe / forward (radians) */
+  leanYaw: 0.028,
+  leanPitch: 0.022,
+  leanRoll: 0.055,
+  /** Multiplier on lean amplitudes while sprinting (state === run) */
+  runLeanMul: 1.55,
+  /** Extra idle-oscillation amp scale at full sprint */
+  sprintOscMul: 0.55,
 } as const
 
 /**

@@ -172,6 +172,14 @@ export class GameEngine {
     return this.viewmodel.forceAds
   }
 
+  setViewmodelForceRun(value: number | null) {
+    this.viewmodel.forceRun = value
+  }
+
+  getViewmodelForceRun() {
+    return this.viewmodel.forceRun
+  }
+
   setViewmodelFreezeBob(freeze: boolean) {
     this.viewmodel.freezeBob = freeze
   }
@@ -283,6 +291,7 @@ export class GameEngine {
     this.input.setAdsBlend(this.sniper.adsBlend)
 
     this.viewFeel.samplePreStep(this.player)
+    const prevMoveState = this.player.state
     stepPlayer(this.player, input, dt, this.colliders)
     stepSniper(this.sniper, input, dt)
     if (!this.dummiesPaused) {
@@ -300,7 +309,6 @@ export class GameEngine {
     this.viewmodel.updateMixer(dt)
 
     const prevGrounded = this.viewFeel.wasGrounded
-    const prevMoveState = this.player.state
     const fireResult = tryFire(this.sniper, input)
     if (fireResult === 'shot') {
       gameAudio.playFire()

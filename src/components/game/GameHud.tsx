@@ -18,7 +18,7 @@ interface GameHudProps {
 /** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
 function spreadToGap(spreadRad: number): number {
   // Keep headroom past sprint so air/slide multipliers actually read on screen.
-  // hip stand ~0.055 → ~48px, run ~0.096 → ~82px, air ~0.19 → ~155px, slide ~0.21 → ~174px
+  // hip stand ~0.055 → ~48px, sprint ~0.14 → ~118px, air ~0.19 → ~155px, slide ~0.21 → ~174px
   return Math.min(190, 3 + spreadRad * 820)
 }
 

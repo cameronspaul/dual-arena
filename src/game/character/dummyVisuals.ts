@@ -82,12 +82,25 @@ export function fadeDummyLoco(
 /**
  * Start man.glb Roll as a one-shot. Playback is driven by scrubSlideRoll
  * so the full clip maps onto slide duration.
+ *
+ * Hard-stops all loco loops (run/walk/idle/…) so Roll fully overwrites
+ * them — fadeOut blends leave Run dominating and the roll never reads.
  */
-export function playSlideRoll(slide: THREE.AnimationAction) {
+export function playSlideRoll(
+  slide: THREE.AnimationAction,
+  actions?: DummyActions,
+) {
+  if (actions) {
+    for (const a of locoLoopActions(actions)) {
+      if (!a || a === slide) continue
+      a.stop()
+    }
+  }
   slide.enabled = true
   slide.paused = false
   slide.setLoop(THREE.LoopOnce, 1)
   slide.clampWhenFinished = true
+  slide.stopFading()
   slide.reset()
   slide.timeScale = 0
   slide.time = 0
@@ -107,11 +120,11 @@ export function scrubSlideRoll(
   slide.paused = false
   slide.timeScale = 0
   slide.time = t
-  if (slide.weight < 1) slide.weight = 1
-  if (!slide.isRunning() && slide.getEffectiveWeight() <= 0) {
+  // timeScale 0 ⇒ isRunning() is always false; keep full exclusive weight
+  if (slide.weight < 1 || slide.getEffectiveWeight() < 1) {
     slide.setEffectiveWeight(1)
-    slide.play()
   }
+  slide.play()
 }
 
 /** Mild Y squash so crouch is readable without a crouch clip. */

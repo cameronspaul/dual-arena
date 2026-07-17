@@ -11,7 +11,7 @@ import {
   THIRD_PERSON,
   VIEW_BOB,
 } from '../core/config'
-import { lookDirection } from '../core/math'
+import { clamp, lookDirection } from '../core/math'
 import type { PlayerBody, SniperState } from '../core/types'
 import { eyePosition } from '../sim/player'
 import { effectiveLook } from '../sim/sniper'
@@ -22,6 +22,13 @@ export class ViewFeel {
   bobAmount = 0
   gunSwayTime = 0
   slideGunBlend = 0
+  /** Smoothed 0..1 sprint FOV blend */
+  sprintFovBlend = 0
+  /** Smoothed 0..1 hip → run pose blend */
+  runPoseBlend = 0
+  /** Smoothed local move lean: +forward, +right (camera yaw basis) */
+  moveLeanFwd = 0
+  moveLeanRight = 0
   landOffset = 0
   landVel = 0
   airRise = 0
@@ -188,16 +195,60 @@ export class ViewFeel {
     const adsBlend = vm.adsBlend(sniper.adsBlend)
     let swayMul = vm.freezeBob ? 0 : 1 - adsBlend * (1 - GUN_SWAY.adsMul)
     if (speed > 1) swayMul *= GUN_SWAY.moveMul
+    // Stronger idle oscillation while sprinting so the rifle feels alive
+    const sprintOsc = 1 + sprintT * GUN_SWAY.sprintOscMul
     const st = this.gunSwayTime
-    const swayX = Math.sin(st * GUN_SWAY.freqYaw) * GUN_SWAY.posX * swayMul
-    const swayY =
-      Math.cos(st * GUN_SWAY.freqPitch) * GUN_SWAY.posY * swayMul
-    const swayYaw =
-      Math.sin(st * GUN_SWAY.freqYaw * 0.85) * GUN_SWAY.yaw * swayMul
-    const swayPitch =
-      Math.cos(st * GUN_SWAY.freqPitch * 1.1) * GUN_SWAY.pitch * swayMul
-    const swayRoll =
-      Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll * swayMul
+    let swayX =
+      Math.sin(st * GUN_SWAY.freqYaw) * GUN_SWAY.posX * swayMul * sprintOsc
+    let swayY =
+      Math.cos(st * GUN_SWAY.freqPitch) * GUN_SWAY.posY * swayMul * sprintOsc
+    let swayYaw =
+      Math.sin(st * GUN_SWAY.freqYaw * 0.85) *
+      GUN_SWAY.yaw *
+      swayMul *
+      sprintOsc
+    let swayPitch =
+      Math.cos(st * GUN_SWAY.freqPitch * 1.1) *
+      GUN_SWAY.pitch *
+      swayMul *
+      sprintOsc
+    let swayRoll =
+      Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll * swayMul * sprintOsc
+
+    // Procedural lean into local move direction (strafe / forward / back)
+    {
+      let leanMul = vm.freezeBob ? 0 : 1 - adsBlend * (1 - GUN_SWAY.adsMul)
+      if (p.state === 'slide') leanMul *= 0.25
+      else if (p.state === 'run') leanMul *= GUN_SWAY.runLeanMul
+
+      const sin = Math.sin(p.yaw)
+      const cos = Math.cos(p.yaw)
+      // Same facing basis as wishDir / locomotion
+      const localFwd = -p.velocity.x * sin - p.velocity.z * cos
+      const localRight = p.velocity.x * cos - p.velocity.z * sin
+      const invRef = 1 / Math.max(0.001, GUN_SWAY.leanSpeedRef)
+      const tgtFwd = clamp(localFwd * invRef, -1, 1) * leanMul
+      const tgtRight = clamp(localRight * invRef, -1, 1) * leanMul
+
+      const leanK = 1 - Math.exp(-GUN_SWAY.leanLerp * dt)
+      this.moveLeanFwd += (tgtFwd - this.moveLeanFwd) * leanK
+      this.moveLeanRight += (tgtRight - this.moveLeanRight) * leanK
+
+      const lf = this.moveLeanFwd
+      const lr = this.moveLeanRight
+      // Strafe: bank + shift into the move. Forward/back: pitch + push along Z.
+      swayX += lr * GUN_SWAY.leanPosX
+      swayY += Math.abs(lf) * GUN_SWAY.leanPosY
+      swayYaw += -lr * GUN_SWAY.leanYaw
+      swayPitch += lf * GUN_SWAY.leanPitch
+      swayRoll += lr * GUN_SWAY.leanRoll
+      // Micro-oscillation biased by the active move axis
+      const osc = swayMul * (0.35 + 0.65 * Math.hypot(lf, lr))
+      swayX += Math.sin(st * GUN_SWAY.freqYaw * 1.4) * lr * 0.004 * osc
+      swayRoll += Math.sin(st * GUN_SWAY.freqRoll * 1.2) * lr * 0.012 * osc
+      swayPitch += Math.cos(st * GUN_SWAY.freqPitch * 1.3) * lf * 0.008 * osc
+    }
+    const leanPosZ = this.moveLeanFwd * GUN_SWAY.leanPosZ
 
     {
       let airTarget = 0
@@ -230,6 +281,31 @@ export class ViewFeel {
     this.slideGunBlend += (slideTarget - this.slideGunBlend) * slideK
     const slide = this.slideGunBlend
 
+    // Sprint FOV + run pose — speed + run state; die under ADS / slide
+    {
+      const liveSprint =
+        !vm.freezeBob &&
+        grounded &&
+        p.state === 'run' &&
+        sniper.adsBlend < 0.5
+          ? sprintT * (1 - sniper.adsBlend)
+          : 0
+      const fovK = 1 - Math.exp(-LOOK.sprintFovLerp * dt)
+      this.sprintFovBlend += (liveSprint - this.sprintFovBlend) * fovK
+
+      // Pose blend: editor force, else live sprint (ADS handled in poseViewmodel)
+      const liveRunPose =
+        vm.forceRun != null
+          ? vm.forceRun
+          : !vm.freezeBob && grounded && p.state === 'run'
+            ? sprintT
+            : 0
+      const runK = 1 - Math.exp(-VIEW_BOB.runPoseLerp * dt)
+      // When forcing in editor, still ease so it doesn't pop
+      const runTarget = vm.runBlend(liveRunPose)
+      this.runPoseBlend += (runTarget - this.runPoseBlend) * runK
+    }
+
     const eye = eyePosition(p)
     const look = effectiveLook(p, sniper)
     camera.rotation.y = look.yaw
@@ -261,16 +337,17 @@ export class ViewFeel {
       LOOK.hipFov +
       (LOOK.adsFov - LOOK.hipFov) * sniper.adsBlend +
       SLIDE_GUN.fovBoost * slide +
+      LOOK.sprintFovBoost * this.sprintFovBlend +
       (thirdPerson ? THIRD_PERSON.fovBoost * (1 - sniper.adsBlend) : 0)
     if (Math.abs(camera.fov - fov) > 0.01) {
       camera.fov = fov
       camera.updateProjectionMatrix()
     }
 
-    this.poseViewmodel(vm, sniper, adsBlend, {
+    this.poseViewmodel(vm, sniper, adsBlend, this.runPoseBlend, {
       bobGunX,
       bobGunY,
-      bobGunZ,
+      bobGunZ: bobGunZ + leanPosZ,
       bobGunPitch,
       bobGunRoll,
       swayX,
@@ -287,6 +364,7 @@ export class ViewFeel {
     vm: ViewmodelSystem,
     sniper: SniperState,
     ads: number,
+    run: number,
     o: {
       bobGunX: number
       bobGunY: number
@@ -308,12 +386,19 @@ export class ViewFeel {
       return
     }
 
-    const { hipPos, hipRot, adsPos, adsRot, hideAds } = vm.config
-    const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
+    const { hipPos, hipRot, adsPos, adsRot, runPos, runRot, hideAds } =
+      vm.config
+    // hip → run (sprint), then → ads. ADS always wins over run hold.
+    const runT = clamp(run, 0, 1) * (1 - ads)
+    const basePos = new THREE.Vector3(
+      hipPos.x + (runPos.x - hipPos.x) * runT,
+      hipPos.y + (runPos.y - hipPos.y) * runT,
+      hipPos.z + (runPos.z - hipPos.z) * runT,
+    )
     const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
     const land = vm.freezeBob ? 0 : this.landOffset
     const air = vm.freezeBob ? 0 : this.airRise
-    vm.root.position.lerpVectors(hip, scoped, ads)
+    vm.root.position.lerpVectors(basePos, scoped, ads)
     vm.root.position.x += o.bobGunX + o.swayX + SLIDE_GUN.posX * o.slide
     vm.root.position.y +=
       o.bobGunY + o.swayY - land + air + SLIDE_GUN.posY * o.slide
@@ -326,8 +411,11 @@ export class ViewFeel {
       VIEW_BOB.airRiseMax > 1e-6
         ? (air / VIEW_BOB.airRiseMax) * VIEW_BOB.airRisePitch
         : 0
+    const baseRotX = hipRot.x + (runRot.x - hipRot.x) * runT
+    const baseRotY = hipRot.y + (runRot.y - hipRot.y) * runT
+    const baseRotZ = hipRot.z + (runRot.z - hipRot.z) * runT
     vm.root.rotation.set(
-      hipRot.x * (1 - ads) +
+      baseRotX * (1 - ads) +
         adsRot.x * ads +
         recoilKick +
         o.bobGunPitch +
@@ -335,8 +423,11 @@ export class ViewFeel {
         landPitch +
         airPitch +
         SLIDE_GUN.pitch * o.slide,
-      hipRot.y * (1 - ads) + adsRot.y * ads + o.swayYaw + SLIDE_GUN.yaw * o.slide,
-      hipRot.z * (1 - ads) +
+      baseRotY * (1 - ads) +
+        adsRot.y * ads +
+        o.swayYaw +
+        SLIDE_GUN.yaw * o.slide,
+      baseRotZ * (1 - ads) +
         adsRot.z * ads +
         o.bobGunRoll +
         o.swayRoll +

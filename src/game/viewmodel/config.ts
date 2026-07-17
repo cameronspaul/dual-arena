@@ -44,6 +44,13 @@ export type ViewmodelConfig = {
   hipRot: VmVec3
   adsPos: VmVec3
   adsRot: VmVec3
+  /**
+   * Sprint / run hold pose (camera-local). Blended hip → run while sprinting.
+   * Author in the Viewmodel editor (Run tab) and export; missing fields fall
+   * back to hip so older JSON stays valid.
+   */
+  runPos: VmVec3
+  runRot: VmVec3
   hideAds: number
   arms: {
     /** Arms longest-axis target after normalize. */
@@ -184,6 +191,8 @@ export function cloneViewmodelConfig(c: ViewmodelConfig): ViewmodelConfig {
     hipRot: cloneVec3(c.hipRot),
     adsPos: cloneVec3(c.adsPos),
     adsRot: cloneVec3(c.adsRot),
+    runPos: cloneVec3(c.runPos),
+    runRot: cloneVec3(c.runRot),
     hideAds: c.hideAds,
     arms: {
       scale: c.arms.scale,
@@ -192,6 +201,27 @@ export function cloneViewmodelConfig(c: ViewmodelConfig): ViewmodelConfig {
       left: cloneArmChain(c.arms.left ?? defaultArmChain()),
       right: cloneArmChain(c.arms.right ?? defaultArmChain()),
     },
+  }
+}
+
+/**
+ * Resolve run pose from flat runPos/runRot or nested `run: { pos, rot }`.
+ * Falls back to hip when absent (legacy exports).
+ */
+function asRunPose(
+  vm: Record<string, unknown>,
+  hipPos: VmVec3,
+  hipRot: VmVec3,
+): { pos: VmVec3; rot: VmVec3 } {
+  const nested =
+    vm.run && typeof vm.run === 'object'
+      ? (vm.run as Record<string, unknown>)
+      : null
+  const posSrc = vm.runPos ?? nested?.pos
+  const rotSrc = vm.runRot ?? nested?.rot
+  return {
+    pos: asVec3(posSrc, hipPos),
+    rot: asVec3(rotSrc, hipRot),
   }
 }
 
@@ -206,14 +236,19 @@ export function normalizeViewmodelConfig(raw: unknown): ViewmodelConfig {
     throw new Error('Missing viewmodel fields (need scale, hipPos, arms, …)')
   }
   const arms = vm.arms as Record<string, unknown>
+  const hipPos = asVec3(vm.hipPos)
+  const hipRot = asVec3(vm.hipRot)
+  const run = asRunPose(vm, hipPos, hipRot)
   return {
     scale: vm.scale as number,
     modelRot: asVec3(vm.modelRot),
     gunOffset: asVec3(vm.gunOffset),
-    hipPos: asVec3(vm.hipPos),
-    hipRot: asVec3(vm.hipRot),
+    hipPos,
+    hipRot,
     adsPos: asVec3(vm.adsPos),
     adsRot: asVec3(vm.adsRot),
+    runPos: run.pos,
+    runRot: run.rot,
     hideAds: typeof vm.hideAds === 'number' ? vm.hideAds : 0.92,
     arms: {
       scale: typeof arms.scale === 'number' ? arms.scale : 0.72,

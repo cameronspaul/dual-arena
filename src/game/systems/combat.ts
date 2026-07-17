@@ -94,7 +94,6 @@ export function fireShot(opts: {
     }
   } else if (hit) {
     fx.showImpact(hit.point, 'world', false)
-    gameAudio.playWorldImpact()
   }
 
   return { lastHit, killsDelta }

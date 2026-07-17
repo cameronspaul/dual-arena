@@ -179,7 +179,9 @@ export function aimSpread(s: SniperState, body: PlayerBody): number {
     mul *= SNIPER.slideSpreadMul
   } else if (body.state === 'crouch') {
     mul *= SNIPER.crouchSpreadMul
-  } else if (body.state === 'run' || speed > MOVE.walkSpeed * 0.95) {
+  } else if (body.state === 'run') {
+    mul *= SNIPER.runSpreadMul
+  } else if (speed > MOVE.walkSpeed * 0.95) {
     mul *= SNIPER.moveSpreadMul
   } else if (speed > 0.6) {
     mul *= SNIPER.walkSpreadMul

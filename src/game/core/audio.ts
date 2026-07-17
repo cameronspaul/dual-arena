@@ -9,13 +9,7 @@ export type SfxId =
   | 'reload'
   | 'reloadDone'
   | 'dryFire'
-  | 'hitmarker'
-  | 'hitmarkerHead'
   | 'hitBody'
-  | 'hitHead'
-  | 'kill'
-  | 'impactWorld'
-  | 'impactBody'
   | 'land'
   | 'jump'
   | 'slide'
@@ -23,7 +17,6 @@ export type SfxId =
   | 'adsIn'
   | 'adsOut'
   | 'uiClick'
-  | 'uiHover'
   | 'uiConfirm'
 
 type ClipDef = {
@@ -47,7 +40,6 @@ const CLIPS: Record<SfxId, ClipDef> = {
       '/sounds/bolt_01.mp3',
       '/sounds/bolt_02.mp3',
       '/sounds/bolt_03.mp3',
-      '/sounds/pump.mp3',
     ],
     pool: 3,
   },
@@ -75,61 +67,22 @@ const CLIPS: Record<SfxId, ClipDef> = {
       '/sounds/gun_click.mp3',
     ],
   },
-  hitmarker: {
-    src: '/sounds/hitmarker_tick.ogg',
-    volume: 0.55,
-    variants: ['/sounds/hitmarker_tick.ogg', '/sounds/hitmarker_tick2.ogg'],
-  },
-  hitmarkerHead: {
-    src: '/sounds/hitmarker_tick2.ogg',
-    volume: 0.7,
-  },
   hitBody: {
     src: '/sounds/hit_01.ogg',
     volume: 0.45,
     variants: ['/sounds/hit_01.ogg', '/sounds/hit_02.ogg', '/sounds/hit_03.ogg'],
   },
-  hitHead: {
-    src: '/sounds/hit_head.ogg',
-    volume: 0.65,
-  },
-  kill: {
-    src: '/sounds/kill_body.ogg',
-    volume: 0.75,
-    variants: ['/sounds/kill_body.ogg', '/sounds/kill_metal.ogg'],
-  },
-  impactWorld: {
-    src: '/sounds/impact_world_01.ogg',
-    volume: 0.35,
-    variants: [
-      '/sounds/impact_world_01.ogg',
-      '/sounds/impact_world_02.ogg',
-      '/sounds/impact_world_03.ogg',
-      '/sounds/impact_world_04.ogg',
-    ],
-  },
-  impactBody: {
-    src: '/sounds/impact_body_01.ogg',
-    volume: 0.4,
-    variants: [
-      '/sounds/impact_body_01.ogg',
-      '/sounds/impact_body_02.ogg',
-      '/sounds/impact_body_03.ogg',
-    ],
-  },
   land: {
     src: '/sounds/land.ogg',
     volume: 0.5,
-    variants: ['/sounds/land.ogg', '/sounds/land_light.ogg'],
   },
   jump: {
     src: '/sounds/jump.ogg',
     volume: 0.4,
   },
   slide: {
-    src: '/sounds/slide_whoosh.mp3',
+    src: '/sounds/slide.ogg',
     volume: 0.55,
-    variants: ['/sounds/slide_whoosh.mp3', '/sounds/slide_cloth.ogg'],
   },
   footstep: {
     src: '/sounds/footstep_0.ogg',
@@ -140,27 +93,21 @@ const CLIPS: Record<SfxId, ClipDef> = {
       '/sounds/footstep_2.ogg',
       '/sounds/footstep_3.ogg',
       '/sounds/footstep_4.ogg',
+      '/sounds/footstep_5.ogg',
     ],
     pool: 6,
   },
   adsIn: {
-    // Sniper optic ring lock click
     src: '/sounds/ads_in.ogg',
     volume: 0.55,
-    variants: ['/sounds/ads_in.ogg', '/sounds/ads_click.ogg'],
   },
   adsOut: {
-    // Scope release click
     src: '/sounds/ads_out.ogg',
     volume: 0.48,
   },
   uiClick: {
     src: '/sounds/ui_click.ogg',
     volume: 0.45,
-  },
-  uiHover: {
-    src: '/sounds/ui_hover.ogg',
-    volume: 0.25,
   },
   uiConfirm: {
     src: '/sounds/ui_confirm.ogg',
@@ -178,7 +125,6 @@ export class GameAudio {
   private masterVolume = 1
   private sfxVolume = 1
   private lastFootstep = 0
-  private lastUiHover = 0
   private lastDry = 0
   private reloadTimers: number[] = []
 
@@ -343,35 +289,14 @@ export class GameAudio {
     this.play('dryFire', { rate: 0.95 + Math.random() * 0.1 })
   }
 
-  /** Body / head / kill confirmation stack (marker + flesh + optional kill). */
+  /** Body / head / kill confirmation stack. */
   playHitConfirm(opts: { zone: string; killed: boolean }) {
-    if (opts.killed) {
-      this.play('hitmarker', { volume: 0.5, rate: 0.95 })
-      this.play('kill')
-      this.play('impactBody', { volume: 0.5 })
-      return
-    }
-    if (opts.zone === 'head') {
-      this.play('hitmarkerHead', { volume: 0.75, rate: 1.05 })
-      this.play('hitHead')
-      this.play('impactBody', { volume: 0.45, rate: 1.1 })
-      return
-    }
     const rate = 0.94 + Math.random() * 0.12
-    this.play('hitmarker', { rate })
     this.play('hitBody', { rate })
-    this.play('impactBody', { volume: 0.32, rate })
-  }
-
-  playWorldImpact() {
-    this.play('impactWorld', {
-      volume: 0.28 + Math.random() * 0.12,
-      rate: 0.9 + Math.random() * 0.2,
-    })
   }
 
   footstep(speed: number, sprint: boolean) {
-    const gap = sprint ? 0.28 : 0.38
+    const gap = sprint ? 0.28 : 0.30
     const t = performance.now() / 1000
     if (t - this.lastFootstep < gap) return
     this.lastFootstep = t
@@ -385,13 +310,6 @@ export class GameAudio {
 
   uiClick() {
     this.play('uiClick')
-  }
-
-  uiHover() {
-    const t = performance.now()
-    if (t - this.lastUiHover < 40) return
-    this.lastUiHover = t
-    this.play('uiHover')
   }
 
   uiConfirm() {

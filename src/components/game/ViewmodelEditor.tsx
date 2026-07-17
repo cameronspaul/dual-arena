@@ -26,12 +26,14 @@ type Props = {
   onClose: () => void
 }
 
-type SectionId = 'hip' | 'ads' | 'gun' | 'pair' | 'left' | 'right'
+type SectionId = 'hip' | 'ads' | 'run' | 'gun' | 'pair' | 'left' | 'right'
 type LimbId = 'shoulder' | 'bicep' | 'forearm' | 'wrist' | 'fingers'
+type PreviewPose = 'hip' | 'ads' | 'run' | 'mid' | 'live'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'hip', label: 'Hip' },
   { id: 'ads', label: 'ADS' },
+  { id: 'run', label: 'Run' },
   { id: 'gun', label: 'Gun' },
   { id: 'pair', label: 'Pair' },
   { id: 'left', label: 'L Hand' },
@@ -70,7 +72,7 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
   const [cfg, setCfg] = useState<ViewmodelConfig | null>(null)
   const [section, setSection] = useState<SectionId>('left')
   const [limb, setLimb] = useState<LimbId>('wrist')
-  const [forceAds, setForceAds] = useState<number | null>(0)
+  const [preview, setPreview] = useState<PreviewPose>('hip')
   const [freezeBob, setFreezeBob] = useState(true)
   const [keepVisible, setKeepVisible] = useState(true)
   const [status, setStatus] = useState('')
@@ -78,14 +80,39 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
   const [hasHands, setHasHands] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const applyPreview = useCallback(
+    (mode: PreviewPose) => {
+      if (!engine) return
+      setPreview(mode)
+      if (mode === 'hip') {
+        engine.setViewmodelForceAds(0)
+        engine.setViewmodelForceRun(0)
+      } else if (mode === 'ads') {
+        engine.setViewmodelForceAds(1)
+        engine.setViewmodelForceRun(0)
+      } else if (mode === 'run') {
+        engine.setViewmodelForceAds(0)
+        engine.setViewmodelForceRun(1)
+      } else if (mode === 'mid') {
+        engine.setViewmodelForceAds(0.5)
+        engine.setViewmodelForceRun(0)
+      } else {
+        engine.setViewmodelForceAds(null)
+        engine.setViewmodelForceRun(null)
+      }
+    },
+    [engine],
+  )
+
   useEffect(() => {
     if (!open || !engine) return
     engine.setViewmodelEditorActive(true)
     engine.setViewmodelForceAds(0)
+    engine.setViewmodelForceRun(0)
     engine.setViewmodelFreezeBob(true)
     engine.setViewmodelKeepVisible(true)
     engine.setViewmodelArmSolo('left')
-    setForceAds(0)
+    setPreview('hip')
     setFreezeBob(true)
     setKeepVisible(true)
     setSection('left')
@@ -115,7 +142,11 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
     if (section === 'left') engine.setViewmodelArmSolo('left')
     else if (section === 'right') engine.setViewmodelArmSolo('right')
     else engine.setViewmodelArmSolo('both')
-  }, [section, open, engine])
+    // Jump preview when opening a pose tab so edits are visible immediately
+    if (section === 'hip') applyPreview('hip')
+    else if (section === 'ads') applyPreview('ads')
+    else if (section === 'run') applyPreview('run')
+  }, [section, open, engine, applyPreview])
 
   const push = useCallback(
     (next: ViewmodelConfig) => {
@@ -225,30 +256,14 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
           <span className="text-white/70">Preview pose</span>
           <select
             className="rounded border border-white/15 bg-black/60 px-2 py-1"
-            value={
-              forceAds == null
-                ? 'live'
-                : forceAds <= 0.01
-                  ? 'hip'
-                  : forceAds >= 0.99
-                    ? 'ads'
-                    : 'mid'
-            }
-            onChange={(e) => {
-              const v = e.target.value
-              let next: number | null = null
-              if (v === 'hip') next = 0
-              else if (v === 'ads') next = 1
-              else if (v === 'mid') next = 0.5
-              else next = null
-              setForceAds(next)
-              engine?.setViewmodelForceAds(next)
-            }}
+            value={preview}
+            onChange={(e) => applyPreview(e.target.value as PreviewPose)}
           >
             <option value="hip">Hip (forced)</option>
+            <option value="run">Run (forced)</option>
             <option value="ads">ADS (forced)</option>
-            <option value="mid">Mid 50%</option>
-            <option value="live">Live (RMB)</option>
+            <option value="mid">ADS mid 50%</option>
+            <option value="live">Live (sprint / RMB)</option>
           </select>
         </label>
         <label className="flex items-center gap-2 text-white/70">
@@ -329,6 +344,44 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
               max={1}
               onChange={(hideAds) => patch((c) => { c.hideAds = hideAds })}
             />
+          </>
+        ) : section === 'run' ? (
+          <>
+            <p className="mb-2 text-[10px] leading-snug text-white/45">
+              Sprint hold pose. Blends hip → run while sprinting; ADS still
+              overrides. Export JSON and paste into{' '}
+              <code className="text-white/60">VIEWMODEL</code> (or send the
+              file) — it&apos;s plug-and-play.
+            </p>
+            <Vec3Fields
+              label="Run position"
+              value={cfg.runPos}
+              step={0.005}
+              min={-2}
+              max={2}
+              onChange={(runPos) => patch((c) => { c.runPos = runPos })}
+            />
+            <Vec3Fields
+              label="Run rotation (deg)"
+              value={toDegVec(cfg.runRot)}
+              step={0.5}
+              min={-180}
+              max={180}
+              onChange={(d) => patch((c) => { c.runRot = toRadVec(d) })}
+            />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Btn
+                muted
+                onClick={() =>
+                  patch((c) => {
+                    c.runPos = { ...c.hipPos }
+                    c.runRot = { ...c.hipRot }
+                  })
+                }
+              >
+                Copy from hip
+              </Btn>
+            </div>
           </>
         ) : section === 'gun' ? (
           <>
@@ -440,8 +493,7 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
           <p className="text-[10px] leading-snug text-emerald-300/90">{status}</p>
         ) : (
           <p className="text-[10px] leading-snug text-white/40">
-            Workflow: Pair size → L Hand (wrist + grip fingers) → R Hand → Pair /
-            ADS check → Download JSON.
+            Workflow: Hip → Run (sprint hold) → ADS → hands → Download JSON.
           </p>
         )}
       </footer>
