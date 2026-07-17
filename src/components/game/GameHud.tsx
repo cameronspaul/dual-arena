@@ -2,13 +2,14 @@ import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
-import type { HudSnapshot, HitEvent } from '@/game/types'
+import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
 import { Settings, Target } from 'lucide-react'
 import { ScopeOverlay } from './ScopeOverlay'
 import {
   formatKeyCode,
   getUserSettings,
 } from '@/game/core/userSettings'
+import { fmtNum } from '@/game/maps'
 
 interface GameHudProps {
   hud: HudSnapshot | null
@@ -36,11 +37,77 @@ function damageLabelColor(hit: HitEvent): string {
   return 'text-amber-200'
 }
 
-/** Green when smooth, amber when soft, red when struggling. */
+/** Green near high-refresh targets; amber mid; red when struggling. */
 function fpsColor(fps: number): string {
-  if (fps >= 55) return 'text-emerald-400'
-  if (fps >= 30) return 'text-amber-300'
+  if (fps >= 140) return 'text-emerald-400'
+  if (fps >= 90) return 'text-lime-300'
+  if (fps >= 55) return 'text-amber-300'
+  if (fps >= 30) return 'text-orange-400'
   return 'text-red-400'
+}
+
+function msColor(ms: number, budget: number): string {
+  if (ms <= budget * 0.55) return 'text-emerald-400'
+  if (ms <= budget * 0.85) return 'text-amber-300'
+  return 'text-red-400'
+}
+
+function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
+  const map = perf.map
+  // 180 Hz frame budget
+  const budget = 1000 / 180
+  return (
+    <div className="mt-1.5 max-w-[22rem] space-y-1 border-t border-white/10 pt-1.5 text-[10px] leading-snug text-white/70">
+      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 tabular-nums">
+        <span className={msColor(perf.frameMs, budget)}>
+          {perf.frameMs.toFixed(1)}
+          <span className="text-white/35"> ms</span>
+        </span>
+        <span className={msColor(perf.simMs, budget * 0.4)}>
+          sim {perf.simMs.toFixed(1)}
+        </span>
+        <span className={msColor(perf.renderMs, budget * 0.6)}>
+          ren {perf.renderMs.toFixed(1)}
+        </span>
+        <span className="text-white/45">dpr {perf.pixelRatio.toFixed(2)}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 tabular-nums text-white/55">
+        <span>
+          draws <span className="text-white/85">{perf.draws}</span>
+        </span>
+        <span>
+          tris <span className="text-white/85">{fmtNum(perf.triangles)}</span>
+        </span>
+        <span>
+          col{' '}
+          <span className="text-white/85">
+            {perf.nearbyCollision}/{perf.collisionMeshes}
+          </span>
+        </span>
+      </div>
+      {map && (
+        <div className="tabular-nums text-white/45">
+          map <span className="text-white/70">{map.id}</span>
+          {' · '}
+          {fmtNum(map.triangles)} tris · {map.meshes} mesh ·{' '}
+          {map.shadowCasters} sh ·{' '}
+          {map.dedicatedCollision ? 'COL✓' : 'COL✗'}
+        </div>
+      )}
+      <div className="text-white/50">
+        <span className="text-white/35">limit </span>
+        <span className={fps >= 140 ? 'text-emerald-400/90' : 'text-amber-200/90'}>
+          {perf.bottleneck}
+        </span>
+      </div>
+      {map && map.notes[0] && (
+        <div className="text-white/40" title={map.notes.join('\n')}>
+          {map.notes[0]}
+          {map.notes.length > 1 ? ` (+${map.notes.length - 1})` : ''}
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** Lower is better; muted when offline (no session RTT). */
@@ -169,6 +236,7 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
                 <span className="ml-1 text-white/40">ms</span>
               </span>
             </div>
+            {hud.perf && <PerfPanel perf={hud.perf} fps={hud.fps} />}
           </div>
           {onOpenSettings && (
             <button

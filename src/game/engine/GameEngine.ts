@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three'
 import { gameAudio } from '../core/audio'
-import { DEATH, LOOK, PLAYER } from '../core/config'
+import { DEBUG, DEATH, LOOK, PLAYER } from '../core/config'
 import { InputManager } from '../core/input'
 import type {
   DeathReason,
@@ -14,17 +14,22 @@ import type {
 import { stepEditorMove } from '../editor/noclip'
 import { LevelEditorSystem } from '../editor/LevelEditorSystem'
 import {
+  analyzeMapStaticPerf,
   buildProceduralRange,
   castMapHitscan,
+  countNearbyCollisionMeshes,
   getMap,
   loadEnvForMap,
   loadGltfMap,
+  logMapStaticPerf,
   authoredBarrierLayout,
   authoredLayout,
   BARRIER_DEFAULTS,
   barriersToAabbs,
   clearBarrierLayout,
   clearSpawnLayout,
+  perfEma,
+  inferBottleneck,
   loadBarrierLayout,
   loadSpawnLayout,
   makeBarrierId,
@@ -38,6 +43,7 @@ import {
   type MapDef,
   type MapId,
   type MapSpawnLayout,
+  type MapStaticPerf,
   type SpawnPoint,
   type TeamId,
 } from '../maps'
@@ -100,6 +106,12 @@ export class GameEngine {
   /** EMA of frame time (seconds) for a stable FPS readout. */
   private frameTimeEma = 1 / 60
   private fps = 60
+  /** Live timing EMAs (ms) for perf HUD. */
+  private simMsEma = 0
+  private renderMsEma = 0
+  private frameMsEma = 16.7
+  private nearbyCollision = 0
+  private mapStaticPerf: MapStaticPerf | null = null
   /**
    * Last measured RTT to the game server (ms). Stays null until multiplayer
    * session wiring lands — local range has no network hop.
@@ -381,6 +393,7 @@ export class GameEngine {
           this.skyboxId,
         )
         this.envTextures.push(...textures)
+        this.captureMapPerf(null, built.bounds)
       } else {
         const built = await loadGltfMap(this.scene, this.mapDef)
         this.colliders = built.colliders
@@ -421,6 +434,7 @@ export class GameEngine {
           'collisionMeshes',
           built.hitMeshes.length,
         )
+        this.captureMapPerf(built.root, built.bounds)
       }
       this.mapReady = true
       this.levelEditor.sync(this.spawnLayout.spawns)
@@ -977,12 +991,45 @@ export class GameEngine {
     if (dt > 0 && dt < 1) {
       this.frameTimeEma = this.frameTimeEma * 0.9 + dt * 0.1
       this.fps = Math.round(1 / this.frameTimeEma)
+      this.frameMsEma = perfEma(this.frameMsEma, dt * 1000, 0.12)
     }
 
     dt = Math.min(dt, 0.05)
 
+    const t0 = performance.now()
     this.tick(dt)
+    const t1 = performance.now()
     this.renderer.render(this.scene, this.camera)
+    const t2 = performance.now()
+
+    if (DEBUG.showPerf) {
+      this.simMsEma = perfEma(this.simMsEma, t1 - t0)
+      this.renderMsEma = perfEma(this.renderMsEma, t2 - t1)
+      // Same radius as walk probes (meshCollision probeR default floor)
+      this.nearbyCollision = countNearbyCollisionMeshes(
+        this.meshWorld,
+        this.player.position,
+        8,
+      )
+    }
+  }
+
+  /** Snapshot map geometry cost after load (console + HUD). */
+  private captureMapPerf(
+    root: THREE.Object3D | null,
+    bounds: import('../maps').MapBounds | null,
+  ) {
+    if (!DEBUG.showPerf) return
+    const perf = analyzeMapStaticPerf({
+      mapId: this.mapDef.id,
+      root,
+      scene: this.scene,
+      collisionMeshes: this.mapHitMeshes,
+      aabbColliders: this.colliders.length,
+      bounds,
+    })
+    this.mapStaticPerf = perf
+    logMapStaticPerf(perf)
   }
 
   private tick(dt: number) {
@@ -1225,7 +1272,53 @@ export class GameEngine {
       deathReason: this.deathReason,
       fps: this.fps,
       ping: this.pingMs,
+      perf: this.buildPerfHud(),
     }
     for (const fn of this.hudListeners) fn(snap)
+  }
+
+  private buildPerfHud(): import('../core/types').PerfHud | null {
+    if (!DEBUG.showPerf) return null
+    const info = this.renderer.info
+    const staticP = this.mapStaticPerf
+    const draws = info.render.calls
+    const triangles = info.render.triangles
+    const bottleneck = inferBottleneck({
+      frameMs: this.frameMsEma,
+      simMs: this.simMsEma,
+      renderMs: this.renderMsEma,
+      draws,
+      triangles,
+      nearbyCollision: this.nearbyCollision,
+      collisionMeshes: staticP?.collisionMeshes ?? this.mapHitMeshes.length,
+      dedicatedCollision: staticP?.dedicatedCollision ?? false,
+      pixelRatio: this.renderer.getPixelRatio(),
+      staticTriangles: staticP?.triangles ?? 0,
+      shadowCasters: staticP?.shadowCasters ?? 0,
+    })
+    return {
+      frameMs: this.frameMsEma,
+      simMs: this.simMsEma,
+      renderMs: this.renderMsEma,
+      draws,
+      triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      collisionMeshes: staticP?.collisionMeshes ?? this.mapHitMeshes.length,
+      nearbyCollision: this.nearbyCollision,
+      pixelRatio: this.renderer.getPixelRatio(),
+      bottleneck,
+      map: staticP
+        ? {
+            id: staticP.mapId,
+            meshes: staticP.meshes,
+            triangles: staticP.triangles,
+            materials: staticP.materials,
+            shadowCasters: staticP.shadowCasters,
+            dedicatedCollision: staticP.dedicatedCollision,
+            notes: staticP.notes,
+          }
+        : null,
+    }
   }
 }

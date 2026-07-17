@@ -494,4 +494,9 @@ export const DEBUG = {
    * (Arms are split from Suit_Body by skin weights when the mesh has no separate arm part.)
    */
   showHitboxes: true,
+  /**
+   * Expanded perf panel (FPS, sim/render ms, draws, tris, collision counts)
+   * + detailed `[map-perf]` console dump on map load.
+   */
+  showPerf: true,
 } as const

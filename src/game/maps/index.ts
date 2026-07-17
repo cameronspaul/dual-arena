@@ -20,8 +20,18 @@ export {
   prepareCollisionMeshes,
   resolveMeshCollisions,
   castMeshWorldHitscan,
+  countNearbyCollisionMeshes,
   type MeshWorld,
 } from './meshCollision'
+export {
+  analyzeMapStaticPerf,
+  logMapStaticPerf,
+  fmtNum,
+  inferBottleneck,
+  ema as perfEma,
+  type MapStaticPerf,
+  type LivePerf,
+} from './mapPerf'
 export {
   loadSpawnLayout,
   saveSpawnLayout,

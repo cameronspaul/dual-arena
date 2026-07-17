@@ -138,6 +138,16 @@ function nearbyMeshes(
   return out.length > 0 ? out : meshes
 }
 
+/** Count meshes inside the same proximity cull walk probes use (perf HUD). */
+export function countNearbyCollisionMeshes(
+  meshWorld: MeshWorld | null | undefined,
+  pos: Vec3,
+  radius = 8,
+): number {
+  if (!meshWorld || meshWorld.meshes.length === 0) return 0
+  return nearbyMeshes(meshWorld.meshes, pos, radius).length
+}
+
 function allHits(
   origin: THREE.Vector3,
   dir: THREE.Vector3,

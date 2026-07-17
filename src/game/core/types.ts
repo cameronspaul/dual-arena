@@ -191,4 +191,34 @@ export interface HudSnapshot {
    * `null` while offline / local range (no network session).
    */
   ping: number | null
+  /**
+   * Live + static map cost when `DEBUG.showPerf` is on.
+   * Used to compare why some maps miss a high refresh target.
+   */
+  perf: PerfHud | null
+}
+
+/** Expanded performance HUD (see `maps/mapPerf.ts`). */
+export interface PerfHud {
+  frameMs: number
+  simMs: number
+  renderMs: number
+  draws: number
+  triangles: number
+  geometries: number
+  textures: number
+  collisionMeshes: number
+  nearbyCollision: number
+  pixelRatio: number
+  bottleneck: string
+  /** Static map cost from last load (null until map ready). */
+  map: {
+    id: string
+    meshes: number
+    triangles: number
+    materials: number
+    shadowCasters: number
+    dedicatedCollision: boolean
+    notes: string[]
+  } | null
 }

@@ -83,9 +83,25 @@ Open the browser console on play:
 
 ```
 [map] desert fitted { size, ... } spawn { x,y,z } collisionMeshes N
+[map-perf] desert { meshes, triangles, materials, shadowCasters, collisionMeshes, dedicatedCollision, … }
+  notes: [ "High tris…", "No COL_ hull…", … ]
 ```
+
+In-game (top-right, when `DEBUG.showPerf` is true — default on):
+
+| Field | Meaning |
+|-------|---------|
+| **FPS / ms** | Frame rate and total frame time (180 Hz budget ≈ 5.6 ms) |
+| **sim / ren** | CPU simulation (movement + mesh collision) vs `renderer.render` |
+| **draws / tris** | WebGL draw calls and triangles submitted this frame |
+| **col near/total** | Collision meshes near the player vs full set (walk/bullet probes) |
+| **map line** | Static load cost: total tris, mesh count, shadow casters, `COL✓/✗` |
+| **limit** | Best-guess bottleneck (CPU collision vs GPU draw/shadows vs DPR) |
 
 - `collisionMeshes: 0` → nothing solid to walk on (export failed / empty).  
 - Spawn Y should sit on the floor (~0–2).  
 - If you fall forever, geometry isn’t under the spawn (scale/rotation wrong).  
-- If you walk through walls, tris are missing or faces are open — add a closed `COL_` hull.
+- If you walk through walls, tris are missing or faces are open — add a closed `COL_` hull.  
+- **Low FPS only while walking** + high `sim` / `col near` → add a low-poly `COL_` hull.  
+- **Low FPS while standing still** + high `ren` / `draws` / shadow casters → simplify mesh, cut casters, or lower DPR.  
+- Toggle the panel via `DEBUG.showPerf` in `src/game/core/config.ts`.

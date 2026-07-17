@@ -53,6 +53,18 @@ function hudKey(s: HudSnapshot): string {
     s.deathReason ?? '',
     s.fps,
     s.ping ?? -1,
+    // Throttle perf panel: ~4 Hz on timings, integer draw/col counts
+    s.perf
+      ? [
+          Math.round(s.perf.frameMs * 4),
+          Math.round(s.perf.simMs * 4),
+          Math.round(s.perf.renderMs * 4),
+          s.perf.draws,
+          Math.round(s.perf.triangles / 500),
+          s.perf.nearbyCollision,
+          s.perf.bottleneck,
+        ].join(',')
+      : '',
   ].join('|')
 }
 
