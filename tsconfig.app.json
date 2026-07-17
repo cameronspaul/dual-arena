@@ -31,6 +31,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@duel/shared": [
+        "../packages/shared-duel/src/index.ts"
+      ],
+      "@duel/shared/*": [
+        "../packages/shared-duel/src/*"
       ]
     }
   },

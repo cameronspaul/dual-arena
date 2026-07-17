@@ -3,6 +3,7 @@ import {
   GameEngine,
   type HudListener,
   type GameEngineOptions,
+  type OnlineSessionOpts,
 } from '@/game/engine'
 import type { MapId } from '@/game/maps'
 import type { SkyboxId } from '@/game/scene/skyboxes'
@@ -14,6 +15,8 @@ interface GameCanvasProps {
   mapId?: MapId | string
   /** Concrete session skybox (shared; default day). */
   skybox?: SkyboxId
+  /** Online 1v1 session; omit for offline practice. */
+  online?: OnlineSessionOpts | null
 }
 
 export function GameCanvas({
@@ -21,6 +24,7 @@ export function GameCanvas({
   onEngine,
   mapId,
   skybox = 'day',
+  online = null,
 }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
@@ -29,11 +33,20 @@ export function GameCanvas({
   const onEngineRef = useRef(onEngine)
   onEngineRef.current = onEngine
 
+  const onlineKey = online
+    ? `${online.serverUrl}|${online.matchId}|${online.token ?? ''}`
+    : ''
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
 
-    const opts: GameEngineOptions = { mapId, skybox }
+    const opts: GameEngineOptions = {
+      mapId,
+      skybox,
+      mode: online ? 'online' : 'offline',
+      online: online ?? undefined,
+    }
     const engine = new GameEngine(el, opts)
     engineRef.current = engine
     onEngineRef.current?.(engine)
@@ -46,7 +59,8 @@ export function GameCanvas({
       engineRef.current = null
       onEngineRef.current?.(null)
     }
-  }, [mapId, skybox])
+    // onlineKey captures server/match identity without unstable object identity
+  }, [mapId, skybox, onlineKey])
 
   return (
     <div

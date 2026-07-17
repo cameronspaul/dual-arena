@@ -24,6 +24,14 @@ interface AppState {
 
   /** Soft-currency balance preview (Phase 3 will wire to wallet). */
   balance: number
+
+  /** Game server WebSocket URL for online 1v1. */
+  serverUrl: string
+  setServerUrl: (url: string) => void
+
+  /** Invite / match room id. */
+  matchId: string
+  setMatchId: (id: string) => void
 }
 
 const DEFAULT_COLOR = '#a855f7'
@@ -49,6 +57,13 @@ export const useAppStore = create<AppState>()(
       setWagerAmount: (wagerAmount) => set({ wagerAmount }),
 
       balance: 0,
+
+      serverUrl: 'ws://localhost:2567',
+      setServerUrl: (serverUrl) => set({ serverUrl: serverUrl.trim() }),
+
+      matchId: 'duel-1',
+      setMatchId: (matchId) =>
+        set({ matchId: matchId.trim().slice(0, 48) || 'duel-1' }),
     }),
     {
       name: 'app-store',
@@ -58,6 +73,8 @@ export const useAppStore = create<AppState>()(
         characterColor: s.characterColor,
         serverRegion: s.serverRegion,
         wagerAmount: s.wagerAmount,
+        serverUrl: s.serverUrl,
+        matchId: s.matchId,
       }),
     },
   ),

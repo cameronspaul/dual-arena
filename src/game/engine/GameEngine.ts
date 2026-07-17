@@ -79,8 +79,33 @@ import { ViewFeel } from '../systems/ViewFeel'
 import { fireShot, playSniperPhaseSfx } from '../systems/combat'
 import { ViewmodelSystem } from '../viewmodel/ViewmodelSystem'
 import type { ViewmodelConfig } from '../viewmodel/config'
+import {
+  NetClient,
+  Prediction,
+  RemotePlayerSystem,
+} from '../net'
+import {
+  DUEL_SPAWNS,
+  effectiveLook,
+  eyePosition as eyePosShared,
+  SNIPER,
+  spreadLookDirection,
+  aimSpread as aimSpreadShared,
+  type MatchEndMessage,
+  type NetHitEvent,
+  type SnapshotMessage,
+  type WelcomeMessage,
+} from '@duel/shared'
 
 export type HudListener = (hud: HudSnapshot) => void
+
+export type OnlineSessionOpts = {
+  /** WebSocket URL, e.g. ws://localhost:2567 */
+  serverUrl: string
+  matchId: string
+  /** Auth / identity token (opaque for now). */
+  token?: string
+}
 
 export type GameEngineOptions = {
   mapId?: MapId | string
@@ -89,6 +114,12 @@ export type GameEngineOptions = {
    * Shared via URL / match config so all players see the same sky.
    */
   skybox?: SkyboxId
+  /**
+   * Offline practice range (default) vs ranked/wagered duel through the server.
+   * Online: no local kill authority; dummies off; inputs → server.
+   */
+  mode?: 'offline' | 'online'
+  online?: OnlineSessionOpts
 }
 
 export class GameEngine {
@@ -114,8 +145,8 @@ export class GameEngine {
   private nearbyCollision = 0
   private mapStaticPerf: MapStaticPerf | null = null
   /**
-   * Last measured RTT to the game server (ms). Stays null until multiplayer
-   * session wiring lands — local range has no network hop.
+   * Last measured RTT to the game server (ms).
+   * Null while offline / not yet ponged.
    */
   private pingMs: number | null = null
   private container: HTMLElement
@@ -126,6 +157,20 @@ export class GameEngine {
   private combatFx = new CombatFx()
   private barrierVisuals = new BarrierVisuals()
   private viewFeel = new ViewFeel()
+
+  /** Online 1v1 — null when offline practice. */
+  private readonly isOnline: boolean
+  private net: NetClient | null = null
+  private prediction = new Prediction()
+  private remotes = new RemotePlayerSystem()
+  private localPlayerId: string | null = null
+  private onlineStatus = 'idle'
+  private matchEnd: MatchEndMessage | null = null
+  private pendingSnapshots: SnapshotMessage[] = []
+  private serverTickRate = 30
+  private matchTimeLeft: number | null = null
+  private matchWaiting = false
+  private serverRespawnIn = 0
 
   private hudListeners = new Set<HudListener>()
   private lastHit: HitEvent | null = null
@@ -194,9 +239,15 @@ export class GameEngine {
     this.container = container
     this.mapDef = getMap(opts.mapId)
     this.skyboxId = opts.skybox ?? 'day'
+    this.isOnline = opts.mode === 'online' && !!opts.online?.serverUrl
     this.spawnLayout = loadSpawnLayout(this.mapDef.id)
     this.barrierLayout = loadBarrierLayout(this.mapDef.id)
     this.rebuildBarrierColliders()
+
+    if (this.isOnline) {
+      // Ranked room: no practice dummies, no local kill inventing
+      this.dummiesEnabled = false
+    }
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(this.mapDef.bgColor)
@@ -251,7 +302,72 @@ export class GameEngine {
     void this.viewmodel.load(this.camera, this.scene)
     this.input.attach(this.renderer.domElement)
 
+    if (this.isOnline && opts.online) {
+      void this.remotes.ensureLoaded(this.scene)
+      this.connectOnline(opts.online)
+    }
+
     window.addEventListener('resize', this.onResize)
+  }
+
+  private connectOnline(online: OnlineSessionOpts) {
+    const token =
+      online.token?.trim() ||
+      `p-${Math.random().toString(36).slice(2, 10)}`
+    this.net = new NetClient({
+      url: online.serverUrl,
+      matchId: online.matchId,
+      token,
+      handlers: {
+        onWelcome: (w) => this.onNetWelcome(w),
+        onSnapshot: (s) => this.pendingSnapshots.push(s),
+        onMatchEnd: (m) => {
+          this.matchEnd = m
+        },
+        onPong: (rtt) => {
+          this.pingMs = rtt
+        },
+        onStatus: (status, detail) => {
+          this.onlineStatus = detail ? `${status}: ${detail}` : status
+          console.info('[net]', status, detail ?? '')
+        },
+        onError: (e) => {
+          console.warn('[net] error', e.code, e.message)
+        },
+      },
+    })
+    this.net.connect()
+  }
+
+  private onNetWelcome(w: WelcomeMessage) {
+    this.localPlayerId = w.playerId
+    this.serverTickRate = w.tickRate || 30
+    const spawn = DUEL_SPAWNS[w.team] ?? DUEL_SPAWNS[0]
+    this.applySpawn(
+      { x: spawn.x, y: spawn.y, z: spawn.z },
+      spawn.yaw,
+    )
+    this.playSpawn = {
+      spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
+      spawnYaw: spawn.yaw,
+    }
+    this.playerHp = PLAYER.maxHp
+    this.playerAlive = true
+    this.kills = 0
+    this.prediction.clear()
+    console.info('[net] welcome', w.playerId, 'team', w.team)
+  }
+
+  isOnlineMode() {
+    return this.isOnline
+  }
+
+  getOnlineStatus() {
+    return this.onlineStatus
+  }
+
+  getMatchEnd() {
+    return this.matchEnd
   }
 
   private applySpawn(
@@ -586,6 +702,8 @@ export class GameEngine {
    */
   setFreeCam(enabled: boolean) {
     if (this.levelEditorActive) return
+    // Ranked: no free-cam / noclip while match is live
+    if (this.isOnline && enabled && this.playerAlive) return
 
     if (enabled) {
       this.voluntaryFreeCam = true
@@ -649,6 +767,7 @@ export class GameEngine {
    * Off skips AI, respawns, animation mixers, mesh updates, and hitscan.
    */
   setDummiesEnabled(enabled: boolean) {
+    if (this.isOnline) return // no practice dummies in duel rooms
     this.dummiesEnabled = enabled
     this.dummiesSys.setEnabled(enabled)
   }
@@ -1043,6 +1162,10 @@ export class GameEngine {
 
   dispose() {
     this.stop()
+    this.net?.disconnect()
+    this.net = null
+    this.remotes.clear()
+    this.prediction.clear()
     this.input.detach()
     window.removeEventListener('resize', this.onResize)
     this.levelEditor.dispose()
@@ -1130,16 +1253,72 @@ export class GameEngine {
     this.input.setAdsBlend(this.sniper.adsBlend)
 
     if (this.levelEditorActive) {
-      this.tickLevelEditor(dt, input)
+      // Editor locked out of ranked rooms
+      if (this.isOnline) {
+        this.levelEditorActive = false
+      } else {
+        this.tickLevelEditor(dt, input)
+        return
+      }
+    }
+
+    // Drain network snapshots before sim so reconcile is fresh
+    if (this.isOnline) {
+      this.flushNetSnapshots(dt)
+    }
+
+    // Online death: hold camera, wait for server respawn (no free-cam / local restart)
+    if (this.isOnline && !this.playerAlive) {
+      this.tickOnlineDead(dt)
       return
     }
 
     // Free-cam (death or voluntary toggle): world still runs, no combat / player move.
-    if (!this.playerAlive || this.voluntaryFreeCam) {
+    // Online: no voluntary free-cam cheat path while match is live
+    if (!this.playerAlive || (!this.isOnline && this.voluntaryFreeCam)) {
       this.tickSpectate(dt, input)
       return
     }
 
+    if (this.isOnline) {
+      this.tickOnline(dt, input)
+      return
+    }
+
+    this.tickOffline(dt, input)
+  }
+
+  /** Online: dead until server respawns — no local kill authority. */
+  private tickOnlineDead(dt: number) {
+    this.sniper.ads = false
+    this.sniper.adsBlend = Math.max(0, this.sniper.adsBlend - dt * 8)
+    this.viewmodel.syncAnim(this.sniper.phase)
+    this.viewmodel.updateMixer(dt)
+    if (this.viewmodel.root) this.viewmodel.root.visible = false
+    if (this.playerVisuals.body) this.playerVisuals.body.visible = false
+
+    this.camera.position.set(
+      this.player.position.x,
+      this.player.position.y + this.player.eyeHeight,
+      this.player.position.z,
+    )
+    this.camera.rotation.order = 'YXZ'
+    this.camera.rotation.y = this.player.yaw
+    this.camera.rotation.x = this.player.pitch
+
+    this.remotes.update(dt)
+    this.combatFx.update(dt)
+    this.barrierVisuals.update(this.player.position)
+    this.lastHitAge += dt
+    this.spectateTimer = this.serverRespawnIn
+    this.emitHud()
+  }
+
+  /** Offline practice range — client-authoritative combat OK. */
+  private tickOffline(
+    dt: number,
+    input: import('../core/types').PlayerInput,
+  ) {
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
     stepPlayer(
@@ -1151,7 +1330,6 @@ export class GameEngine {
       this.barrierColliders,
     )
 
-    // Fall out of world (maps with fallDeath) → death → free-cam.
     if (isBelowFallKill(this.player.position.y, this.fallKillY)) {
       this.killPlayer('fall')
       this.tickSpectate(dt, input)
@@ -1229,6 +1407,197 @@ export class GameEngine {
 
     this.lastHitAge += dt
     this.emitHud()
+  }
+
+  /**
+   * Online duel: predict movement for feel, send inputs, never apply local kills.
+   * HP / ammo / score from server snapshots only.
+   */
+  private tickOnline(
+    dt: number,
+    input: import('../core/types').PlayerInput,
+  ) {
+    this.viewFeel.samplePreStep(this.player)
+    const prevMoveState = this.player.state
+
+    // Send inputs (force-send on combat edges so 60 Hz rate limit never drops fire)
+    if (this.net && this.localPlayerId) {
+      const edge = input.fire || input.reload || input.jump
+      const seq = edge
+        ? this.net.sendInputNow(input)
+        : this.net.maybeSendInput(input, dt)
+      if (seq != null) this.prediction.push(seq, input)
+    }
+
+    // Local movement prediction
+    stepPlayer(
+      this.player,
+      input,
+      dt,
+      this.colliders,
+      this.meshWorld,
+      this.barrierColliders,
+    )
+
+    // Cosmetic sniper step (server overwrites ammo/phase on snapshot)
+    stepSniper(this.sniper, input, dt)
+
+    if (this.playerVisuals.isMan) {
+      this.playerVisuals.syncLocomotion(this.player, input)
+      this.playerVisuals.update(dt)
+    }
+    this.viewmodel.syncAnim(this.sniper.phase)
+    this.viewmodel.updateMixer(dt)
+
+    const prevGrounded = this.viewFeel.wasGrounded
+    // Optimistic fire FX only — damage comes from server HitEvents
+    const fireResult = tryFire(this.sniper, input)
+    if (fireResult === 'shot') {
+      gameAudio.playFire()
+      applyRecoil(this.sniper)
+      this.viewFeel.punchShot(this.sniper.adsBlend)
+      const look = effectiveLook(this.player, this.sniper)
+      const origin = eyePosShared(this.player)
+      const spread = aimSpreadShared(this.sniper, this.player)
+      const dir = spreadLookDirection(look.yaw, look.pitch, spread)
+      const end = {
+        x: origin.x + dir.x * SNIPER.maxRange * 0.25,
+        y: origin.y + dir.y * SNIPER.maxRange * 0.25,
+        z: origin.z + dir.z * SNIPER.maxRange * 0.25,
+      }
+      this.combatFx.showTracer(origin, dir, end, { killed: false })
+    } else if (fireResult === 'dry') {
+      gameAudio.playDryFire()
+    }
+    this.prevSniperPhase = playSniperPhaseSfx(
+      this.sniper.phase,
+      this.prevSniperPhase,
+    )
+
+    const { grounded, speed } = this.viewFeel.stepLandingAndSfx(
+      dt,
+      this.player,
+      this.sniper,
+      prevGrounded,
+      prevMoveState,
+    )
+
+    this.viewFeel.applyCameraAndViewmodel({
+      dt,
+      player: this.player,
+      sniper: this.sniper,
+      camera: this.camera,
+      thirdPerson: this.thirdPerson,
+      viewmodel: this.viewmodel,
+      grounded,
+      speed,
+    })
+
+    this.playerVisuals.updatePose(this.player, this.thirdPerson)
+    this.remotes.update(dt)
+    this.combatFx.update(dt)
+    this.barrierVisuals.update(this.player.position)
+
+    this.lastHitAge += dt
+    this.emitHud()
+  }
+
+  private flushNetSnapshots(dt: number) {
+    if (!this.pendingSnapshots.length) return
+    const snaps = this.pendingSnapshots
+    this.pendingSnapshots = []
+    for (const snap of snaps) {
+      this.applySnapshot(snap, dt)
+    }
+  }
+
+  private applySnapshot(snap: SnapshotMessage, dt: number) {
+    const selfId = this.localPlayerId
+    const seen = new Set<string>()
+    this.matchTimeLeft = snap.timeLeft ?? null
+    this.matchWaiting = snap.phase === 'waiting'
+
+    for (const p of snap.players) {
+      if (selfId && p.id === selfId) {
+        const wasAlive = this.playerAlive
+        // Authoritative combat state
+        this.playerHp = p.hp
+        this.playerAlive = p.alive
+        this.kills = p.kills
+        this.serverRespawnIn = p.respawnIn ?? 0
+        this.sniper.ammo = p.ammo
+        this.sniper.magSize = p.magSize
+        if (p.phase !== this.sniper.phase) {
+          this.sniper.phase = p.phase
+          if (p.phase === 'ready') this.sniper.phaseTimer = 0
+        }
+        this.sniper.ads = p.ads
+        this.sniper.adsBlend = p.adsBlend
+
+        if (!p.alive) {
+          this.deathReason = 'combat'
+          this.spectateTimer = p.respawnIn ?? 0
+        } else if (!wasAlive && p.alive) {
+          // Server respawn — hard snap body + restore camera
+          this.deathReason = null
+          this.spectateTimer = 0
+          this.freeCam = null
+          this.voluntaryFreeCam = false
+          if (this.viewmodel.root && !this.thirdPerson) {
+            this.viewmodel.root.visible = true
+          }
+        }
+
+        this.prediction.reconcile({
+          body: this.player,
+          server: p,
+          ackSeq: snap.ackSeq,
+          colliders: this.colliders,
+          meshWorld: this.meshWorld,
+          barriers: this.barrierColliders,
+          dt: 1 / this.serverTickRate,
+        })
+        this.input.setLook(this.player.yaw, this.player.pitch)
+      } else {
+        seen.add(p.id)
+        this.remotes.pushSnapshot(p.id, p)
+      }
+    }
+
+    for (const id of this.remotes.ids()) {
+      if (!seen.has(id)) this.remotes.remove(id)
+    }
+
+    for (const ev of snap.events) {
+      this.applyNetHitEvent(ev)
+    }
+
+    void dt
+  }
+
+  private applyNetHitEvent(ev: NetHitEvent) {
+    const hit: HitEvent = {
+      targetId: ev.targetId,
+      zone: ev.zone,
+      damage: ev.damage,
+      killed: ev.killed,
+      point: { ...ev.point },
+    }
+    // Local player was shooter or victim → hitmarker / impact
+    if (
+      ev.shooterId === this.localPlayerId ||
+      ev.targetId === this.localPlayerId
+    ) {
+      this.lastHit = hit
+      this.lastHitAge = 0
+      this.lastHitId += 1
+      gameAudio.playHitConfirm({ zone: ev.zone, killed: ev.killed })
+    }
+    this.combatFx.showImpact(
+      ev.point,
+      ev.zone === 'head' ? 'head' : 'body',
+      ev.killed,
+    )
   }
 
   /**
@@ -1368,12 +1737,20 @@ export class GameEngine {
       lastHitAge: this.lastHitAge,
       lastHitId: this.lastHitId,
       alive: this.playerAlive,
-      spectating: freecam,
-      respawnIn: this.playerAlive ? 0 : this.spectateTimer,
+      spectating: freecam || (this.isOnline && !this.playerAlive),
+      respawnIn: this.playerAlive
+        ? 0
+        : this.isOnline
+          ? this.serverRespawnIn
+          : this.spectateTimer,
       deathReason: this.deathReason,
       fps: this.fps,
       ping: this.pingMs,
       perf: this.buildPerfHud(),
+      matchTimeLeft: this.isOnline ? this.matchTimeLeft : null,
+      matchWinnerId: this.matchEnd?.winnerId ?? null,
+      matchEndReason: this.matchEnd?.reason ?? null,
+      matchWaiting: this.isOnline && this.matchWaiting,
     }
     for (const fn of this.hudListeners) fn(snap)
   }

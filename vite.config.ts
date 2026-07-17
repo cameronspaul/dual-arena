@@ -9,6 +9,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Workspace package: resolve to TypeScript source for HMR
+      "@duel/shared": path.resolve(__dirname, "../packages/shared-duel/src/index.ts"),
     },
   },
   server: {

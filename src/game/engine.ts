@@ -3,4 +3,5 @@ export {
   GameEngine,
   type HudListener,
   type GameEngineOptions,
+  type OnlineSessionOpts,
 } from './engine/GameEngine'

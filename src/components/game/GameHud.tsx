@@ -65,6 +65,19 @@ function hpBarColor(hp: number): string {
   return 'bg-arena-danger shadow-[0_0_12px_var(--arena-danger)]'
 }
 
+function formatMatchClock(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${r.toString().padStart(2, '0')}`
+}
+
+function matchEndTitle(reason: HudSnapshot['matchEndReason']): string {
+  if (reason === 'forfeit' || reason === 'disconnect') return 'Forfeit'
+  if (reason === 'time') return 'Time'
+  return 'Match over'
+}
+
 /** Shared tactical glass panel used across HUD chrome. */
 function HudPanel({
   children,
@@ -258,6 +271,67 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
         reloadJiggleY={hud.reloadJiggleY}
       />
 
+      {/* Waiting for opponent */}
+      <AnimatePresence>
+        {hud.matchWaiting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/45"
+          >
+            <HudPanel className="px-8 py-6 text-center" accent="tech">
+              <div className="text-xs tracking-[0.2em] text-arena-tech uppercase">
+                Online 1v1
+              </div>
+              <div className="mt-2 text-lg font-semibold">
+                Waiting for opponent…
+              </div>
+              <div className="mt-1 text-xs text-white/45">
+                Share the same match id — first to score wins.
+              </div>
+            </HudPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Match end */}
+      <AnimatePresence>
+        {hud.matchEndReason && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/55"
+          >
+            <HudPanel className="min-w-[16rem] px-8 py-7 text-center" accent="heat">
+              <div className="text-xs tracking-[0.2em] text-white/45 uppercase">
+                {matchEndTitle(hud.matchEndReason)}
+              </div>
+              <div className="mt-2 text-2xl font-bold text-arena-heat">
+                {hud.matchWinnerId ? 'Winner decided' : 'Draw'}
+              </div>
+              <div className="mt-2 font-mono text-sm text-white/70">
+                Your elims: {hud.kills}
+              </div>
+              {onExit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.uiConfirm()
+                    onExit()
+                  }}
+                  className="mt-5 inline-flex items-center gap-2 rounded-md border border-arena-heat/40 bg-arena-heat/15 px-4 py-2 text-xs font-semibold tracking-wide text-arena-heat uppercase transition-colors hover:bg-arena-heat/25"
+                >
+                  <MapIcon className="size-3.5" />
+                  Back to maps
+                </button>
+              )}
+            </HudPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top chrome */}
       <div
         className="pointer-events-auto absolute top-3 left-3 right-3 flex items-start justify-between gap-3 transition-opacity duration-150"
@@ -292,6 +366,11 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
               <div className="mt-0.5 font-mono text-[11px] tabular-nums text-white/40">
                 {hud.speed.toFixed(1)} m/s
               </div>
+              {hud.matchTimeLeft != null && (
+                <div className="mt-0.5 font-mono text-[11px] tabular-nums text-arena-tech/90">
+                  {formatMatchClock(hud.matchTimeLeft)}
+                </div>
+              )}
             </div>
           </div>
         </HudPanel>

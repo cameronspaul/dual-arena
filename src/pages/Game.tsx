@@ -25,6 +25,8 @@ import {
 } from '@/game/scene/skyboxes'
 import type { HudSnapshot } from '@/game/types'
 import { gameAudio } from '@/game/audio'
+import type { OnlineSessionOpts } from '@/game/engine'
+import { useAppStore } from '@/stores/useAppStore'
 
 function hudKey(s: HudSnapshot): string {
   return [
@@ -52,6 +54,10 @@ function hudKey(s: HudSnapshot): string {
     s.deathReason ?? '',
     s.fps,
     s.ping ?? -1,
+    s.matchTimeLeft != null ? Math.ceil(s.matchTimeLeft) : '',
+    s.matchWinnerId ?? '',
+    s.matchEndReason ?? '',
+    s.matchWaiting ? 1 : 0,
     // Throttle perf panel: ~4 Hz on timings, integer draw/col counts
     s.perf
       ? [
@@ -94,6 +100,10 @@ function readPickerSkybox(params: URLSearchParams): SkyboxPreference {
 
 export default function Game() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const serverUrl = useAppStore((s) => s.serverUrl)
+  const matchIdStore = useAppStore((s) => s.matchId)
+  const username = useAppStore((s) => s.username)
+
   const [phase, setPhase] = useState<'pick' | 'play'>(() =>
     searchParams.get('map') && isMapId(searchParams.get('map')!)
       ? 'play'
@@ -107,6 +117,21 @@ export default function Game() {
   /** Concrete sky locked for the active play session. */
   const [sessionSkybox, setSessionSkybox] = useState<SkyboxId>(() =>
     readInitialSkybox(searchParams),
+  )
+  /** When set, GameCanvas starts an online session. */
+  const [onlineSession, setOnlineSession] = useState<OnlineSessionOpts | null>(
+    () => {
+      const online = searchParams.get('online')
+      const mid = searchParams.get('match')
+      const url = searchParams.get('server')
+      if (online === '1' && mid) {
+        return {
+          serverUrl: url || 'ws://localhost:2567',
+          matchId: mid,
+        }
+      }
+      return null
+    },
   )
   const [hud, setHud] = useState<HudSnapshot | null>(null)
   const [engine, setEngine] = useState<GameEngine | null>(null)
@@ -164,12 +189,13 @@ export default function Game() {
   }, [])
 
   const startPlay = useCallback(
-    (id: MapId, pref: SkyboxPreference) => {
+    (id: MapId, pref: SkyboxPreference, online?: OnlineSessionOpts | null) => {
       // Resolve random once so all clients with the same URL share one sky.
       const sky = resolveSkyboxId(pref)
       setMapId(id)
       setSkyboxPref(pref === 'random' ? sky : pref)
       setSessionSkybox(sky)
+      setOnlineSession(online ?? null)
       setPhase('play')
       setHud(null)
       lastKey.current = ''
@@ -178,6 +204,15 @@ export default function Game() {
           const next = new URLSearchParams(prev)
           next.set('map', id)
           next.set('sky', sky)
+          if (online) {
+            next.set('online', '1')
+            next.set('match', online.matchId)
+            next.set('server', online.serverUrl)
+          } else {
+            next.delete('online')
+            next.delete('match')
+            next.delete('server')
+          }
           return next
         },
         { replace: true },
@@ -186,17 +221,30 @@ export default function Game() {
     [setSearchParams],
   )
 
+  const startOnline = useCallback(() => {
+    const session: OnlineSessionOpts = {
+      serverUrl: serverUrl.trim() || 'ws://localhost:2567',
+      matchId: matchIdStore.trim() || 'duel-1',
+      token: username.trim() || undefined,
+    }
+    startPlay(mapId, skyboxPref, session)
+  }, [serverUrl, matchIdStore, username, mapId, skyboxPref, startPlay])
+
   const backToPicker = useCallback(() => {
     gameAudio.uiClick()
     setPhase('pick')
     setEngine(null)
     setHud(null)
+    setOnlineSession(null)
     // Keep last concrete sky selected in the picker (not random)
     setSkyboxPref(sessionSkybox)
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
         next.delete('map')
+        next.delete('online')
+        next.delete('match')
+        next.delete('server')
         // Leave sky so re-enter can reuse the same sky if desired
         if (sessionSkybox) next.set('sky', sessionSkybox)
         return next
@@ -235,17 +283,20 @@ export default function Game() {
         skybox={skyboxPref}
         onSkyboxChange={setSkyboxPref}
         onPlay={() => startPlay(mapId, skyboxPref)}
+        onPlayOnline={startOnline}
       />
     )
   }
 
   const mapName = getMap(mapId).name
+  const isOnline = !!onlineSession
 
   return (
     <div className="relative h-svh w-full overflow-hidden bg-black">
       <GameCanvas
         mapId={mapId}
         skybox={sessionSkybox}
+        online={onlineSession}
         onHud={onHud}
         onEngine={onEngine}
       />
@@ -263,6 +314,12 @@ export default function Game() {
           <span className="text-arena-heat">{mapName}</span>
           <span className="mx-1.5 text-white/25">·</span>
           <span className="text-arena-tech/90">{SKYBOX_LABELS[sessionSkybox]}</span>
+          {isOnline && (
+            <>
+              <span className="mx-1.5 text-white/25">·</span>
+              <span className="text-arena-ok">Online 1v1</span>
+            </>
+          )}
         </div>
       )}
 
@@ -302,12 +359,16 @@ export default function Game() {
               Change map
             </span>
           </button>
-          <button type="button" onClick={openLevelEdit} className={devBtn}>
-            Level editor
-          </button>
-          <button type="button" onClick={openVmEdit} className={devBtn}>
-            Viewmodel editor
-          </button>
+          {!isOnline && (
+            <>
+              <button type="button" onClick={openLevelEdit} className={devBtn}>
+                Level editor
+              </button>
+              <button type="button" onClick={openVmEdit} className={devBtn}>
+                Viewmodel editor
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={toggleThirdPerson}
@@ -316,26 +377,30 @@ export default function Game() {
           >
             {thirdPerson ? 'Third person: on' : 'Third person'}
           </button>
-          <button
-            type="button"
-            onClick={toggleFreeCam}
-            className={freeCam ? devBtnOn : devBtn}
-            title={
-              freeCam
-                ? 'Exit free cam (while dead: respawn now)'
-                : 'Fly freely — WASD, Space/crouch, sprint boost'
-            }
-          >
-            {freeCam ? 'Free cam: on' : 'Free cam'}
-          </button>
-          <button
-            type="button"
-            onClick={toggleDummies}
-            className={dummiesEnabled ? devBtn : devBtnOn}
-            title="Turn practice dummies fully off (no AI, anims, hitscan, or drawing)"
-          >
-            {dummiesEnabled ? 'Dummies: on' : 'Dummies: off'}
-          </button>
+          {!isOnline && (
+            <>
+              <button
+                type="button"
+                onClick={toggleFreeCam}
+                className={freeCam ? devBtnOn : devBtn}
+                title={
+                  freeCam
+                    ? 'Exit free cam (while dead: respawn now)'
+                    : 'Fly freely — WASD, Space/crouch, sprint boost'
+                }
+              >
+                {freeCam ? 'Free cam: on' : 'Free cam'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleDummies}
+                className={dummiesEnabled ? devBtn : devBtnOn}
+                title="Turn practice dummies fully off (no AI, anims, hitscan, or drawing)"
+              >
+                {dummiesEnabled ? 'Dummies: on' : 'Dummies: off'}
+              </button>
+            </>
+          )}
         </div>
       )}
 

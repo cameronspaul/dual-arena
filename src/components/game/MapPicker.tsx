@@ -81,6 +81,8 @@ interface MapPickerProps {
   skybox: SkyboxPreference
   onSkyboxChange: (sky: SkyboxPreference) => void
   onPlay: () => void
+  /** Start an online 1v1 against the configured server / match id. */
+  onPlayOnline?: () => void
 }
 
 /** Decorative game PNG icon from /public/icons. */
@@ -216,6 +218,7 @@ export function MapPicker({
   skybox,
   onSkyboxChange,
   onPlay,
+  onPlayOnline,
 }: MapPickerProps) {
   const {
     theme,
@@ -229,12 +232,16 @@ export function MapPicker({
     wagerAmount,
     setWagerAmount,
     balance,
+    serverUrl,
+    setServerUrl,
+    matchId,
+    setMatchId,
   } = useAppStore()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(username)
-  const [showOnline, setShowOnline] = useState(false)
+  const [showOnline, setShowOnline] = useState(true)
 
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
   const displayName = username.trim() || 'Operator'
@@ -253,6 +260,11 @@ export function MapPicker({
   const handlePlay = () => {
     gameAudio.uiConfirm()
     onPlay()
+  }
+
+  const handlePlayOnline = () => {
+    gameAudio.uiConfirm()
+    onPlayOnline?.()
   }
 
   return (
@@ -355,8 +367,8 @@ export function MapPicker({
               Pick a map. Deploy. Train your aim.
             </h1>
             <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-              Offline sniper practice with dummies. Choose an arena and sky,
-              then jump in — multiplayer duels land later.
+              Offline sniper practice with dummies, or join an online 1v1 —
+              server owns hits, ammo, and score.
             </p>
           </div>
           <div className="hidden items-center gap-2 sm:flex" aria-hidden>
@@ -679,8 +691,8 @@ export function MapPicker({
               </Button>
             </div>
 
-            {/* Online — collapsed preview (not fake empty lobbies) */}
-            <div className="rounded-2xl border border-border/70 bg-card/60 p-4 backdrop-blur-md">
+            {/* Online 1v1 — invite join (server-authoritative) */}
+            <div className="rounded-2xl border border-primary/25 bg-card/60 p-4 backdrop-blur-md">
               <button
                 type="button"
                 onClick={() => {
@@ -692,9 +704,8 @@ export function MapPicker({
                 <div className="flex items-center gap-2">
                   <GameIcon src={icons.globe} className="size-4" />
                   <span className="text-sm font-semibold">Online 1v1</span>
-                  <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    <GameIcon src={icons.locked} className="size-3" />
-                    Soon
+                  <span className="inline-flex items-center gap-1 rounded-md border border-arena-ok/40 bg-arena-ok/10 px-1.5 py-0.5 text-[10px] font-medium text-arena-ok">
+                    Live
                   </span>
                 </div>
                 <ChevronRight
@@ -716,10 +727,43 @@ export function MapPicker({
                   >
                     <div className="mt-3 space-y-3 border-t border-border/50 pt-3">
                       <p className="text-xs leading-relaxed text-muted-foreground">
-                        Matchmaking, regions, and soft-currency stakes are
-                        planned. Preferences below are saved for when servers go
-                        live.
+                        Share the same match id with a friend. Server owns
+                        damage, ammo, and score. Run{' '}
+                        <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
+                          npm run dev:server
+                        </code>{' '}
+                        locally.
                       </p>
+
+                      <div>
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                          <GameIcon src={icons.globe} className="size-3.5" />
+                          Server URL
+                        </div>
+                        <input
+                          type="text"
+                          value={serverUrl}
+                          onChange={(e) => setServerUrl(e.target.value)}
+                          spellCheck={false}
+                          className="w-full rounded-lg border border-border/70 bg-background/80 px-2.5 py-1.5 font-mono text-xs text-foreground outline-none focus:border-primary/50"
+                          placeholder="ws://localhost:2567"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                          <GameIcon src={icons.friend} className="size-3.5" />
+                          Match / invite id
+                        </div>
+                        <input
+                          type="text"
+                          value={matchId}
+                          onChange={(e) => setMatchId(e.target.value)}
+                          spellCheck={false}
+                          className="w-full rounded-lg border border-border/70 bg-background/80 px-2.5 py-1.5 font-mono text-xs text-foreground outline-none focus:border-primary/50"
+                          placeholder="duel-1"
+                        />
+                      </div>
 
                       <div>
                         <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
@@ -774,6 +818,16 @@ export function MapPicker({
                           ))}
                         </div>
                       </div>
+
+                      <Button
+                        type="button"
+                        className="w-full gap-2"
+                        disabled={!onPlayOnline || !serverUrl.trim()}
+                        onClick={handlePlayOnline}
+                      >
+                        <GameIcon src={icons.aim} className="size-4" />
+                        Join duel
+                      </Button>
                     </div>
                   </motion.div>
                 )}
