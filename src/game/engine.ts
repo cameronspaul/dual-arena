@@ -455,24 +455,31 @@ export class GameEngine {
     return g
   }
 
-  /** Mesh name → zone. Torso + arms = chest; legs separate. */
+  /**
+   * Mesh name → zone.
+   * Head / legs / arms are exclusive (like Suit_Legs vs Suit_Body).
+   * Arms never share the cyan chest wireframe.
+   */
   private meshNameToZone(name: string): HitZone {
     if (/head/i.test(name)) return 'head'
     if (/leg|feet|foot/i.test(name)) return 'leg'
-    // Body, arms, hands, etc. all count as chest
+    // Arm / hand / wrist / finger (shoulders count as chest)
+    if (/arm|hand|wrist|finger/i.test(name)) return 'arm'
     return 'chest'
   }
 
-  /** Debug wireframe: head red · chest cyan · legs yellow */
+  /** Debug wireframe: head red · chest cyan · arms orange · legs yellow */
   private zoneWireColor(zone: HitZone): number {
     if (zone === 'head') return 0xff4466
     if (zone === 'leg') return 0xffee44
+    if (zone === 'arm') return 0xff8800
     return 0x44ccff
   }
 
   private damageForZone(zone: HitZone): number {
     if (zone === 'head') return SNIPER.headDamage
     if (zone === 'leg') return SNIPER.legDamage
+    if (zone === 'arm') return SNIPER.armDamage
     return SNIPER.chestDamage
   }
 
@@ -542,6 +549,248 @@ export class GameEngine {
 
     root.userData.hitMeshes = hitMeshes
     root.userData.hitWireOverlays = wireOverlays
+    // Skin paint targets (may diverge from hitMeshes after arm/chest split)
+    root.userData.paintMeshes = [...hitMeshes]
+  }
+
+  /**
+   * Bones that count as arm surface for weight splits.
+   * Shoulders stay chest — they bleed into pecs/collar and made orange spill onto torso.
+   */
+  private isArmBoneName(name: string): boolean {
+    if (/shoulder/i.test(name)) return false
+    return /upperarm|lowerarm|forearm|wrist|hand|thumb|index|middle|ring|pinky|finger/i.test(
+      name,
+    )
+  }
+
+  /**
+   * man.glb skins arms into Suit_Body (no separate arm mesh like Suit_Legs).
+   * Split each chest skinned mesh by arm bone weights into arm + torso
+   * geometries so orange/cyan wireframes sit on the real asset triangles —
+   * same style as head (red) and legs (yellow).
+   */
+  private splitChestMeshesByArmWeights(root: THREE.Group, ownerId: string) {
+    const hitMeshes = root.userData.hitMeshes as THREE.Mesh[] | undefined
+    const wireOverlays = root.userData.hitWireOverlays as THREE.Mesh[] | undefined
+    if (!hitMeshes || !wireOverlays) return
+
+    const toSplit: THREE.SkinnedMesh[] = []
+    for (const m of hitMeshes) {
+      if (!(m instanceof THREE.SkinnedMesh)) continue
+      if ((m.userData.hitZone as HitZone) !== 'chest') continue
+      if (!m.skeleton || !m.geometry.getAttribute('skinIndex')) continue
+      toSplit.push(m)
+    }
+    if (toSplit.length === 0) return
+
+    const nextHits: THREE.Mesh[] = []
+    const nextWires: THREE.Mesh[] = []
+
+    // Keep non-chest meshes as-is
+    for (let i = 0; i < hitMeshes.length; i++) {
+      const m = hitMeshes[i]
+      if (!toSplit.includes(m as THREE.SkinnedMesh)) {
+        nextHits.push(m)
+        if (wireOverlays[i]) nextWires.push(wireOverlays[i])
+      }
+    }
+
+    for (const mesh of toSplit) {
+      const split = this.splitSkinnedGeometryByArmBones(mesh)
+      // Hide the full-body cyan wire (would paint arms blue)
+      const wi = hitMeshes.indexOf(mesh)
+      if (wi >= 0 && wireOverlays[wi]) {
+        wireOverlays[wi].visible = false
+        wireOverlays[wi].userData.skipHitbox = true
+      }
+
+      if (!split) {
+        // No arm weights — keep whole mesh as chest
+        nextHits.push(mesh)
+        if (wi >= 0 && wireOverlays[wi]) {
+          wireOverlays[wi].visible = DEBUG.showHitboxes
+          nextWires.push(wireOverlays[wi])
+        }
+        continue
+      }
+
+      // Original stays for textured skin + damage tint only (not hitscan)
+      mesh.userData.hitZone = undefined
+
+      if (split.arm) {
+        const armProxy = this.makeZoneProxyMesh(
+          mesh,
+          split.arm,
+          'arm',
+          `${mesh.name || 'Body'}_Arm`,
+          ownerId,
+        )
+        nextHits.push(armProxy.hit)
+        nextWires.push(armProxy.wire)
+      }
+      if (split.torso) {
+        const chestProxy = this.makeZoneProxyMesh(
+          mesh,
+          split.torso,
+          'chest',
+          `${mesh.name || 'Body'}_Chest`,
+          ownerId,
+        )
+        nextHits.push(chestProxy.hit)
+        nextWires.push(chestProxy.wire)
+      }
+    }
+
+    root.userData.hitMeshes = nextHits
+    root.userData.hitWireOverlays = nextWires
+  }
+
+  /**
+   * Partition skinned triangles: verts weighted to arm bones → arm,
+   * remaining → torso. Shares original attributes; only the index buffer
+   * differs so skinning still tracks the live pose.
+   */
+  private splitSkinnedGeometryByArmBones(
+    mesh: THREE.SkinnedMesh,
+  ): { arm: THREE.BufferGeometry | null; torso: THREE.BufferGeometry | null } | null {
+    const skel = mesh.skeleton
+    const geo = mesh.geometry
+    const skinIndex = geo.getAttribute('skinIndex') as THREE.BufferAttribute | null
+    const skinWeight = geo.getAttribute('skinWeight') as THREE.BufferAttribute | null
+    if (!skel || !skinIndex || !skinWeight) return null
+
+    const armBoneIdx = new Set<number>()
+    for (let i = 0; i < skel.bones.length; i++) {
+      if (this.isArmBoneName(skel.bones[i].name)) armBoneIdx.add(i)
+    }
+    if (armBoneIdx.size === 0) return null
+
+    const vCount = skinIndex.count
+    const isArmVert = new Uint8Array(vCount)
+    for (let i = 0; i < vCount; i++) {
+      let armW = 0
+      let otherW = 0
+      for (let j = 0; j < 4; j++) {
+        const bi = skinIndex.getComponent(i, j)
+        const bw = skinWeight.getComponent(i, j)
+        if (armBoneIdx.has(bi)) armW += bw
+        else otherW += bw
+      }
+      // Strict: mostly limb influence, not chest/shoulder bleed
+      isArmVert[i] = armW >= 0.55 && armW > otherW ? 1 : 0
+    }
+
+    const index = geo.index
+    const armIdx: number[] = []
+    const torsoIdx: number[] = []
+
+    // All 3 verts must be arm — stops orange fringe on collar / chest
+    const armVotesNeeded = 3
+
+    if (index) {
+      for (let i = 0; i < index.count; i += 3) {
+        const a = index.getX(i)
+        const b = index.getX(i + 1)
+        const c = index.getX(i + 2)
+        const votes = isArmVert[a] + isArmVert[b] + isArmVert[c]
+        if (votes >= armVotesNeeded) {
+          armIdx.push(a, b, c)
+        } else {
+          torsoIdx.push(a, b, c)
+        }
+      }
+    } else {
+      for (let i = 0; i < vCount; i += 3) {
+        const votes = isArmVert[i] + isArmVert[i + 1] + isArmVert[i + 2]
+        if (votes >= armVotesNeeded) {
+          armIdx.push(i, i + 1, i + 2)
+        } else {
+          torsoIdx.push(i, i + 1, i + 2)
+        }
+      }
+    }
+
+    if (armIdx.length === 0 && torsoIdx.length === 0) return null
+
+    const make = (indices: number[]) => {
+      if (indices.length === 0) return null
+      // Share vertex attributes with the source so we don't duplicate buffers;
+      // only the face list differs.
+      const g = new THREE.BufferGeometry()
+      for (const name of Object.keys(geo.attributes)) {
+        g.setAttribute(name, geo.getAttribute(name))
+      }
+      if (geo.morphAttributes) {
+        g.morphAttributes = geo.morphAttributes
+        g.morphTargetsRelative = geo.morphTargetsRelative
+      }
+      g.setIndex(indices)
+      g.boundingSphere = geo.boundingSphere?.clone() ?? null
+      g.boundingBox = geo.boundingBox?.clone() ?? null
+      return g
+    }
+
+    return { arm: make(armIdx), torso: make(torsoIdx) }
+  }
+
+  /**
+   * Invisible skinned hit surface + colored wireframe overlay that tracks
+   * the same skeleton as the source mesh (sits on the asset like head/legs).
+   */
+  private makeZoneProxyMesh(
+    source: THREE.SkinnedMesh,
+    geometry: THREE.BufferGeometry,
+    zone: HitZone,
+    name: string,
+    ownerId: string,
+  ): { hit: THREE.SkinnedMesh; wire: THREE.Mesh } {
+    const hitMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+    const hit = new THREE.SkinnedMesh(geometry, hitMat)
+    hit.name = name
+    hit.frustumCulled = false
+    hit.castShadow = false
+    hit.receiveShadow = false
+    hit.bind(source.skeleton, source.bindMatrix)
+    hit.bindMode = source.bindMode
+    hit.userData.hitZone = zone
+    hit.userData.ownerId = ownerId
+    hit.userData.hitProxy = true
+    // Match source local transform (usually identity under the model root)
+    hit.position.copy(source.position)
+    hit.quaternion.copy(source.quaternion)
+    hit.scale.copy(source.scale)
+
+    const wireMat = new THREE.MeshBasicMaterial({
+      color: this.zoneWireColor(zone),
+      wireframe: true,
+      transparent: true,
+      opacity: zone === 'arm' ? 0.95 : 0.85,
+      depthTest: true,
+      depthWrite: false,
+    })
+    const wire = new THREE.SkinnedMesh(geometry, wireMat)
+    wire.name = `${name}_hitWire`
+    wire.bind(source.skeleton, source.bindMatrix)
+    wire.bindMode = source.bindMode
+    wire.userData.skipHitbox = true
+    wire.renderOrder = 20
+    wire.frustumCulled = false
+    wire.castShadow = false
+    wire.receiveShadow = false
+    wire.visible = DEBUG.showHitboxes
+    hit.add(wire)
+
+    const parent = source.parent
+    if (parent) parent.add(hit)
+    else source.add(hit)
+
+    return { hit, wire }
   }
 
   /**
@@ -549,12 +798,15 @@ export class GameEngine {
    * Skin always stays visible; debug only adds the outline layer.
    */
   private paintDummyMeshes(root: THREE.Group, hpRatio: number) {
-    const hitMeshes = root.userData.hitMeshes as THREE.Mesh[] | undefined
-    if (!hitMeshes) return
+    const paintMeshes =
+      (root.userData.paintMeshes as THREE.Mesh[] | undefined) ??
+      (root.userData.hitMeshes as THREE.Mesh[] | undefined)
+    if (!paintMeshes) return
     const hurt = Math.max(0, Math.min(1, hpRatio))
     const debug = DEBUG.showHitboxes
 
-    for (const mesh of hitMeshes) {
+    for (const mesh of paintMeshes) {
+      if (mesh.userData.hitProxy) continue
       const bases = mesh.userData.baseColors as THREE.Color[] | undefined
       const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
       for (let i = 0; i < list.length; i++) {
@@ -829,6 +1081,8 @@ export class GameEngine {
         root.userData.wasAlive = true
         // Hitscan + debug wireframe sit on these exact meshes
         this.registerHitMeshes(root, id)
+        // Suit_Body includes skinned arms — split faces onto arm/chest like legs
+        this.splitChestMeshesByArmWeights(root, id)
 
         if (idleClip) {
           const mixer = new THREE.AnimationMixer(model)
@@ -999,6 +1253,102 @@ export class GameEngine {
   }
 
   /**
+   * Restyle sniper_animated.glb to match man.glb's low-poly look:
+   * no PBR maps, flat shading, solid colors from the character palette.
+   * Geometry + skins + animations are left intact.
+   */
+  private styleViewmodelLowPoly(root: THREE.Object3D) {
+    // man.glb material factors (Suit / Skin / Black) — keep palette consistent
+    const SKIN = 0x7e5531 // ~ man Skin baseColor
+    const SUIT = 0x030508 // ~ man Suit (near-black)
+    const GUN = 0x1a1c20 // slightly lifted metal so facets read
+    const POLYMER = 0x2a2218 // stock / cheekrest
+    const BRASS = 0xb8923a
+    const LENS = 0x0a1820
+
+    const seen = new Set<THREE.Material>()
+    const toDispose: THREE.Material[] = []
+
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh) && !(o instanceof THREE.SkinnedMesh)) {
+        return
+      }
+      const name = o.name.toLowerCase()
+      let color = GUN
+      let metalness = 0.35
+      let roughness = 0.45
+      let transparent = false
+      let opacity = 1
+      let side: THREE.Side = THREE.FrontSide
+
+      if (name.includes('arm')) {
+        color = SKIN
+        metalness = 0.15
+        roughness = 0.55
+      } else if (name.includes('glass') || name.includes('lens')) {
+        color = LENS
+        metalness = 0
+        roughness = 0.35
+        transparent = true
+        opacity = 0.45
+        side = THREE.DoubleSide
+      } else if (name.includes('bullet')) {
+        color = BRASS
+        metalness = 0.55
+        roughness = 0.35
+      } else if (name.includes('cheek') || name.includes('clip')) {
+        color = POLYMER
+        metalness = 0.1
+        roughness = 0.65
+      } else if (
+        name.includes('trigger') ||
+        name.includes('bolt') ||
+        name.includes('silencer') ||
+        name.includes('scope') ||
+        name.includes('base')
+      ) {
+        color = GUN
+        metalness = 0.4
+        roughness = 0.42
+      } else {
+        color = SUIT
+        metalness = 0.4
+        roughness = 0.42
+      }
+
+      const prev = Array.isArray(o.material) ? o.material : [o.material]
+      for (const m of prev) {
+        if (!seen.has(m)) {
+          seen.add(m)
+          toDispose.push(m)
+        }
+      }
+
+      o.material = new THREE.MeshStandardMaterial({
+        color,
+        metalness,
+        roughness,
+        flatShading: true,
+        transparent,
+        opacity,
+        side,
+        depthWrite: opacity >= 0.99,
+      })
+    })
+
+    for (const m of toDispose) {
+      const std = m as THREE.MeshStandardMaterial
+      std.map?.dispose()
+      std.normalMap?.dispose()
+      std.roughnessMap?.dispose()
+      std.metalnessMap?.dispose()
+      std.aoMap?.dispose()
+      std.emissiveMap?.dispose()
+      m.dispose()
+    }
+  }
+
+  /**
    * Bake model to unit scale (longest axis = 1) and capture center.
    * Live target scale / offsets are applied via applyViewmodelParts().
    */
@@ -1107,6 +1457,7 @@ export class GameEngine {
       const gltf = await loader.loadAsync('/models/sniper_animated.glb')
       const model = gltf.scene
       this.prepareViewmesh(model)
+      this.styleViewmodelLowPoly(model)
 
       // Apply basis correction before measuring so center matches final pose
       const { modelRot } = this.vmConfig

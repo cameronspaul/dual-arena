@@ -46,8 +46,10 @@ export const SNIPER = {
   reserve: 30,
   /** One-tap */
   headDamage: 100,
-  /** Torso + arms */
+  /** Torso only */
   chestDamage: 50,
+  /** Arms / hands */
+  armDamage: 25,
   /** Legs / feet */
   legDamage: 25,
   /** Tuned near DJMaesen sniper_animated bolt segment (~1.6s raw). */
@@ -75,19 +77,20 @@ export const VIEWMODEL = {
   /**
    * Target longest axis after normalize (world units).
    * sniper_animated.glb includes arms + gun as one FPS viewmodel.
+   * Tuned via viewmodel editor 2026-07-17.
    */
-  scale: 0.95,
+  scale: 1.82,
   /**
    * Model-local basis correction. Sketchfab/FBX often needs a yaw flip —
    * tweak in the viewmodel editor if the muzzle points the wrong way.
    */
-  modelRot: { x: 0, y: Math.PI, z: 0 },
+  modelRot: { x: -0.03490658503988659, y: Math.PI, z: 0 },
   /** Post-center local offset (nudge in camera space after normalize). */
-  gunOffset: { x: 0.08, y: -0.22, z: -0.12 },
+  gunOffset: { x: 0.175, y: -0.16, z: -0.185 },
   /** Bottom-right hip hold. */
   hipPos: { x: 0.05, y: -0.12, z: -0.28 },
   hipRot: { x: 0.02, y: 0.04, z: 0.02 },
-  adsPos: { x: 0.0, y: -0.1, z: -0.22 },
+  adsPos: { x: -0.14, y: -0.025, z: -0.14 },
   adsRot: { x: 0.0, y: 0.0, z: 0.0 },
   /** Hide mesh when ADS blend exceeds this (scope overlay takes over). */
   hideAds: 0.92,
@@ -217,7 +220,8 @@ export const DUMMY = {
 export const DEBUG = {
   /**
    * Hitscan uses the real character meshes. When true, zone wireframes draw on
-   * top of the skin: red head / cyan chest (incl. arms) / yellow legs.
+   * top of the skin: red head / cyan chest / orange arms / yellow legs.
+   * (Arms are split from Suit_Body by skin weights when the mesh has no separate arm part.)
    */
   showHitboxes: true,
 } as const
