@@ -74,7 +74,12 @@ export class ViewFeel {
 
     const scoped = sniper.adsBlend > 0.55
     if (scoped !== this.prevAdsScoped) {
-      gameAudio.play(scoped ? 'adsIn' : 'adsOut', { volume: 0.5 })
+      // Tight pitch variance so clicks stay snappy, not whooshy
+      const rate = 0.97 + Math.random() * 0.06
+      gameAudio.play(scoped ? 'adsIn' : 'adsOut', {
+        volume: scoped ? 0.6 : 0.52,
+        rate,
+      })
       this.prevAdsScoped = scoped
     }
 

@@ -32,9 +32,15 @@ License: CC0 1.0 (public domain).
 Packs used:
 
 - Impact Sounds (footsteps, metal/wood/flesh impacts, punches)
-- Interface Sounds (glass ADS, ticks, confirmation)
+- Interface Sounds (ticks, confirmation)
 - UI Audio (clicks, hover)
 - RPG Audio (cloth, metal latch/click, belt)
+
+## ADS / scope zoom (procedural)
+
+| File | Notes |
+|------|--------|
+| `ads_in.ogg`, `ads_out.ogg`, `ads_click.ogg` | Synthetic sniper-optic ring clicks: short transient + metallic partials + soft body thud. Generated for this project (original; free to use). |
 
 ---
 

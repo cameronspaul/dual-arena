@@ -144,13 +144,15 @@ const CLIPS: Record<SfxId, ClipDef> = {
     pool: 6,
   },
   adsIn: {
+    // Sniper optic ring lock click
     src: '/sounds/ads_in.ogg',
-    volume: 0.4,
+    volume: 0.55,
     variants: ['/sounds/ads_in.ogg', '/sounds/ads_click.ogg'],
   },
   adsOut: {
+    // Scope release click
     src: '/sounds/ads_out.ogg',
-    volume: 0.35,
+    volume: 0.48,
   },
   uiClick: {
     src: '/sounds/ui_click.ogg',

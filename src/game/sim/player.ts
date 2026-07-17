@@ -115,6 +115,20 @@ function canStartSlide(p: PlayerBody, input: PlayerInput): boolean {
 }
 
 /**
+ * Pose after a slide finishes.
+ * Hold crouch → stay crouched; release → stand up automatically.
+ */
+function stateAfterSlide(
+  input: PlayerInput,
+  wishLen: boolean,
+): PlayerBody['state'] {
+  if (input.crouch) return 'crouch'
+  if (!wishLen) return 'idle'
+  if (input.sprint && !input.ads) return 'run'
+  return 'walk'
+}
+
+/**
  * Axis-separated capsule (as vertical segment + radius) vs world AABBs.
  * Simplified: treat as cylinder-ish AABB with radius expansion.
  */
@@ -228,12 +242,14 @@ export function stepPlayer(
     p.state = 'jump'
   } else if (p.state === 'slide') {
     p.slideTimer -= dt
+    // End when duration expires, or when momentum dies out.
+    // Crouch hold only decides the exit pose — not whether the slide continues.
     const done =
-      p.slideTimer <= 0 ||
-      (!input.crouch && horizSpeed(p) < MOVE.walkSpeed * 1.1)
+      p.slideTimer <= 0 || horizSpeed(p) < MOVE.walkSpeed * 0.95
     if (done) {
-      p.state = input.crouch ? 'crouch' : wishLen ? (input.sprint ? 'run' : 'walk') : 'idle'
+      p.slideTimer = 0
       p.slideCd = MOVE.slideCooldown
+      p.state = stateAfterSlide(input, wishLen)
     }
   } else if (canStartSlide(p, input)) {
     p.state = 'slide'
@@ -315,10 +331,15 @@ export function stepPlayer(
   // collide + integrate
   resolveCollisions(p, worldColliders, dt)
 
-  // height / eye lerp
+  // height / eye lerp — stand up faster when recovering from slide/crouch
   const th = targetHeight(p.state)
   const te = targetEye(p.state)
-  const k = 1 - Math.exp(-MOVE.heightLerp * dt)
+  const standing =
+    p.state === 'idle' || p.state === 'walk' || p.state === 'run' || p.state === 'jump'
+  const recoveringStand =
+    standing && (p.height < th - 0.06 || p.eyeHeight < te - 0.06)
+  const lerpRate = recoveringStand ? MOVE.heightLerp * 1.9 : MOVE.heightLerp
+  const k = 1 - Math.exp(-lerpRate * dt)
   p.height = lerp(p.height, th, k)
   p.eyeHeight = lerp(p.eyeHeight, te, k)
 }
