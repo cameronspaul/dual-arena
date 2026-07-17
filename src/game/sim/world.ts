@@ -1,6 +1,6 @@
-import { DUMMY, MOVE, WORLD } from './config'
-import { aabbFromCenter, clamp, lenXZ, normalizeXZ } from './math'
-import type { AABB, DummyMoveState, DummyTarget, Vec3 } from './types'
+import { DUMMY, MOVE, WORLD } from '../core/config'
+import { aabbFromCenter, clamp, lenXZ, normalizeXZ } from '../core/math'
+import type { AABB, DummyMoveState, DummyTarget, Vec3 } from '../core/types'
 
 export function buildWorldColliders(): AABB[] {
   return WORLD.coverBoxes.map((b) =>

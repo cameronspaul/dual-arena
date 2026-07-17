@@ -1,6 +1,6 @@
-import { MOVE, SNIPER } from './config'
-import { clamp, lerp } from './math'
-import type { PlayerBody, PlayerInput, SniperState } from './types'
+import { MOVE, SNIPER } from '../core/config'
+import { clamp, lerp } from '../core/math'
+import type { PlayerBody, PlayerInput, SniperState } from '../core/types'
 
 export function createSniper(): SniperState {
   return {

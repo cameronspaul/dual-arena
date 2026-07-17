@@ -1,6 +1,6 @@
-import { MOVE, PLAYER } from './config'
-import { clamp, facingXZ, lenXZ, lerp, wishDir } from './math'
-import type { AABB, Hitbox, HitVolumes, PlayerBody, PlayerInput, Vec3 } from './types'
+import { MOVE, PLAYER } from '../core/config'
+import { clamp, facingXZ, lenXZ, lerp, wishDir } from '../core/math'
+import type { AABB, Hitbox, HitVolumes, PlayerBody, PlayerInput, Vec3 } from '../core/types'
 
 export function volumesToHitboxes(ownerId: string, v: HitVolumes): Hitbox[] {
   const boxes: Hitbox[] = [

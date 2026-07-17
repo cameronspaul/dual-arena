@@ -1,6 +1,6 @@
-import { SNIPER } from './config'
-import { mul, rayAABB, rayCapsule, rayEllipsoid, raySphere } from './math'
-import type { AABB, Hitbox, RayHit, Vec3 } from './types'
+import { SNIPER } from '../core/config'
+import { mul, rayAABB, rayCapsule, rayEllipsoid, raySphere } from '../core/math'
+import type { AABB, Hitbox, RayHit, Vec3 } from '../core/types'
 
 export function castHitscan(
   origin: Vec3,
