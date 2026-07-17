@@ -63,16 +63,18 @@ body {
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Arena-specific tokens (HUD + lobby) */
-  --arena-void: oklch(0.12 0.02 260);
-  --arena-panel: oklch(0.16 0.025 260 / 0.78);
-  --arena-panel-border: oklch(0.75 0.04 80 / 0.18);
-  --arena-heat: oklch(0.78 0.16 55);
-  --arena-heat-dim: oklch(0.78 0.16 55 / 0.35);
-  --arena-tech: oklch(0.78 0.11 200);
-  --arena-tech-dim: oklch(0.78 0.11 200 / 0.35);
-  --arena-danger: oklch(0.65 0.22 25);
-  --arena-ok: oklch(0.72 0.16 150);
+  /* Arena-specific tokens — cartoon sticker HUD (match /public/icons) */
+  --arena-void: oklch(0.14 0.03 275);
+  --arena-panel: oklch(0.22 0.03 275 / 0.94);
+  --arena-panel-border: oklch(0.18 0.02 275);
+  --arena-heat: oklch(0.78 0.17 55);
+  --arena-heat-dim: oklch(0.78 0.17 55 / 0.45);
+  --arena-tech: oklch(0.78 0.12 200);
+  --arena-tech-dim: oklch(0.78 0.12 200 / 0.45);
+  --arena-danger: oklch(0.68 0.23 25);
+  --arena-ok: oklch(0.74 0.17 145);
+  --arena-ink: oklch(0.16 0.02 275);
+  --arena-sticker: oklch(0.98 0.01 90);
 }
 
 .dark {
@@ -127,15 +129,17 @@ body {
   --shadow-xl: 0 20px 40px -10px oklch(0 0 0 / 0.55);
   --shadow-2xl: 0 28px 56px -14px oklch(0 0 0 / 0.65);
 
-  --arena-void: oklch(0.1 0.02 260);
-  --arena-panel: oklch(0.14 0.025 260 / 0.82);
-  --arena-panel-border: oklch(0.78 0.08 55 / 0.22);
-  --arena-heat: oklch(0.8 0.16 55);
-  --arena-heat-dim: oklch(0.8 0.16 55 / 0.4);
-  --arena-tech: oklch(0.8 0.11 200);
-  --arena-tech-dim: oklch(0.8 0.11 200 / 0.4);
-  --arena-danger: oklch(0.68 0.22 25);
-  --arena-ok: oklch(0.75 0.16 150);
+  --arena-void: oklch(0.11 0.025 275);
+  --arena-panel: oklch(0.2 0.03 275 / 0.96);
+  --arena-panel-border: oklch(0.12 0.02 275);
+  --arena-heat: oklch(0.82 0.17 55);
+  --arena-heat-dim: oklch(0.82 0.17 55 / 0.5);
+  --arena-tech: oklch(0.82 0.12 200);
+  --arena-tech-dim: oklch(0.82 0.12 200 / 0.5);
+  --arena-danger: oklch(0.7 0.23 25);
+  --arena-ok: oklch(0.76 0.17 145);
+  --arena-ink: oklch(0.12 0.02 275);
+  --arena-sticker: oklch(0.98 0.01 90);
 }
 
 @theme inline {
@@ -181,6 +185,8 @@ body {
   --color-arena-tech-dim: var(--arena-tech-dim);
   --color-arena-danger: var(--arena-danger);
   --color-arena-ok: var(--arena-ok);
+  --color-arena-ink: var(--arena-ink);
+  --color-arena-sticker: var(--arena-sticker);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);

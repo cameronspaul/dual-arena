@@ -85,7 +85,7 @@ interface MapPickerProps {
   onPlayOnline?: () => void
 }
 
-/** Decorative game PNG icon from /public/icons. */
+/** Decorative game PNG icon from /public/icons (cartoon outline set). */
 function GameIcon({
   src,
   className,
@@ -99,7 +99,10 @@ function GameIcon({
       alt=""
       aria-hidden
       draggable={false}
-      className={cn('shrink-0 object-contain select-none', className)}
+      className={cn(
+        'shrink-0 object-contain select-none drop-shadow-[0_2px_0_rgba(0,0,0,0.25)]',
+        className,
+      )}
     />
   )
 }
@@ -176,10 +179,10 @@ function Chip({
       title={title}
       onClick={onClick}
       className={cn(
-        'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-all',
+        'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border-[2.5px] px-3 text-xs font-extrabold transition-all',
         active
-          ? 'border-primary bg-primary text-primary-foreground shadow-[0_0_16px_oklch(0.7_0.15_55/_0.28)]'
-          : 'border-border/70 bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-muted/60 hover:text-foreground',
+          ? 'border-foreground/90 bg-primary text-primary-foreground shadow-[2px_3px_0_oklch(0.2_0.03_260)]'
+          : 'border-border bg-muted/40 text-muted-foreground shadow-[1px_2px_0_oklch(0.2_0.03_260/_0.12)] hover:-translate-y-0.5 hover:border-primary/50 hover:bg-muted/70 hover:text-foreground',
         className,
       )}
     >
@@ -202,11 +205,31 @@ function SideSection({
   return (
     <div className={cn('space-y-3', className)}>
       <div className="flex items-center gap-2">
-        <GameIcon src={iconSrc} className="size-4" />
-        <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+        <GameIcon src={iconSrc} className="size-5" />
+        <h3 className="text-[11px] font-extrabold tracking-wide text-muted-foreground uppercase">
           {title}
         </h3>
       </div>
+      {children}
+    </div>
+  )
+}
+
+/** Shared sticker card shell for lobby panels. */
+function StickerCard({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-2xl border-[3px] border-foreground/85 bg-card p-4 shadow-[3px_4px_0_oklch(0.2_0.03_260/_0.55)] sm:p-5',
+        className,
+      )}
+    >
       {children}
     </div>
   )
@@ -285,30 +308,30 @@ export function MapPicker({
       {/* ── Top bar ── */}
       <header className="relative z-20 flex items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/35 bg-primary/15 shadow-[0_0_20px_oklch(0.7_0.15_55/_0.25)]">
-            <GameIcon src={icons.aim} className="size-6" />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border-[3px] border-foreground/85 bg-primary shadow-[2px_3px_0_oklch(0.2_0.03_260/_0.55)]">
+            <GameIcon src={icons.aim} className="size-7" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-base font-bold tracking-tight sm:text-lg">
+            <div className="truncate text-base font-black tracking-tight sm:text-lg">
               Dual Arena
             </div>
-            <div className="hidden text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase sm:block">
+            <div className="hidden text-[10px] font-extrabold tracking-wide text-muted-foreground uppercase sm:block">
               Sniper 1v1
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="hidden items-center gap-1.5 rounded-full border border-arena-tech/30 bg-arena-tech/10 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-arena-tech uppercase sm:inline-flex">
+          <span className="hidden items-center gap-1.5 rounded-full border-[2.5px] border-foreground/80 bg-arena-tech/20 px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-tech uppercase shadow-[1px_2px_0_oklch(0.2_0.03_260/_0.35)] sm:inline-flex">
             <GameIcon src={icons.bolt} className="size-3.5" />
             Practice mode
           </span>
           <div
-            className="hidden items-center gap-1.5 rounded-xl border border-border/80 bg-card/70 px-2.5 py-1.5 shadow-sm backdrop-blur-sm sm:inline-flex"
+            className="hidden items-center gap-1.5 rounded-xl border-[2.5px] border-foreground/80 bg-card px-2.5 py-1.5 shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.4)] sm:inline-flex"
             title="Soft currency (coming with online stakes)"
           >
             <GameIcon src={icons.coins} className="size-4" />
-            <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+            <span className="text-xs font-extrabold tabular-nums text-foreground">
               {balance}
             </span>
           </div>
@@ -318,7 +341,7 @@ export function MapPicker({
               gameAudio.uiClick()
               toggleTheme()
             }}
-            className="inline-flex size-10 items-center justify-center rounded-xl border border-border/80 bg-card/70 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-muted"
+            className="inline-flex size-10 items-center justify-center rounded-xl border-[2.5px] border-foreground/80 bg-card text-foreground shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.4)] transition-all hover:-translate-y-0.5 hover:bg-muted"
             aria-label="Toggle theme"
           >
             {theme === 'light' ? (
@@ -333,11 +356,11 @@ export function MapPicker({
               gameAudio.uiClick()
               setSettingsOpen(true)
             }}
-            className="inline-flex size-10 items-center justify-center rounded-xl border border-border/80 bg-card/70 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-muted sm:w-auto sm:gap-2 sm:px-3"
+            className="inline-flex size-10 items-center justify-center rounded-xl border-[2.5px] border-foreground/80 bg-card text-foreground shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.4)] transition-all hover:-translate-y-0.5 hover:bg-muted sm:w-auto sm:gap-2 sm:px-3"
             aria-label="Settings"
           >
             <GameIcon src={icons.settings} className="size-5" />
-            <span className="hidden text-sm font-medium sm:inline">
+            <span className="hidden text-sm font-extrabold sm:inline">
               Settings
             </span>
           </button>
@@ -353,17 +376,17 @@ export function MapPicker({
           className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between"
         >
           <div>
-            <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tracking-[0.2em] text-primary uppercase">
-              <GameIcon src={icons.aim} className="size-3.5" />
+            <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-extrabold tracking-wide text-primary uppercase">
+              <GameIcon src={icons.aim} className="size-4" />
               One shot
               <span className="text-primary/40">·</span>
-              <GameIcon src={icons.coins} className="size-3.5" />
+              <GameIcon src={icons.coins} className="size-4" />
               One stake
               <span className="text-primary/40">·</span>
-              <GameIcon src={icons.trophy} className="size-3.5" />
+              <GameIcon src={icons.trophy} className="size-4" />
               Prove it
             </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
+            <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
               Pick a map. Deploy. Train your aim.
             </h1>
             <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
@@ -415,10 +438,10 @@ export function MapPicker({
                       onSelect(map.id)
                     }}
                     className={cn(
-                      'group relative aspect-[16/10] overflow-hidden rounded-xl border text-left transition-all',
+                      'group relative aspect-[16/10] overflow-hidden rounded-2xl border-[3px] text-left transition-all',
                       active
-                        ? 'border-primary ring-2 ring-primary/40 shadow-[0_0_28px_oklch(0.7_0.15_55/_0.22)]'
-                        : 'border-border/70 hover:border-primary/40 hover:shadow-md',
+                        ? 'border-foreground/90 shadow-[3px_4px_0_oklch(0.2_0.03_260/_0.55)] ring-2 ring-primary/60'
+                        : 'border-foreground/50 shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.2)] hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-[3px_3px_0_oklch(0.2_0.03_260/_0.35)]',
                     )}
                   >
                     <MapThumb
@@ -430,7 +453,7 @@ export function MapPicker({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
 
                     {active && (
-                      <div className="absolute top-2 right-2 flex size-7 items-center justify-center rounded-full bg-primary/95 shadow-md ring-2 ring-primary/40">
+                      <div className="absolute top-2 right-2 flex size-8 items-center justify-center rounded-full border-[2.5px] border-foreground/90 bg-primary shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.55)]">
                         <GameIcon src={icons.check} className="size-4" />
                       </div>
                     )}
@@ -461,7 +484,7 @@ export function MapPicker({
             </div>
 
             {/* Selected map detail + sky + CTA */}
-            <div className="mt-4 rounded-2xl border border-border/80 bg-card/80 p-4 shadow-lg backdrop-blur-md sm:p-5">
+            <StickerCard className="mt-4">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={selected.id}
@@ -521,7 +544,7 @@ export function MapPicker({
               <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   size="lg"
-                  className="h-12 w-full gap-2 rounded-xl text-base font-bold shadow-[0_0_28px_oklch(0.7_0.15_55/_0.35)] sm:h-14 sm:flex-1 sm:text-lg"
+                  className="h-12 w-full gap-2 rounded-xl border-[3px] border-foreground/90 text-base font-black shadow-[3px_4px_0_oklch(0.2_0.03_260/_0.55)] sm:h-14 sm:flex-1 sm:text-lg"
                   onClick={handlePlay}
                 >
                   <GameIcon src={icons.rocket} className="size-6" />
@@ -534,7 +557,7 @@ export function MapPicker({
                   <span className="text-foreground/70">Esc</span> opens menu.
                 </div>
               </div>
-            </div>
+            </StickerCard>
           </motion.section>
 
           {/* RIGHT: Identity / loadout sidebar */}
@@ -544,7 +567,7 @@ export function MapPicker({
             transition={{ delay: 0.1, duration: 0.35 }}
             className="flex flex-col gap-4"
           >
-            <div className="flex flex-1 flex-col gap-5 rounded-2xl border border-border/80 bg-card/85 p-4 shadow-lg backdrop-blur-md sm:p-5">
+            <StickerCard className="flex flex-1 flex-col gap-5">
               {/* Username */}
               <SideSection iconSrc={icons.cap} title="Callsign">
                 <div className="flex gap-2">
@@ -683,16 +706,16 @@ export function MapPicker({
               {/* Mobile deploy (mirrors primary CTA) */}
               <Button
                 size="lg"
-                className="h-12 w-full gap-2 rounded-xl font-bold shadow-[0_0_22px_oklch(0.7_0.15_55/_0.3)] lg:hidden"
+                className="h-12 w-full gap-2 rounded-xl border-[3px] border-foreground/90 font-black shadow-[3px_4px_0_oklch(0.2_0.03_260/_0.55)] lg:hidden"
                 onClick={handlePlay}
               >
                 <GameIcon src={icons.rocket} className="size-5" />
                 Deploy
               </Button>
-            </div>
+            </StickerCard>
 
             {/* Online 1v1 — invite join (server-authoritative) */}
-            <div className="rounded-2xl border border-primary/25 bg-card/60 p-4 backdrop-blur-md">
+            <StickerCard className="border-primary/50">
               <button
                 type="button"
                 onClick={() => {
@@ -821,7 +844,7 @@ export function MapPicker({
 
                       <Button
                         type="button"
-                        className="w-full gap-2"
+                        className="w-full gap-2 border-[2.5px] border-foreground/90 font-extrabold shadow-[2px_3px_0_oklch(0.2_0.03_260/_0.5)]"
                         disabled={!onPlayOnline || !serverUrl.trim()}
                         onClick={handlePlayOnline}
                       >
@@ -832,11 +855,11 @@ export function MapPicker({
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
+            </StickerCard>
 
             {/* Community compact */}
-            <div className="rounded-2xl border border-border/70 bg-card/50 p-4 backdrop-blur-md">
-              <p className="flex items-center justify-center gap-1.5 text-center text-xs font-medium text-muted-foreground">
+            <StickerCard>
+              <p className="flex items-center justify-center gap-1.5 text-center text-xs font-extrabold text-muted-foreground">
                 <GameIcon src={icons.friend} className="size-4" />
                 Join the community
               </p>
@@ -850,7 +873,7 @@ export function MapPicker({
                     aria-label={link.label}
                     onClick={() => gameAudio.uiClick()}
                     className={cn(
-                      'inline-flex size-9 items-center justify-center rounded-full shadow-md transition-transform hover:scale-110',
+                      'inline-flex size-9 items-center justify-center rounded-full border-[2.5px] border-foreground/80 shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.45)] transition-transform hover:scale-110',
                       link.className,
                     )}
                   >
@@ -858,7 +881,7 @@ export function MapPicker({
                   </a>
                 ))}
               </div>
-            </div>
+            </StickerCard>
           </motion.aside>
         </div>
 

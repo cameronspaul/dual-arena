@@ -1,7 +1,7 @@
 /**
  * Public PNG icon set under /public/icons.
- * Prefer these for game flair (HUD vitals, lobby brand, economy);
- * keep lucide for dense chrome and form controls.
+ * Cartoon sticker style (thick black outline, flat color).
+ * Prefer these for HUD, lobby brand, and economy chrome.
  */
 export const icons = {
   aim: '/icons/Aim.png',
@@ -43,6 +43,20 @@ export const icons = {
   verified: '/icons/Verified.png',
   gift: '/icons/Gift.png',
   shop: '/icons/Shop.png',
+  shocked: '/icons/Shocked.png',
+  boom: '/icons/boom.png',
+  bomb: '/icons/Bomb.png',
+  punch: '/icons/Punch.png',
+  sword: '/icons/Sword.png',
+  reberth: '/icons/Reberth.png',
+  jetpack: '/icons/Jetpack.png',
+  strength: '/icons/Strength.png',
+  charts: '/icons/Charts.png',
+  tv: '/icons/Tv.png',
+  house: '/icons/House.png',
+  leftArrow: '/icons/left_arrow.png',
+  rightArrow: '/icons/Right_arrow.png',
+  x: '/icons/X.png',
 } as const
 
 export type IconId = keyof typeof icons

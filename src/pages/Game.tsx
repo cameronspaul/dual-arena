@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Map as MapIcon } from 'lucide-react'
 
 import { GameCanvas } from '@/components/game/GameCanvas'
 import { GameHud, HITMARKER_DURATION } from '@/components/game/GameHud'
@@ -27,6 +26,7 @@ import type { HudSnapshot } from '@/game/types'
 import { gameAudio } from '@/game/audio'
 import type { OnlineSessionOpts } from '@/game/engine'
 import { useAppStore } from '@/stores/useAppStore'
+import { icons } from '@/lib/icons'
 
 function hudKey(s: HudSnapshot): string {
   return [
@@ -80,10 +80,11 @@ function hudKey(s: HudSnapshot): string {
   ].join('|')
 }
 
+/** Cartoon sticker chrome — matches GameHud / public/icons outline language. */
 const devBtn =
-  'pointer-events-auto rounded-md border border-arena-panel-border bg-arena-panel px-3 py-1.5 text-xs font-medium tracking-wide text-white/75 shadow-md backdrop-blur-md transition-all hover:border-arena-heat/40 hover:bg-white/10 hover:text-white'
+  'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-1.5 text-xs font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
 const devBtnOn =
-  'pointer-events-auto rounded-md border border-arena-heat/50 bg-arena-heat/20 px-3 py-1.5 text-xs font-medium tracking-wide text-arena-heat shadow-[0_0_16px_var(--arena-heat-dim)] backdrop-blur-md transition-all hover:bg-arena-heat/30'
+  'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 py-1.5 text-xs font-extrabold tracking-wide text-arena-ink shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
 
 function readInitialMap(params: URLSearchParams): MapId {
   const q = params.get('map')
@@ -316,16 +317,30 @@ export default function Game() {
         />
       )}
 
-      {/* Map + sky badge */}
+      {/* Map + sky badge — sticker chip */}
       {!vmEdit && !levelEdit && (
-        <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-md border border-arena-panel-border bg-arena-panel px-3.5 py-1.5 text-[11px] font-medium tracking-wide text-white/80 shadow-md backdrop-blur-md">
+        <div className="pointer-events-none absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-1.5 text-[11px] font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)]">
+          <img
+            src={icons.map}
+            alt=""
+            aria-hidden
+            className="size-4 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
+          />
           <span className="text-arena-heat">{mapName}</span>
-          <span className="mx-1.5 text-white/25">·</span>
-          <span className="text-arena-tech/90">{SKYBOX_LABELS[sessionSkybox]}</span>
+          <span className="mx-0.5 text-white/30">·</span>
+          <span className="text-arena-tech">{SKYBOX_LABELS[sessionSkybox]}</span>
           {isOnline && (
             <>
-              <span className="mx-1.5 text-white/25">·</span>
-              <span className="text-arena-ok">Online 1v1</span>
+              <span className="mx-0.5 text-white/30">·</span>
+              <span className="inline-flex items-center gap-1 text-arena-ok">
+                <img
+                  src={icons.globe}
+                  alt=""
+                  aria-hidden
+                  className="size-3.5 object-contain"
+                />
+                Online
+              </span>
             </>
           )}
         </div>
@@ -363,7 +378,13 @@ export default function Game() {
             title="Return to map select"
           >
             <span className="inline-flex items-center gap-1.5">
-              <MapIcon className="h-3.5 w-3.5" />
+              <img
+                src={icons.map}
+                alt=""
+                aria-hidden
+                draggable={false}
+                className="size-4 object-contain"
+              />
               Change map
             </span>
           </button>
