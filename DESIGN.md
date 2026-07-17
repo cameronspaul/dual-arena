@@ -154,8 +154,8 @@ Later duel maps: Long Alley, Boxes, Pit (mid cover + long sightlines).
 
 ### Tick model
 
-- Server tick: **30 Hz**.
-- Client send: inputs every frame or 30–60 Hz with sequence numbers.
+- Server tick: **60 Hz**.
+- Client send: inputs every frame or 60 Hz with sequence numbers.
 - Client: predict local player; interpolate remote player.
 
 ### Messages (sketch)

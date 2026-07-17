@@ -1,5 +1,10 @@
 /**
  * Remote opponent man.glb — interpolate between server snapshots.
+ * Sample times come from server tick indices (not receive time) so packet
+ * clumping doesn't collapse the interpolation window.
+ *
+ * Locomotion mirrors PlayerVisuals / DummySystem: directional walk/run,
+ * scrubbed slide (Roll), and one-shot hit/death reactions.
  */
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
@@ -10,16 +15,30 @@ import {
   type PlayerSnapshot,
 } from '@duel/shared'
 import {
+  alignDummyDeathToShot,
   applyDummyCrouchScale,
   fadeDummyLoco,
   getDummyActions,
+  playDummyDeath,
+  playDummyHit,
+  playDummyIdle,
   playSlideRoll,
   scrubSlideRoll,
 } from '../character/dummyVisuals'
-import { findClip } from '../character/locomotion'
+import {
+  findClip,
+  pickDirectionalRun,
+  pickWalkAction,
+  resolveLocoDir,
+} from '../character/locomotion'
 import { MOVE } from '../core/config'
+import {
+  sampleMeshFloorY,
+  type MeshWorld,
+} from '../maps/meshCollision'
 
 type SnapshotSample = {
+  /** Server timeline seconds (tick / tickRate). */
   t: number
   x: number
   y: number
@@ -32,7 +51,20 @@ type SnapshotSample = {
   alive: boolean
 }
 
-const INTERP_DELAY = 0.1 // ~3 ticks at 30 Hz
+type RemoteEntry = {
+  root: THREE.Group
+  mixer: THREE.AnimationMixer | null
+  samples: SnapshotSample[]
+  /** Last known plant pose (held through death). */
+  lastX: number
+  lastY: number
+  lastZ: number
+  lastYaw: number
+  wasAlive: boolean
+}
+
+/** Render remote ~3 ticks behind latest sample. */
+const INTERP_DELAY_TICKS = 3
 
 export class RemotePlayerSystem {
   private scene: THREE.Scene | null = null
@@ -41,14 +73,16 @@ export class RemotePlayerSystem {
   private footY = 0
   private clips: THREE.AnimationClip[] = []
   private loading: Promise<void> | null = null
-  private readonly remotes = new Map<
-    string,
-    {
-      root: THREE.Group
-      mixer: THREE.AnimationMixer | null
-      samples: SnapshotSample[]
-    }
-  >()
+  private tickRate = 60
+  private meshWorld: MeshWorld | null = null
+  /** Visual lift so soles clear mesh floors / animation sink. */
+  private readonly footLift = 0.03
+  private readonly remotes = new Map<string, RemoteEntry>()
+
+  /** Client map collision — used to plant feet (server is flat y=0 only). */
+  setMeshWorld(meshWorld: MeshWorld | null) {
+    this.meshWorld = meshWorld
+  }
 
   async ensureLoaded(scene: THREE.Scene) {
     this.scene = scene
@@ -72,15 +106,26 @@ export class RemotePlayerSystem {
   }
 
   /** Push a server snapshot sample for a remote player. */
-  pushSnapshot(id: string, snap: PlayerSnapshot, now = performance.now() / 1000) {
+  pushSnapshot(
+    id: string,
+    snap: PlayerSnapshot,
+    tick: number,
+    tickRate = 60,
+  ) {
     if (!this.scene || !this.template) return
+    this.tickRate = tickRate
     let entry = this.remotes.get(id)
     if (!entry) {
       entry = this.spawn(id)
       this.remotes.set(id, entry)
     }
+    const t = tick / tickRate
+    // Ignore out-of-order / duplicate ticks
+    const last = entry.samples[entry.samples.length - 1]
+    if (last && t <= last.t) return
+
     entry.samples.push({
-      t: now,
+      t,
       x: snap.x,
       y: snap.y,
       z: snap.z,
@@ -92,10 +137,37 @@ export class RemotePlayerSystem {
       alive: snap.alive,
     })
     // Keep ~0.5 s of history
-    const cutoff = now - 0.5
+    const cutoff = t - 0.5
     while (entry.samples.length > 2 && entry.samples[0].t < cutoff) {
       entry.samples.shift()
     }
+  }
+
+  /** Play hit-react on a remote (non-lethal). */
+  onHit(id: string) {
+    const entry = this.remotes.get(id)
+    if (!entry) return
+    if ((entry.root.userData.animState as string) === 'death') return
+    playDummyHit(entry.root)
+  }
+
+  /**
+   * Play death reaction. Optional world-space shot direction aligns the fall
+   * (same as DummySystem).
+   */
+  onDeath(
+    id: string,
+    shotDir?: { x: number; y: number; z: number },
+  ) {
+    const entry = this.remotes.get(id)
+    if (!entry) return
+    if (shotDir) {
+      alignDummyDeathToShot(entry.root, shotDir, {
+        alignYaw: DUMMY.deathAlignToShot,
+        knockback: DUMMY.deathKnockback,
+      })
+    }
+    playDummyDeath(entry.root)
   }
 
   remove(id: string) {
@@ -109,15 +181,18 @@ export class RemotePlayerSystem {
     for (const id of [...this.remotes.keys()]) this.remove(id)
   }
 
-  private spawn(_id: string) {
+  private spawn(_id: string): RemoteEntry {
     const root = new THREE.Group()
     const model = cloneSkinned(this.template!)
     model.scale.setScalar(this.scale)
     model.position.y = -this.footY * this.scale
     root.userData.baseScale = this.scale
+    root.userData.footY = this.footY
     root.userData.model = model
     root.userData.isMan = true
     root.userData.locoState = 'idle'
+    root.userData.animState = 'idle'
+    root.userData.slideProgress = 0
 
     model.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return
@@ -133,12 +208,17 @@ export class RemotePlayerSystem {
     let mixer: THREE.AnimationMixer | null = null
     const idleClip =
       findClip(this.clips, 'Idle_Neutral', 'Idle') ?? this.clips[0]
+    const hitClip = findClip(this.clips, 'HitRecieve')
+    const hitClipAlt = findClip(this.clips, 'HitRecieve_2')
+    const deathClip = findClip(this.clips, 'Death')
+
     if (idleClip) {
       mixer = new THREE.AnimationMixer(model)
       const mkLoop = (clip: THREE.AnimationClip | undefined) => {
         if (!clip) return null
         const a = mixer!.clipAction(clip)
         a.setLoop(THREE.LoopRepeat, Infinity)
+        a.clampWhenFinished = false
         return a
       }
       const mkOnce = (clip: THREE.AnimationClip | undefined) => {
@@ -150,6 +230,12 @@ export class RemotePlayerSystem {
       }
       const idle = mkLoop(idleClip)!
       idle.play()
+      const hit = mkOnce(hitClip)
+      const hitAlt =
+        hitClipAlt != null && hitClipAlt !== hitClip
+          ? mkOnce(hitClipAlt)
+          : null
+      const death = mkOnce(deathClip)
       root.userData.actions = {
         idle,
         walk: mkLoop(findClip(this.clips, 'Walk') ?? undefined),
@@ -158,19 +244,38 @@ export class RemotePlayerSystem {
         runLeft: mkLoop(findClip(this.clips, 'Run_Left') ?? undefined),
         runRight: mkLoop(findClip(this.clips, 'Run_Right') ?? undefined),
         slide: mkOnce(findClip(this.clips, 'Roll') ?? undefined),
-        hit: null,
-        hitAlt: null,
-        death: null,
+        hit,
+        hitAlt,
+        death,
       }
+
+      // After hit one-shot, resume locomotion from current state.
+      mixer.addEventListener('finished', (e) => {
+        const action = e.action as THREE.AnimationAction
+        const anim = root.userData.animState as string
+        if (anim === 'hit' && (action === hit || action === hitAlt)) {
+          root.userData.locoState = null
+          root.userData.animState = 'idle'
+        }
+      })
     }
 
     root.visible = false
     this.scene!.add(root)
-    return { root, mixer, samples: [] as SnapshotSample[] }
+    return {
+      root,
+      mixer,
+      samples: [],
+      lastX: 0,
+      lastY: 0,
+      lastZ: 0,
+      lastYaw: 0,
+      wasAlive: true,
+    }
   }
 
-  update(dt: number, now = performance.now() / 1000) {
-    const renderTime = now - INTERP_DELAY
+  update(dt: number) {
+    const delay = INTERP_DELAY_TICKS / this.tickRate
     for (const [, entry] of this.remotes) {
       const { root, mixer, samples } = entry
       if (samples.length === 0) {
@@ -178,18 +283,34 @@ export class RemotePlayerSystem {
         continue
       }
 
+      const latestT = samples[samples.length - 1].t
+      const renderTime = latestT - delay
+
       let from = samples[0]
       let to = samples[samples.length - 1]
+      let found = false
       for (let i = 0; i < samples.length - 1; i++) {
         if (samples[i].t <= renderTime && samples[i + 1].t >= renderTime) {
           from = samples[i]
           to = samples[i + 1]
+          found = true
           break
         }
       }
 
+      // Before first sample or between gaps: hold / extrapolate lightly
+      if (!found) {
+        if (renderTime <= samples[0].t) {
+          from = to = samples[0]
+        } else {
+          // Past last sample — hold latest (no extrapolate jitter)
+          from = to = samples[samples.length - 1]
+        }
+      }
+
       const span = Math.max(1e-4, to.t - from.t)
-      const u = Math.min(1, Math.max(0, (renderTime - from.t) / span))
+      const u =
+        from === to ? 1 : Math.min(1, Math.max(0, (renderTime - from.t) / span))
       const x = from.x + (to.x - from.x) * u
       const y = from.y + (to.y - from.y) * u
       const z = from.z + (to.z - from.z) * u
@@ -201,13 +322,53 @@ export class RemotePlayerSystem {
       const alive = u < 0.5 ? from.alive : to.alive
       const state = u < 0.5 ? from.state : to.state
 
-      root.visible = alive
-      if (!alive) continue
+      const anim = (root.userData.animState as string) || 'idle'
+      const dying = anim === 'death'
 
-      root.position.set(x, y, z)
-      root.rotation.y = yaw + Math.PI
+      // Respawn: reset loco after death / hide
+      if (alive && !entry.wasAlive) {
+        playDummyIdle(root)
+        root.userData.locoState = null
+        root.userData.slideProgress = 0
+      }
+      entry.wasAlive = alive
 
-      this.syncLoco(root, state, to.vx, to.vz, yaw)
+      // Stay visible during death clip; hide when fully dead without reaction
+      root.visible = alive || dying
+      if (!alive && !dying) {
+        mixer?.update(dt)
+        continue
+      }
+
+      // Server stores client-validated Y. Only nudge to local mesh when a few
+      // cm off — never snap onto a different floor/roof under their XZ.
+      let plantY = y
+      const meshY = sampleMeshFloorY(this.meshWorld, x, z, y + 1.5, 3)
+      if (meshY != null && state !== 'jump' && alive) {
+        const gap = y - meshY
+        if (gap > -0.15 && gap < 0.35) plantY = meshY
+      }
+
+      if (alive) {
+        entry.lastX = x
+        entry.lastY = plantY
+        entry.lastZ = z
+        entry.lastYaw = yaw
+        root.position.set(x, plantY + this.footLift, z)
+        // Death may have re-yawed the body; only overwrite while alive
+        if (anim !== 'death') {
+          root.rotation.y = yaw + Math.PI
+        }
+        this.syncLoco(root, state, to.vx, to.vz, yaw, dt)
+      } else {
+        // Hold death pose at last plant; mixer advances Death clip
+        root.position.set(
+          entry.lastX,
+          entry.lastY + this.footLift,
+          entry.lastZ,
+        )
+      }
+
       mixer?.update(dt)
     }
   }
@@ -218,9 +379,14 @@ export class RemotePlayerSystem {
     vx: number,
     vz: number,
     yaw: number,
+    dt: number,
   ) {
     const actions = getDummyActions(root)
     if (!actions?.idle) return
+
+    const anim = (root.userData.animState as string) || 'idle'
+    // Don't interrupt hit/death one-shots with locomotion
+    if (anim === 'hit' || anim === 'death') return
 
     let want: string = state
     if (want === 'jump') {
@@ -230,23 +396,66 @@ export class RemotePlayerSystem {
       else want = 'idle'
     }
 
-    if (root.userData.locoState !== want) {
-      root.userData.locoState = want
-      if (want === 'slide' && actions.slide) {
-        playSlideRoll(actions.slide, actions)
+    // Direction from velocity relative to facing (no input keys on remotes)
+    const dir = resolveLocoDir(
+      0,
+      0,
+      vx,
+      vz,
+      yaw,
+      want === 'idle' || want === 'slide',
+    )
+    const locoKey =
+      want === 'idle' || want === 'slide' ? want : `${want}_${dir}`
+
+    if (root.userData.locoState !== locoKey) {
+      root.userData.locoState = locoKey
+      root.userData.animState = want
+
+      actions.hit?.stop()
+      actions.hitAlt?.stop()
+      actions.death?.stop()
+
+      if (want === 'slide') {
+        root.userData.slideProgress = 0
+        if (actions.slide) {
+          playSlideRoll(actions.slide, actions)
+        } else {
+          fadeDummyLoco(
+            actions,
+            pickDirectionalRun(actions, dir) ?? actions.walk ?? actions.idle,
+          )
+        }
       } else if (want === 'run') {
-        fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+        const run =
+          pickDirectionalRun(actions, dir) ?? actions.walk ?? actions.idle
+        fadeDummyLoco(actions, run)
+        if (run && run !== actions.idle) run.setEffectiveTimeScale(1)
       } else if (want === 'walk' || want === 'crouch') {
-        fadeDummyLoco(actions, actions.walk ?? actions.idle)
+        const { action, timeScale } = pickWalkAction(
+          actions,
+          dir,
+          want === 'crouch' ? 0.55 : 1,
+        )
+        fadeDummyLoco(actions, action)
+        if (action && action !== actions.idle) {
+          action.setEffectiveTimeScale(timeScale)
+        }
       } else {
         fadeDummyLoco(actions, actions.idle)
       }
+
       applyDummyCrouchScale(root, want === 'crouch')
     }
 
-    void yaw
+    // Map full Roll clip across slide duration (was stuck at mid-frame)
     if (want === 'slide' && actions.slide) {
-      scrubSlideRoll(actions.slide, 0.5)
+      const progress = Math.min(
+        1,
+        (root.userData.slideProgress as number) + dt / MOVE.slideDuration,
+      )
+      root.userData.slideProgress = progress
+      scrubSlideRoll(actions.slide, progress)
     }
   }
 

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Map as MapIcon } from 'lucide-react'
 
 import { GameCanvas } from '@/components/game/GameCanvas'
-import { GameHud } from '@/components/game/GameHud'
+import { GameHud, HITMARKER_DURATION } from '@/components/game/GameHud'
 import { LevelEditor } from '@/components/game/LevelEditor'
 import { MapPicker } from '@/components/game/MapPicker'
 import { ViewmodelEditor } from '@/components/game/ViewmodelEditor'
@@ -45,7 +45,7 @@ function hudKey(s: HudSnapshot): string {
     s.kills,
     // Serial id so consecutive same-zone hits still re-render the hitmarker
     s.lastHitId,
-    s.lastHitAge < 0.605 ? 1 : 0,
+    s.lastHitAge < HITMARKER_DURATION ? 1 : 0,
     s.hp,
     s.alive ? 1 : 0,
     s.spectating ? 1 : 0,

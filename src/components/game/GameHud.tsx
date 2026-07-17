@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
@@ -27,7 +27,8 @@ function spreadToGap(spreadRad: number): number {
 function hitmarkerColor(hit: HitEvent): string {
   if (hit.killed) return '#ff3b3b'
   if (hit.zone === 'head') return '#ffd45a'
-  return '#e8f7ff'
+  // Classic clean white — matches CoD-style X hitmarker
+  return '#f4f7fa'
 }
 
 function damageLabelColor(hit: HitEvent): string {
@@ -180,7 +181,57 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
   )
 }
 
-/** Classic FPS X hitmarker (four diagonal ticks). */
+/**
+ * FPS X hitmarker — artwork from public/icons/hitmarker.svg
+ * (four corner diamonds). Each corner shoots in toward center.
+ * Pivot is 0×0 at screen center (shared with crosshair).
+ */
+/** Visible lifetime of a hitmarker (must match showHit age gate + hudKey). */
+export const HITMARKER_DURATION = 0.55
+
+/** Native art size of hitmarker.svg */
+const HITMARKER_SIZE = 25
+
+/**
+ * Corner paths from hitmarker.svg (coords before the art offset transform).
+ * Order: top-left, bottom-left, top-right, bottom-right.
+ * Shoot-in directions point outward along each corner’s diagonal.
+ */
+const HITMARKER_CORNERS: readonly {
+  d: string
+  /** Unit direction away from center for shoot-in start */
+  ox: number
+  oy: number
+}[] = [
+  {
+    // top-left
+    d: 'M23.22,28.983C23.356,29.101 23.504,29.206 23.641,29.324C26.237,31.572 23.57,34.241 21.322,31.642C20.503,30.695 19.678,28.574 19.691,28.517C19.722,28.377 19.972,27.263 21.379,27.892C21.535,27.962 21.515,27.973 23.22,28.983Z',
+    ox: -1,
+    oy: -1,
+  },
+  {
+    // bottom-left
+    d: 'M20.983,48.781C21.66,48 21.496,47.782 22.483,47.449C24.568,46.745 25.3,48.753 24.144,50.217C23.344,51.23 21.624,51.999 21.379,52.108C19.972,52.737 19.723,51.623 19.692,51.483C19.644,51.272 20.869,48.992 20.983,48.781Z',
+    ox: -1,
+    oy: 1,
+  },
+  {
+    // top-right
+    d: 'M43.016,31.219C42.34,32 42.505,32.219 41.517,32.552C39.216,33.326 37.578,30.266 42.43,28.096C45.247,26.836 44.178,29.224 44.109,29.378C44.039,29.535 44.028,29.515 43.016,31.219Z',
+    ox: 1,
+    oy: -1,
+  },
+  {
+    // bottom-right
+    d: 'M40.781,51.017C39.995,50.334 39.778,50.494 39.449,49.516C38.749,47.434 40.756,46.702 42.219,47.854C43.228,48.649 43.999,50.377 44.109,50.621C44.736,52.027 43.623,52.276 43.483,52.308C43.246,52.361 41.68,51.518 41.529,51.437C41.278,51.302 41.033,51.152 40.781,51.017Z',
+    ox: 1,
+    oy: 1,
+  },
+]
+
+/** Art red from hitmarker.svg — body/head still use hitmarkerColor() */
+const HITMARKER_ART_RED = 'rgb(248,56,57)'
+
 function HitMarkerX({
   color,
   kill,
@@ -190,30 +241,59 @@ function HitMarkerX({
   kill: boolean
   head: boolean
 }) {
-  const len = kill ? 14 : head ? 12 : 10
-  const thick = kill ? 3 : 2.5
-  const gap = kill ? 5 : 4
-  const armStyle = (rot: number): CSSProperties => ({
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    width: thick,
-    height: len,
-    marginLeft: -thick / 2,
-    marginTop: -len / 2,
-    background: color,
-    borderRadius: 1,
-    boxShadow: `0 0 ${kill ? 10 : 6}px ${color}`,
-    transform: `rotate(${rot}deg) translateY(-${gap + len / 2}px)`,
-    transformOrigin: 'center center',
-  })
+  // Display size (art is 25×25). Slightly larger on head/kill for readability only.
+  const size = kill ? 28 : head ? 26 : 24
+  // How far each corner starts outside its rest pose (px in SVG space)
+  const shootPx = 10
+  const shootDur = 0.05
+  const shootEase = [0.2, 0.85, 0.25, 1] as const
+  // Prefer art red on kill; otherwise HUD color (white body / gold head)
+  const fill = kill ? HITMARKER_ART_RED : color
 
   return (
-    <div className="relative h-12 w-12">
-      <div style={armStyle(45)} />
-      <div style={armStyle(-45)} />
-      <div style={armStyle(135)} />
-      <div style={armStyle(-135)} />
+    // Center the 25×25 art on the shared reticle pivot
+    <div
+      className="absolute top-0 left-0"
+      style={{
+        width: size,
+        height: size,
+        marginLeft: -size / 2,
+        marginTop: -size / 2,
+      }}
+      aria-hidden
+    >
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${HITMARKER_SIZE} ${HITMARKER_SIZE}`}
+        className="block overflow-visible"
+        style={{
+          fillRule: 'evenodd',
+          clipRule: 'evenodd',
+          strokeLinejoin: 'round',
+          strokeMiterlimit: 2,
+        }}
+      >
+        <g transform="translate(-19.690239,-27.701106)">
+          {HITMARKER_CORNERS.map((c, i) => (
+            <motion.path
+              key={i}
+              d={c.d}
+              fill={fill}
+              initial={{
+                x: c.ox * shootPx,
+                y: c.oy * shootPx,
+              }}
+              animate={{ x: 0, y: 0 }}
+              transition={{
+                duration: shootDur,
+                ease: shootEase,
+                delay: i * 0.006,
+              }}
+            />
+          ))}
+        </g>
+      </svg>
     </div>
   )
 }
@@ -253,7 +333,7 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
 
   const phaseHot =
     hud.phase === 'reloading' || hud.phase === 'bolt' || hud.phase === 'firing'
-  const showHit = Boolean(hud.lastHit && hud.lastHitAge < 0.605)
+  const showHit = Boolean(hud.lastHit && hud.lastHitAge < HITMARKER_DURATION)
   const fullyScoped = hud.adsBlend > 0.55
   const gap = spreadToGap(hud.aimSpread)
   const arm = Math.min(18, 8 + gap * 0.05)
@@ -426,110 +506,117 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
         </div>
       </div>
 
-      {/* Hipfire crosshair */}
-      {!fullyScoped && !hud.spectating && (
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
-          style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
-        >
+      {/*
+        Shared reticle origin — exact screen center (0×0 pivot).
+        Hipfire crosshair + hitmarker both hang off this point so they
+        cannot drift relative to each other.
+      */}
+      <div className="pointer-events-none absolute top-1/2 left-1/2 z-20 h-0 w-0">
+        {/* Hipfire crosshair — box centered on the pivot */}
+        {!fullyScoped && !hud.spectating && (
           <div
-            className="relative"
-            style={{
-              width: gap * 2 + arm * 2 + 8,
-              height: gap * 2 + arm * 2 + 8,
-              transition: 'width 70ms linear, height 70ms linear',
-            }}
+            className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
+            style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
           >
             <div
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-              style={{ width: 2, height: 2 }}
-            />
-            <div
-              className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              className="relative"
               style={{
-                width: thick,
-                height: arm,
-                top: `calc(50% - ${gap}px - ${arm}px)`,
-                transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
+                width: gap * 2 + arm * 2 + 8,
+                height: gap * 2 + arm * 2 + 8,
+                transition: 'width 70ms linear, height 70ms linear',
               }}
-            />
-            <div
-              className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-              style={{
-                width: thick,
-                height: arm,
-                top: `calc(50% + ${gap}px)`,
-                transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
-              }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-              style={{
-                height: thick,
-                width: arm,
-                left: `calc(50% - ${gap}px - ${arm}px)`,
-                transition: 'left 70ms linear, width 70ms linear, height 70ms linear',
-              }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-              style={{
-                height: thick,
-                width: arm,
-                left: `calc(50% + ${gap}px)`,
-                transition: 'left 70ms linear, width 70ms linear, height 70ms linear',
-              }}
-            />
+            >
+              <div
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                style={{ width: 2, height: 2 }}
+              />
+              <div
+                className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                style={{
+                  width: thick,
+                  height: arm,
+                  top: `calc(50% - ${gap}px - ${arm}px)`,
+                  transition:
+                    'top 70ms linear, height 70ms linear, width 70ms linear',
+                }}
+              />
+              <div
+                className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                style={{
+                  width: thick,
+                  height: arm,
+                  top: `calc(50% + ${gap}px)`,
+                  transition:
+                    'top 70ms linear, height 70ms linear, width 70ms linear',
+                }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                style={{
+                  height: thick,
+                  width: arm,
+                  left: `calc(50% - ${gap}px - ${arm}px)`,
+                  transition:
+                    'left 70ms linear, width 70ms linear, height 70ms linear',
+                }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                style={{
+                  height: thick,
+                  width: arm,
+                  left: `calc(50% + ${gap}px)`,
+                  transition:
+                    'left 70ms linear, width 70ms linear, height 70ms linear',
+                }}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Hitmarker + damage float */}
-      <AnimatePresence>
+        {/*
+          Lifecycle via static CSS classes (theme.css). HUD re-renders every
+          frame; framer keyframe arrays / inline animation styles restart and
+          read as a pulse. Class animations only restart on remount (new key).
+        */}
         {showHit && hit && (
-          <motion.div
+          <div
             key={hud.lastHitId}
-            className="absolute top-1/2 left-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
-            initial={{ opacity: 0, scale: 1.55 }}
-            animate={{ opacity: [0, 1, 1, 0], scale: [1.55, 0.92, 1, 1] }}
-            exit={{ opacity: 0, scale: 1.15 }}
-            transition={{ duration: 0.46, times: [0, 0.08, 0.55, 1], ease: 'easeOut' }}
+            className="hitmarker-life absolute top-0 left-0"
           >
             <HitMarkerX
               color={hitmarkerColor(hit)}
               kill={hit.killed}
               head={hit.zone === 'head'}
             />
-            <motion.div
+          </div>
+        )}
+
+        {/* Damage float — same once-per-mount CSS lifecycle */}
+        {showHit && hit && (
+          <div
+            key={`dmg-${hud.lastHitId}`}
+            className="hitmarker-dmg absolute top-0 left-0 flex flex-col items-center"
+            style={{ marginTop: 22 }}
+          >
+            <div
               className={cn(
-                'mt-3 text-center font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]',
+                'text-center font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]',
                 damageLabelColor(hit),
                 hit.zone === 'head' || hit.killed ? 'text-base' : 'text-sm',
               )}
-              initial={{ y: 0, opacity: 1 }}
-              animate={{ y: -18, opacity: 0 }}
-              transition={{ duration: 0.53, ease: 'easeOut', delay: 0.05 }}
             >
               {hit.zone === 'head' ? 'HEADSHOT' : hit.zone.toUpperCase()}{' '}
               <span className="tabular-nums">-{hit.damage}</span>
-            </motion.div>
+            </div>
             {hit.killed && (
-              <motion.div
-                className="mt-0.5 text-xs font-extrabold tracking-[0.28em] text-arena-danger drop-shadow-[0_0_10px_var(--arena-danger)]"
-                initial={{ opacity: 0, scale: 0.7, y: 4 }}
-                animate={{
-                  opacity: [0, 1, 1, 0],
-                  scale: [0.7, 1.08, 1, 1],
-                  y: [4, -2, -6, -10],
-                }}
-                transition={{ duration: 0.605, times: [0, 0.15, 0.7, 1] }}
-              >
+              <div className="mt-0.5 text-xs font-extrabold tracking-[0.28em] text-arena-danger drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
                 ELIMINATED
-              </motion.div>
+              </div>
             )}
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
 
       {/* Bottom chrome — vitals + ammo */}
       <div

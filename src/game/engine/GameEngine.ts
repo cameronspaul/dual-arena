@@ -85,12 +85,13 @@ import {
   RemotePlayerSystem,
 } from '../net'
 import {
-  DUEL_SPAWNS,
   effectiveLook,
   eyePosition as eyePosShared,
   SNIPER,
   spreadLookDirection,
   aimSpread as aimSpreadShared,
+  pickTeamSpawn,
+  TICK_RATE,
   type MatchEndMessage,
   type NetHitEvent,
   type SnapshotMessage,
@@ -167,7 +168,7 @@ export class GameEngine {
   private onlineStatus = 'idle'
   private matchEnd: MatchEndMessage | null = null
   private pendingSnapshots: SnapshotMessage[] = []
-  private serverTickRate = 30
+  private serverTickRate = TICK_RATE
   private matchTimeLeft: number | null = null
   private matchWaiting = false
   private serverRespawnIn = 0
@@ -318,6 +319,7 @@ export class GameEngine {
       url: online.serverUrl,
       matchId: online.matchId,
       token,
+      mapId: this.mapDef.id,
       handlers: {
         onWelcome: (w) => this.onNetWelcome(w),
         onSnapshot: (s) => this.pendingSnapshots.push(s),
@@ -341,8 +343,11 @@ export class GameEngine {
 
   private onNetWelcome(w: WelcomeMessage) {
     this.localPlayerId = w.playerId
-    this.serverTickRate = w.tickRate || 30
-    const spawn = DUEL_SPAWNS[w.team] ?? DUEL_SPAWNS[0]
+    this.serverTickRate = w.tickRate || TICK_RATE
+    // Prefer server-provided pad (map blue/red); fallback to shared table
+    const spawn =
+      w.spawn ??
+      pickTeamSpawn(w.mapId || this.mapDef.id, w.team)
     this.applySpawn(
       { x: spawn.x, y: spawn.y, z: spawn.z },
       spawn.yaw,
@@ -351,11 +356,20 @@ export class GameEngine {
       spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
       spawnYaw: spawn.yaw,
     }
+    this.rebuildFallKillY()
     this.playerHp = PLAYER.maxHp
     this.playerAlive = true
     this.kills = 0
     this.prediction.clear()
-    console.info('[net] welcome', w.playerId, 'team', w.team)
+    console.info(
+      '[net] welcome',
+      w.playerId,
+      w.teamColor ?? (w.team === 0 ? 'blue' : 'red'),
+      'map',
+      w.mapId,
+      'spawn',
+      spawn,
+    )
   }
 
   isOnlineMode() {
@@ -487,6 +501,7 @@ export class GameEngine {
         this.coverMat = built.coverMat
         this.mapHitMeshes = built.hitMeshes
         this.meshWorld = null
+        this.remotes.setMeshWorld(null)
         this.levelEditor.setHitMeshes(built.hitMeshes)
         // procedural range: no triangle walk world
         this.applyPlaySpawn({
@@ -517,6 +532,7 @@ export class GameEngine {
         const walk =
           built.walkMeshes.length > 0 ? built.walkMeshes : built.hitMeshes
         this.meshWorld = walk.length > 0 ? buildMeshWorld(walk) : null
+        this.remotes.setMeshWorld(this.meshWorld)
         this.levelEditor.setHitMeshes(built.hitMeshes)
         // Team pads (authored/editor) preferred over auto-placed catalog spawn
         this.applyPlaySpawn({
@@ -1373,7 +1389,11 @@ export class GameEngine {
       }
       this.kills += result.killsDelta
       applyRecoil(this.sniper)
-      this.viewFeel.punchShot(this.sniper.adsBlend)
+      // Full camera shake when fire kicks us out of ADS (bolt); soft only if still scoped (last-round reload).
+      this.viewFeel.punchShot(
+        this.sniper.adsBlend,
+        this.sniper.ads ? this.sniper.adsBlend : 0,
+      )
     } else if (fireResult === 'dry') {
       gameAudio.playDryFire()
     }
@@ -1410,8 +1430,9 @@ export class GameEngine {
   }
 
   /**
-   * Online duel: predict movement for feel, send inputs, never apply local kills.
-   * HP / ammo / score from server snapshots only.
+   * Online duel — client-authoritative movement (same sim as offline).
+   * Sends claimed pose each input packet; server validates / rejects cheats.
+   * Snapshots only drive HP / ammo / score / remotes — never local position.
    */
   private tickOnline(
     dt: number,
@@ -1420,16 +1441,7 @@ export class GameEngine {
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
 
-    // Send inputs (force-send on combat edges so 60 Hz rate limit never drops fire)
-    if (this.net && this.localPlayerId) {
-      const edge = input.fire || input.reload || input.jump
-      const seq = edge
-        ? this.net.sendInputNow(input)
-        : this.net.maybeSendInput(input, dt)
-      if (seq != null) this.prediction.push(seq, input)
-    }
-
-    // Local movement prediction
+    // Same movement as offline practice — no fixed-step / no reconcile
     stepPlayer(
       this.player,
       input,
@@ -1441,6 +1453,13 @@ export class GameEngine {
 
     // Cosmetic sniper step (server overwrites ammo/phase on snapshot)
     stepSniper(this.sniper, input, dt)
+
+    // Send pose + buttons (force on combat edges so rate limit never drops fire)
+    if (this.net && this.localPlayerId) {
+      const edge = input.fire || input.reload || input.jump
+      if (edge) this.net.sendInputNow(input, this.player)
+      else this.net.maybeSendInput(input, dt, this.player)
+    }
 
     if (this.playerVisuals.isMan) {
       this.playerVisuals.syncLocomotion(this.player, input)
@@ -1455,7 +1474,11 @@ export class GameEngine {
     if (fireResult === 'shot') {
       gameAudio.playFire()
       applyRecoil(this.sniper)
-      this.viewFeel.punchShot(this.sniper.adsBlend)
+      // Full camera shake when fire kicks us out of ADS (bolt); soft only if still scoped (last-round reload).
+      this.viewFeel.punchShot(
+        this.sniper.adsBlend,
+        this.sniper.ads ? this.sniper.adsBlend : 0,
+      )
       const look = effectiveLook(this.player, this.sniper)
       const origin = eyePosShared(this.player)
       const spread = aimSpreadShared(this.sniper, this.player)
@@ -1502,16 +1525,31 @@ export class GameEngine {
     this.emitHud()
   }
 
-  private flushNetSnapshots(dt: number) {
+  private flushNetSnapshots(_dt: number) {
     if (!this.pendingSnapshots.length) return
     const snaps = this.pendingSnapshots
     this.pendingSnapshots = []
+
+    // Push EVERY snapshot into remote interp (dropping intermediates made
+    // other players teleport / sit in wrong lobby poses).
     for (const snap of snaps) {
-      this.applySnapshot(snap, dt)
+      for (const ev of snap.events) this.applyNetHitEvent(ev)
+      this.pushRemoteSnapshots(snap)
+    }
+
+    // Latest only for local combat HUD / respawn
+    this.applyLocalSnapshot(snaps[snaps.length - 1])
+  }
+
+  private pushRemoteSnapshots(snap: SnapshotMessage) {
+    const selfId = this.localPlayerId
+    for (const p of snap.players) {
+      if (selfId && p.id === selfId) continue
+      this.remotes.pushSnapshot(p.id, p, snap.tick, this.serverTickRate)
     }
   }
 
-  private applySnapshot(snap: SnapshotMessage, dt: number) {
+  private applyLocalSnapshot(snap: SnapshotMessage) {
     const selfId = this.localPlayerId
     const seen = new Set<string>()
     this.matchTimeLeft = snap.timeLeft ?? null
@@ -1520,7 +1558,7 @@ export class GameEngine {
     for (const p of snap.players) {
       if (selfId && p.id === selfId) {
         const wasAlive = this.playerAlive
-        // Authoritative combat state
+        // Authoritative combat state only — never local pose
         this.playerHp = p.hp
         this.playerAlive = p.alive
         this.kills = p.kills
@@ -1534,45 +1572,39 @@ export class GameEngine {
         this.sniper.ads = p.ads
         this.sniper.adsBlend = p.adsBlend
 
+        const respawning = Boolean(wasAlive === false && p.alive)
         if (!p.alive) {
           this.deathReason = 'combat'
           this.spectateTimer = p.respawnIn ?? 0
-        } else if (!wasAlive && p.alive) {
-          // Server respawn — hard snap body + restore camera
+        } else if (respawning) {
           this.deathReason = null
           this.spectateTimer = 0
           this.freeCam = null
           this.voluntaryFreeCam = false
+          this.prediction.clear()
+          this.player.position.x = p.x
+          this.player.position.y = p.y
+          this.player.position.z = p.z
+          this.player.velocity.x = 0
+          this.player.velocity.y = 0
+          this.player.velocity.z = 0
+          this.player.grounded = true
+          this.player.state = 'idle'
+          this.player.yaw = p.yaw
+          this.player.pitch = p.pitch
+          this.input.setLook(p.yaw, p.pitch)
           if (this.viewmodel.root && !this.thirdPerson) {
             this.viewmodel.root.visible = true
           }
         }
-
-        this.prediction.reconcile({
-          body: this.player,
-          server: p,
-          ackSeq: snap.ackSeq,
-          colliders: this.colliders,
-          meshWorld: this.meshWorld,
-          barriers: this.barrierColliders,
-          dt: 1 / this.serverTickRate,
-        })
-        this.input.setLook(this.player.yaw, this.player.pitch)
       } else {
         seen.add(p.id)
-        this.remotes.pushSnapshot(p.id, p)
       }
     }
 
     for (const id of this.remotes.ids()) {
       if (!seen.has(id)) this.remotes.remove(id)
     }
-
-    for (const ev of snap.events) {
-      this.applyNetHitEvent(ev)
-    }
-
-    void dt
   }
 
   private applyNetHitEvent(ev: NetHitEvent) {
@@ -1598,6 +1630,38 @@ export class GameEngine {
       ev.zone === 'head' ? 'head' : 'body',
       ev.killed,
     )
+
+    // Remote body reactions (local player is first-person — no body clip)
+    if (ev.targetId !== this.localPlayerId) {
+      const shotDir = this.estimateShotDir(ev)
+      if (ev.killed) {
+        this.remotes.onDeath(ev.targetId, shotDir)
+      } else {
+        this.remotes.onHit(ev.targetId)
+      }
+    }
+  }
+
+  /** Bullet direction for death fall: shooter → impact point when possible. */
+  private estimateShotDir(
+    ev: NetHitEvent,
+  ): { x: number; y: number; z: number } | undefined {
+    let ox: number | null = null
+    let oy: number | null = null
+    let oz: number | null = null
+    if (ev.shooterId === this.localPlayerId) {
+      const eye = eyePosShared(this.player)
+      ox = eye.x
+      oy = eye.y
+      oz = eye.z
+    }
+    if (ox == null) return undefined
+    const dx = ev.point.x - ox
+    const dy = ev.point.y - oy!
+    const dz = ev.point.z - oz!
+    const len = Math.hypot(dx, dy, dz)
+    if (len < 1e-4) return undefined
+    return { x: dx / len, y: dy / len, z: dz / len }
   }
 
   /**

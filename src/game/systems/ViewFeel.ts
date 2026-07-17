@@ -50,12 +50,21 @@ export class ViewFeel {
   /**
    * Fire impulse — starts a long viewmodel settle + short screen-shake.
    * Visual only; combat recoil/spread still uses sniper.recoil.
+   *
+   * @param adsBlend — viewmodel kick scale (soft under scope mesh)
+   * @param screenAdsBlend — camera shake scale; pass 0 when the shot forces
+   *   ADS exit (bolt cycle) so hipfire shake plays as the scope drops.
+   *   Defaults to adsBlend when omitted.
    */
-  punchShot(adsBlend: number) {
+  punchShot(adsBlend: number, screenAdsBlend?: number) {
     this.gunRecoilAge = 0
     this.screenShakeAge = 0
     this.gunRecoilAds = clamp(adsBlend, 0, 1)
-    this.screenShakeAds = clamp(adsBlend, 0, 1)
+    this.screenShakeAds = clamp(
+      screenAdsBlend !== undefined ? screenAdsBlend : adsBlend,
+      0,
+      1,
+    )
     this.recoilShakePhase = 0
   }
 
@@ -334,7 +343,10 @@ export class ViewFeel {
     if (!vm.freezeBob) {
       this.gunRecoilAge += dt
       this.screenShakeAge += dt
-      if (this.gunRecoilAge < VIEW_RECOIL.duration) {
+      if (
+        this.gunRecoilAge < VIEW_RECOIL.duration ||
+        this.screenShakeAge < VIEW_RECOIL.screenDuration
+      ) {
         this.recoilShakePhase += dt
       }
     }
@@ -355,41 +367,56 @@ export class ViewFeel {
         0,
         1,
       )
-      const env = Math.pow(1 - u, VIEW_RECOIL.screenEase)
+      // Plateau then fade — intensity stays high so you feel continuous shake,
+      // not a single ease-out jolt at t=0.
+      const sustain = clamp(VIEW_RECOIL.screenSustain, 0.05, 0.9)
+      let env: number
+      if (u <= sustain) {
+        // Tiny ease-in so the first frame isn’t a hard pop, then full strength
+        env = u < 0.04 ? u / 0.04 : 1
+      } else {
+        const v = (u - sustain) / (1 - sustain)
+        env = Math.pow(1 - v, VIEW_RECOIL.screenEase)
+      }
       const hip =
         1 - this.screenShakeAds * (1 - VIEW_RECOIL.screenAdsMul)
       const a = env * hip
       const t = this.recoilShakePhase
       const f = VIEW_RECOIL.screenFreq
       const f2 = VIEW_RECOIL.screenThumpFreq
-      // Initial upward kick, then oscillating settle
-      const kickFade = Math.pow(1 - u, VIEW_RECOIL.screenEase + 0.4)
+      // Continuous multi-frequency shake (primary + secondary + slow rock).
+      // Almost no one-shot offset — motion comes from oscillation.
+      const s1 = Math.sin(t * f)
+      const s2 = Math.sin(t * f2 + 0.8)
+      const s3 = Math.sin(t * f * 1.35 + 1.4)
+      const c1 = Math.cos(t * f * 0.92 + 0.3)
+      const c2 = Math.cos(t * f2 * 1.1 + 1.1)
+      const rock = Math.sin(t * f2 * 0.55 + 0.2)
+
       shakePitch =
         a *
-        (VIEW_RECOIL.screenPitch * 0.55 * kickFade +
-          Math.sin(t * f) * VIEW_RECOIL.screenPitch * 0.7 +
-          Math.sin(t * f2) * VIEW_RECOIL.screenPitch * 0.35)
+        VIEW_RECOIL.screenPitch *
+        (s1 * 0.55 + s2 * 0.4 + s3 * 0.25 + rock * 0.2)
       shakeYaw =
         a *
-        (Math.sin(t * f * 0.85 + 0.7) * VIEW_RECOIL.screenYaw +
-          Math.sin(t * f2 * 1.1 + 1.2) * VIEW_RECOIL.screenYaw * 0.4)
-      // Roll leads the blast (directional bank), then oscillates as it settles
+        VIEW_RECOIL.screenYaw *
+        (s2 * 0.55 + s1 * 0.35 + c2 * 0.3)
       shakeRoll =
         a *
-        (VIEW_RECOIL.screenRoll * 0.75 * kickFade +
-          Math.sin(t * f * 1.05 + 0.3) * VIEW_RECOIL.screenRoll * 0.85 +
-          Math.cos(t * f2 * 0.9) * VIEW_RECOIL.screenRoll * 0.45)
+        VIEW_RECOIL.screenRoll *
+        (s1 * 0.45 + s2 * 0.5 + rock * 0.35 + s3 * 0.2)
       shakeLocalX =
         a *
-        (Math.sin(t * f * 1.05) * VIEW_RECOIL.screenPosX +
-          Math.sin(t * f2 * 1.2) * VIEW_RECOIL.screenPosX * 0.45)
+        VIEW_RECOIL.screenPosX *
+        (s1 * 0.5 + s2 * 0.45 + c1 * 0.25)
       shakeLocalY =
         a *
-        (VIEW_RECOIL.screenPosY * 0.5 * kickFade +
-          Math.cos(t * f * 0.95) * VIEW_RECOIL.screenPosY * 0.65 +
-          Math.cos(t * f2) * VIEW_RECOIL.screenPosY * 0.3)
+        VIEW_RECOIL.screenPosY *
+        (c1 * 0.5 + s2 * 0.4 + rock * 0.3)
       shakeLocalZ =
-        a * Math.sin(t * f * 0.8 + 0.5) * VIEW_RECOIL.screenPosZ
+        a *
+        VIEW_RECOIL.screenPosZ *
+        (s2 * 0.55 + s1 * 0.4 + c2 * 0.25)
     }
 
     camera.rotation.order = 'YXZ'

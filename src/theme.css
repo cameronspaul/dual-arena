@@ -196,3 +196,42 @@
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
 }
+
+/* Hitmarker: solid hold then fade — no scale/pulse. Duration matches HITMARKER_DURATION. */
+@keyframes hitmarker-life {
+  0%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.hitmarker-life {
+  animation: hitmarker-life 0.55s linear forwards;
+}
+
+/* Damage float: rise + hold + fade once per hit (keep x-center in transform) */
+@keyframes hitmarker-dmg {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(-50%, -10px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -22px);
+  }
+}
+
+.hitmarker-dmg {
+  animation: hitmarker-dmg 0.52s ease-out forwards;
+}

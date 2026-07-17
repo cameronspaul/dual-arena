@@ -127,13 +127,20 @@ export function scrubSlideRoll(
   slide.play()
 }
 
-/** Mild Y squash so crouch is readable without a crouch clip. */
+/**
+ * Mild Y squash so crouch is readable without a crouch clip.
+ * Re-offsets model so feet stay planted (non-uniform Y scale around origin
+ * would otherwise bury the mesh in the floor).
+ */
 export function applyDummyCrouchScale(root: THREE.Group, crouch: boolean) {
   const model = root.userData.model as THREE.Object3D | undefined
   const base = (root.userData.baseScale as number | undefined) ?? 1
+  const footY = (root.userData.footY as number | undefined) ?? 0
   if (!model) return
   const yMul = crouch ? DUMMY.crouchScaleY : 1
   model.scale.set(base, base * yMul, base)
+  // Feet at local y=0 relative to root after scale
+  model.position.y = -footY * base * yMul
 }
 
 export function playDummyIdle(root: THREE.Group) {

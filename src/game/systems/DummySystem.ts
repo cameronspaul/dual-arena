@@ -97,6 +97,7 @@ export class DummySystem {
         model.scale.setScalar(scale)
         model.position.y = -footY * scale
         root.userData.baseScale = scale
+        root.userData.footY = footY
         root.userData.model = model
 
         model.traverse((o) => {

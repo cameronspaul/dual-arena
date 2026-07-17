@@ -631,6 +631,31 @@ function sampleGround(
 }
 
 /**
+ * Foot height under (x,z) for visuals / remote snap.
+ * Returns null if no walkable surface in range.
+ */
+export function sampleMeshFloorY(
+  meshWorld: MeshWorld | null | undefined,
+  x: number,
+  z: number,
+  fromY = 2.5,
+  maxDown = 6,
+): number | null {
+  if (!meshWorld || meshWorld.meshes.length === 0) return null
+  const meshes = nearbyMeshes(meshWorld, { x, y: fromY, z }, 6)
+  if (!meshes.length) return null
+  const ground = sampleGround(
+    { x, y: fromY, z },
+    0.35,
+    fromY + GROUND_PROBE,
+    maxDown,
+    meshes,
+    GROUND_PROBE_XZ_LITE,
+  )
+  return ground ? ground.floorY : null
+}
+
+/**
  * Integrate player motion against triangle meshes (ground + walls).
  *
  * Note: wallAabbs are intentionally NOT used for XZ — extractColliders boxes

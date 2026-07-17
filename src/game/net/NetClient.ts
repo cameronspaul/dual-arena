@@ -7,6 +7,7 @@ import type {
   ErrorMessage,
   InputMessage,
   MatchEndMessage,
+  PlayerBody,
   PlayerInput,
   PongMessage,
   ServerMessage,
@@ -35,6 +36,8 @@ export type NetClientOpts = {
   url: string
   matchId: string
   token: string
+  /** Catalog map id so server assigns blue/red pads for that map. */
+  mapId?: string
   handlers?: NetClientHandlers
 }
 
@@ -43,6 +46,7 @@ export class NetClient {
   private readonly url: string
   private readonly matchId: string
   private readonly token: string
+  private readonly mapId: string | undefined
   private handlers: NetClientHandlers
   private seq = 0
   private status: NetClientStatus = 'idle'
@@ -61,6 +65,7 @@ export class NetClient {
     this.url = opts.url
     this.matchId = opts.matchId
     this.token = opts.token
+    this.mapId = opts.mapId
     this.handlers = opts.handlers ?? {}
   }
 
@@ -83,6 +88,7 @@ export class NetClient {
         type: 'join',
         matchId: this.matchId,
         token: this.token,
+        mapId: this.mapId,
       })
       this.pingTimer = setInterval(() => this.sendPing(), 1000)
       this.sendPing()
@@ -181,19 +187,26 @@ export class NetClient {
   }
 
   /**
-   * Queue an input sample. Call every frame; rate-limits to INPUT_SEND_HZ.
+   * Queue an input + pose sample. Call every frame; rate-limits to INPUT_SEND_HZ.
    * Returns the seq if a packet was sent, else null.
    */
-  maybeSendInput(input: PlayerInput, dt: number): number | null {
+  maybeSendInput(
+    input: PlayerInput,
+    dt: number,
+    body: PlayerBody,
+  ): number | null {
     this.inputAccum += dt
     const interval = 1 / INPUT_SEND_HZ
     if (this.inputAccum < interval) return null
     this.inputAccum = 0
-    return this.sendInputNow(input)
+    return this.sendInputNow(input, body)
   }
 
-  /** Force-send current input (e.g. fire edge must not wait). */
-  sendInputNow(input: PlayerInput): number {
+  /**
+   * Force-send current input + claimed pose (e.g. fire edge must not wait).
+   * Server validates pose; does not re-simulate movement.
+   */
+  sendInputNow(input: PlayerInput, body: PlayerBody): number {
     this.seq += 1
     const msg: InputMessage = {
       type: 'input',
@@ -209,6 +222,14 @@ export class NetClient {
       yaw: input.yaw,
       pitch: input.pitch,
       clientTime: performance.now(),
+      x: body.position.x,
+      y: body.position.y,
+      z: body.position.z,
+      vx: body.velocity.x,
+      vy: body.velocity.y,
+      vz: body.velocity.z,
+      grounded: body.grounded,
+      state: body.state,
     }
     this.send(msg)
     return this.seq

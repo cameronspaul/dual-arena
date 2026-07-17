@@ -95,6 +95,7 @@ export class PlayerVisuals {
     model.scale.setScalar(scale)
     model.position.y = -footY * scale
     root.userData.baseScale = scale
+    root.userData.footY = footY
     root.userData.model = model
     root.userData.isMan = true
     root.userData.animState = 'idle'
@@ -239,9 +240,11 @@ export class PlayerVisuals {
     this.body.visible = thirdPerson
     if (!thirdPerson) return
 
+    // Tiny lift so idle clip soles don't z-fight / sink into mesh floors
+    const footLift = this.isMan ? 0.03 : 0
     this.body.position.set(
       player.position.x,
-      player.position.y,
+      player.position.y + footLift,
       player.position.z,
     )
     if (this.isMan) {
