@@ -181,6 +181,11 @@ export class NetClient {
     this.send({ type: 'ping', t: performance.now() })
   }
 
+  /** Toggle ready during pregame (both players must ready to start). */
+  sendReady(ready: boolean) {
+    this.send({ type: 'ready', ready })
+  }
+
   private send(msg: ClientMessage) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
     this.ws.send(JSON.stringify(msg))

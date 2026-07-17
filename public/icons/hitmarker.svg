@@ -5,27 +5,82 @@
   viewBox="0 0 25 25"
   version="1.1"
   xmlns="http://www.w3.org/2000/svg"
-  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;"
+  style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;overflow:visible;"
 >
+  <!--
+    Preview animation: each corner fades in from outside its rest pose, then
+    speeds into place. Runtime hitmarker uses the same paths + motion in GameHud.
+  -->
+  <style>
+    @keyframes hm-fade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes hm-in-tl {
+      from { transform: translate(-16px, -16px); }
+      to { transform: translate(0, 0); }
+    }
+    @keyframes hm-in-bl {
+      from { transform: translate(-16px, 16px); }
+      to { transform: translate(0, 0); }
+    }
+    @keyframes hm-in-tr {
+      from { transform: translate(16px, -16px); }
+      to { transform: translate(0, 0); }
+    }
+    @keyframes hm-in-br {
+      from { transform: translate(16px, 16px); }
+      to { transform: translate(0, 0); }
+    }
+    .hm {
+      opacity: 0;
+      animation-fill-mode: forwards;
+      animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1), cubic-bezier(0.55, 0.02, 0.35, 1);
+    }
+    .hm-tl {
+      animation-name: hm-fade, hm-in-tl;
+      animation-duration: 0.07s, 0.09s;
+      animation-delay: 0s, 0.04s;
+    }
+    .hm-bl {
+      animation-name: hm-fade, hm-in-bl;
+      animation-duration: 0.07s, 0.09s;
+      animation-delay: 0.01s, 0.05s;
+    }
+    .hm-tr {
+      animation-name: hm-fade, hm-in-tr;
+      animation-duration: 0.07s, 0.09s;
+      animation-delay: 0.02s, 0.06s;
+    }
+    .hm-br {
+      animation-name: hm-fade, hm-in-br;
+      animation-duration: 0.07s, 0.09s;
+      animation-delay: 0.03s, 0.07s;
+    }
+  </style>
   <!-- Origin artwork offset into 0..25 so the X sits on the viewBox center -->
   <g transform="translate(-19.690239,-27.701106)">
     <!-- top-left -->
     <path
+      class="hm hm-tl"
       d="M23.22,28.983C23.356,29.101 23.504,29.206 23.641,29.324C26.237,31.572 23.57,34.241 21.322,31.642C20.503,30.695 19.678,28.574 19.691,28.517C19.722,28.377 19.972,27.263 21.379,27.892C21.535,27.962 21.515,27.973 23.22,28.983Z"
       fill="rgb(248,56,57)"
     />
     <!-- bottom-left -->
     <path
+      class="hm hm-bl"
       d="M20.983,48.781C21.66,48 21.496,47.782 22.483,47.449C24.568,46.745 25.3,48.753 24.144,50.217C23.344,51.23 21.624,51.999 21.379,52.108C19.972,52.737 19.723,51.623 19.692,51.483C19.644,51.272 20.869,48.992 20.983,48.781Z"
       fill="rgb(248,56,57)"
     />
     <!-- top-right -->
     <path
+      class="hm hm-tr"
       d="M43.016,31.219C42.34,32 42.505,32.219 41.517,32.552C39.216,33.326 37.578,30.266 42.43,28.096C45.247,26.836 44.178,29.224 44.109,29.378C44.039,29.535 44.028,29.515 43.016,31.219Z"
       fill="rgb(248,56,57)"
     />
     <!-- bottom-right -->
     <path
+      class="hm hm-br"
       d="M40.781,51.017C39.995,50.334 39.778,50.494 39.449,49.516C38.749,47.434 40.756,46.702 42.219,47.854C43.228,48.649 43.999,50.377 44.109,50.621C44.736,52.027 43.623,52.276 43.483,52.308C43.246,52.361 41.68,51.518 41.529,51.437C41.278,51.302 41.033,51.152 40.781,51.017Z"
       fill="rgb(248,56,57)"
     />

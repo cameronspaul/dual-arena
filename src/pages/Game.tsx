@@ -58,6 +58,13 @@ function hudKey(s: HudSnapshot): string {
     s.matchWinnerId ?? '',
     s.matchEndReason ?? '',
     s.matchWaiting ? 1 : 0,
+    s.matchPhase ?? '',
+    Math.ceil(s.matchPhaseTimer ?? 0),
+    s.matchFirstTo ?? 0,
+    s.localReady ? 1 : 0,
+    s.enemyReady ? 1 : 0,
+    s.enemyKills ?? 0,
+    s.teamColor ?? '',
     // Throttle perf panel: ~4 Hz on timings, integer draw/col counts
     s.perf
       ? [
@@ -305,6 +312,7 @@ export default function Game() {
           hud={hud}
           onOpenSettings={() => setSettingsOpen(true)}
           onExit={backToPicker}
+          onReady={(ready) => engine?.setReady(ready)}
         />
       )}
 

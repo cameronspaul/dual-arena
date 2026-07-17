@@ -87,13 +87,16 @@ import {
 import {
   effectiveLook,
   eyePosition as eyePosShared,
+  MATCH,
   SNIPER,
   spreadLookDirection,
   aimSpread as aimSpreadShared,
   pickTeamSpawn,
   TICK_RATE,
   type MatchEndMessage,
+  type MatchPhase,
   type NetHitEvent,
+  type NetShotEvent,
   type SnapshotMessage,
   type WelcomeMessage,
 } from '@duel/shared'
@@ -171,7 +174,21 @@ export class GameEngine {
   private serverTickRate = TICK_RATE
   private matchTimeLeft: number | null = null
   private matchWaiting = false
+  private matchPhase: MatchPhase | null = null
+  private matchPhaseTimer = 0
+  private matchFirstTo: number = MATCH.firstTo
+  private localReady = false
+  private enemyReady = false
+  private enemyKills = 0
+  private teamColor: 'blue' | 'red' | null = null
   private serverRespawnIn = 0
+  /** Last phase we saw — used to clear tracers on round transitions. */
+  private lastMatchPhase: MatchPhase | null = null
+  /**
+   * True after welcome applied the authoritative team pad.
+   * Prevents map bootstrap from overwriting it with solo pickPlaySpawn.
+   */
+  private onlineTeamSpawnReady = false
 
   private hudListeners = new Set<HudListener>()
   private lastHit: HitEvent | null = null
@@ -344,6 +361,8 @@ export class GameEngine {
   private onNetWelcome(w: WelcomeMessage) {
     this.localPlayerId = w.playerId
     this.serverTickRate = w.tickRate || TICK_RATE
+    this.matchFirstTo = w.firstTo ?? MATCH.firstTo
+    this.teamColor = w.teamColor ?? (w.team === 0 ? 'blue' : 'red')
     // Prefer server-provided pad (map blue/red); fallback to shared table
     const spawn =
       w.spawn ??
@@ -356,19 +375,25 @@ export class GameEngine {
       spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
       spawnYaw: spawn.yaw,
     }
+    this.onlineTeamSpawnReady = true
     this.rebuildFallKillY()
     this.playerHp = PLAYER.maxHp
     this.playerAlive = true
     this.kills = 0
+    this.enemyKills = 0
+    this.localReady = false
+    this.enemyReady = false
     this.prediction.clear()
     console.info(
       '[net] welcome',
       w.playerId,
-      w.teamColor ?? (w.team === 0 ? 'blue' : 'red'),
+      this.teamColor,
       'map',
       w.mapId,
-      'spawn',
+      'teamSpawn',
       spawn,
+      'firstTo',
+      this.matchFirstTo,
     )
   }
 
@@ -382,6 +407,27 @@ export class GameEngine {
 
   getMatchEnd() {
     return this.matchEnd
+  }
+
+  /** Pregame ready toggle — both players must ready to start the countdown. */
+  setReady(ready: boolean) {
+    if (!this.isOnline || !this.net) return
+    if (this.matchPhase !== 'pregame' && this.matchPhase !== 'waiting') return
+    this.localReady = ready
+    this.net.sendReady(ready)
+    this.emitHud()
+  }
+
+  toggleReady() {
+    this.setReady(!this.localReady)
+  }
+
+  isLocalReady() {
+    return this.localReady
+  }
+
+  getMatchPhase() {
+    return this.matchPhase
   }
 
   private applySpawn(
@@ -404,6 +450,32 @@ export class GameEngine {
     this.player.slideCd = 0
     this.player.slideSpeed = 0
     this.input.setLook(spawnYaw, 0)
+  }
+
+  /**
+   * After GLB/range load: offline uses solo play pad; online keeps the
+   * server team pad from welcome (map load must not stomp it).
+   */
+  private applyMapLoadSpawn(
+    catalogSpawn: { x: number; y: number; z: number },
+    catalogYaw: number,
+  ) {
+    if (this.isOnline && this.onlineTeamSpawnReady) {
+      this.applySpawn(this.playSpawn.spawn, this.playSpawn.spawnYaw)
+      this.rebuildFallKillY()
+      return
+    }
+    if (this.isOnline) {
+      // Welcome not yet — park at catalog; welcome will re-place on team pad
+      this.playSpawn = {
+        spawn: { ...catalogSpawn },
+        spawnYaw: catalogYaw,
+      }
+      this.applySpawn(catalogSpawn, catalogYaw)
+      this.rebuildFallKillY()
+      return
+    }
+    this.applyPlaySpawn({ spawn: catalogSpawn, spawnYaw: catalogYaw })
   }
 
   /** Team pads from editor/authored layout, else map catalog fallback. */
@@ -504,10 +576,7 @@ export class GameEngine {
         this.remotes.setMeshWorld(null)
         this.levelEditor.setHitMeshes(built.hitMeshes)
         // procedural range: no triangle walk world
-        this.applyPlaySpawn({
-          spawn: built.spawn,
-          spawnYaw: built.spawnYaw,
-        })
+        this.applyMapLoadSpawn(built.spawn, built.spawnYaw)
         this.dummies = createDummies({
           defs: built.dummies,
           bounds: built.dummyBounds,
@@ -534,11 +603,8 @@ export class GameEngine {
         this.meshWorld = walk.length > 0 ? buildMeshWorld(walk) : null
         this.remotes.setMeshWorld(this.meshWorld)
         this.levelEditor.setHitMeshes(built.hitMeshes)
-        // Team pads (authored/editor) preferred over auto-placed catalog spawn
-        this.applyPlaySpawn({
-          spawn: built.spawn,
-          spawnYaw: built.spawnYaw,
-        })
+        // Online: keep welcome team pad. Offline: authored/editor play pad.
+        this.applyMapLoadSpawn(built.spawn, built.spawnYaw)
         this.dummies = createDummies({
           defs: built.dummies,
           bounds: built.dummyBounds,
@@ -1283,9 +1349,9 @@ export class GameEngine {
       this.flushNetSnapshots(dt)
     }
 
-    // Online death: hold camera, wait for server respawn (no free-cam / local restart)
+    // Online death: free-cam spectate, wait for server respawn (no local restart)
     if (this.isOnline && !this.playerAlive) {
-      this.tickOnlineDead(dt)
+      this.tickOnlineDead(dt, input)
       return
     }
 
@@ -1304,8 +1370,11 @@ export class GameEngine {
     this.tickOffline(dt, input)
   }
 
-  /** Online: dead until server respawns — no local kill authority. */
-  private tickOnlineDead(dt: number) {
+  /** Online: dead until server respawns — free-cam spectate, no local restart. */
+  private tickOnlineDead(
+    dt: number,
+    input: import('../core/types').PlayerInput,
+  ) {
     this.sniper.ads = false
     this.sniper.adsBlend = Math.max(0, this.sniper.adsBlend - dt * 8)
     this.viewmodel.syncAnim(this.sniper.phase)
@@ -1313,20 +1382,37 @@ export class GameEngine {
     if (this.viewmodel.root) this.viewmodel.root.visible = false
     if (this.playerVisuals.body) this.playerVisuals.body.visible = false
 
-    this.camera.position.set(
-      this.player.position.x,
-      this.player.position.y + this.player.eyeHeight,
-      this.player.position.z,
-    )
-    this.camera.rotation.order = 'YXZ'
-    this.camera.rotation.y = this.player.yaw
-    this.camera.rotation.x = this.player.pitch
+    if (!this.freeCam) this.enterFreeCam()
+    if (this.freeCam) {
+      stepFreeCam(this.freeCam, input, dt)
+      this.camera.position.set(
+        this.freeCam.position.x,
+        this.freeCam.position.y,
+        this.freeCam.position.z,
+      )
+      this.camera.rotation.order = 'YXZ'
+      this.camera.rotation.y = this.freeCam.yaw
+      this.camera.rotation.x = this.freeCam.pitch
+    }
+
+    this.camera.fov = LOOK.hipFov
+    this.camera.updateProjectionMatrix()
 
     this.remotes.update(dt)
     this.combatFx.update(dt)
-    this.barrierVisuals.update(this.player.position)
+    this.barrierVisuals.update(
+      this.freeCam?.position ?? this.player.position,
+    )
     this.lastHitAge += dt
     this.spectateTimer = this.serverRespawnIn
+    // Keep sending pose so server ack doesn't stall (dead body frozen server-side)
+    if (this.net && this.localPlayerId) {
+      this.net.maybeSendInput(
+        { ...input, fire: false, jump: false },
+        dt,
+        this.player,
+      )
+    }
     this.emitHud()
   }
 
@@ -1441,54 +1527,99 @@ export class GameEngine {
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
 
-    // Same movement as offline practice — no fixed-step / no reconcile
-    stepPlayer(
-      this.player,
-      input,
-      dt,
-      this.colliders,
-      this.meshWorld,
-      this.barrierColliders,
-    )
+    // Countdown: freeze feet on team pad — look only until go.
+    const movementLocked = this.matchPhase === 'countdown'
+    const fireAllowed =
+      this.playerAlive &&
+      !movementLocked &&
+      (this.matchPhase === 'pregame' ||
+        this.matchPhase === 'live' ||
+        this.matchPhase === 'waiting' ||
+        this.matchPhase == null)
+
+    if (movementLocked) {
+      // Hold pad position; mouse look still updates yaw/pitch
+      this.player.velocity.x = 0
+      this.player.velocity.y = 0
+      this.player.velocity.z = 0
+      this.player.grounded = true
+      this.player.state = 'idle'
+      this.player.slideTimer = 0
+      this.player.yaw = input.yaw
+      this.player.pitch = input.pitch
+    } else {
+      // Same movement as offline practice — no fixed-step / no reconcile
+      stepPlayer(
+        this.player,
+        input,
+        dt,
+        this.colliders,
+        this.meshWorld,
+        this.barrierColliders,
+      )
+    }
 
     // Cosmetic sniper step (server overwrites ammo/phase on snapshot)
     stepSniper(this.sniper, input, dt)
 
     // Send pose + buttons (force on combat edges so rate limit never drops fire)
     if (this.net && this.localPlayerId) {
-      const edge = input.fire || input.reload || input.jump
-      if (edge) this.net.sendInputNow(input, this.player)
-      else this.net.maybeSendInput(input, dt, this.player)
+      const sendInput =
+        movementLocked || !fireAllowed
+          ? {
+              ...input,
+              forward: movementLocked ? 0 : input.forward,
+              right: movementLocked ? 0 : input.right,
+              jump: false,
+              sprint: movementLocked ? false : input.sprint,
+              fire: fireAllowed ? input.fire : false,
+            }
+          : input
+      const edge = sendInput.fire || sendInput.reload || sendInput.jump
+      if (edge) this.net.sendInputNow(sendInput, this.player)
+      else this.net.maybeSendInput(sendInput, dt, this.player)
     }
 
     if (this.playerVisuals.isMan) {
-      this.playerVisuals.syncLocomotion(this.player, input)
+      this.playerVisuals.syncLocomotion(
+        this.player,
+        movementLocked
+          ? { ...input, forward: 0, right: 0, jump: false, sprint: false }
+          : input,
+      )
       this.playerVisuals.update(dt)
     }
     this.viewmodel.syncAnim(this.sniper.phase)
     this.viewmodel.updateMixer(dt)
 
     const prevGrounded = this.viewFeel.wasGrounded
-    // Optimistic fire FX only — damage comes from server HitEvents
-    const fireResult = tryFire(this.sniper, input)
+    // Optimistic fire FX only — damage comes from server HitEvents.
+    // Online tracers are permanent until the next round.
+    const fireInput = fireAllowed ? input : { ...input, fire: false }
+    const fireResult = tryFire(this.sniper, fireInput)
     if (fireResult === 'shot') {
       gameAudio.playFire()
+      // Aim sample BEFORE recoil — matches offline fireShot + server resolveFire.
+      // Applying recoil first was kicking the optimistic tracer ~recoilKick above the crosshair.
+      const look = effectiveLook(this.player, this.sniper)
+      const origin = eyePosShared(this.player)
+      const spread = aimSpreadShared(this.sniper, this.player)
+      const dir = spreadLookDirection(look.yaw, look.pitch, spread)
+      const end = {
+        x: origin.x + dir.x * SNIPER.maxRange,
+        y: origin.y + dir.y * SNIPER.maxRange,
+        z: origin.z + dir.z * SNIPER.maxRange,
+      }
+      this.combatFx.showTracer(origin, dir, end, {
+        killed: false,
+        permanent: true,
+      })
       applyRecoil(this.sniper)
       // Full camera shake when fire kicks us out of ADS (bolt); soft only if still scoped (last-round reload).
       this.viewFeel.punchShot(
         this.sniper.adsBlend,
         this.sniper.ads ? this.sniper.adsBlend : 0,
       )
-      const look = effectiveLook(this.player, this.sniper)
-      const origin = eyePosShared(this.player)
-      const spread = aimSpreadShared(this.sniper, this.player)
-      const dir = spreadLookDirection(look.yaw, look.pitch, spread)
-      const end = {
-        x: origin.x + dir.x * SNIPER.maxRange * 0.25,
-        y: origin.y + dir.y * SNIPER.maxRange * 0.25,
-        z: origin.z + dir.z * SNIPER.maxRange * 0.25,
-      }
-      this.combatFx.showTracer(origin, dir, end, { killed: false })
     } else if (fireResult === 'dry') {
       gameAudio.playDryFire()
     }
@@ -1533,6 +1664,7 @@ export class GameEngine {
     // Push EVERY snapshot into remote interp (dropping intermediates made
     // other players teleport / sit in wrong lobby poses).
     for (const snap of snaps) {
+      for (const shot of snap.shots ?? []) this.applyNetShotEvent(shot)
       for (const ev of snap.events) this.applyNetHitEvent(ev)
       this.pushRemoteSnapshots(snap)
     }
@@ -1552,8 +1684,30 @@ export class GameEngine {
   private applyLocalSnapshot(snap: SnapshotMessage) {
     const selfId = this.localPlayerId
     const seen = new Set<string>()
+    const prevPhase = this.lastMatchPhase
+
     this.matchTimeLeft = snap.timeLeft ?? null
     this.matchWaiting = snap.phase === 'waiting'
+    this.matchPhase = snap.phase
+    this.matchPhaseTimer = snap.phaseTimer ?? 0
+    this.matchFirstTo = snap.firstTo ?? this.matchFirstTo
+
+    // Clear permanent tracers when a new round starts (countdown after reset / ready)
+    if (
+      snap.phase === 'countdown' &&
+      (prevPhase === 'round_reset' || prevPhase === 'pregame')
+    ) {
+      this.combatFx.clearTracers()
+    }
+
+    // Full look+pose snap when first entering countdown / respawning
+    const enteringCountdown =
+      snap.phase === 'countdown' &&
+      (prevPhase === 'round_reset' ||
+        prevPhase === 'pregame' ||
+        prevPhase === null)
+
+    this.lastMatchPhase = snap.phase
 
     for (const p of snap.players) {
       if (selfId && p.id === selfId) {
@@ -1563,6 +1717,7 @@ export class GameEngine {
         this.playerAlive = p.alive
         this.kills = p.kills
         this.serverRespawnIn = p.respawnIn ?? 0
+        this.localReady = p.ready === true
         this.sniper.ammo = p.ammo
         this.sniper.magSize = p.magSize
         if (p.phase !== this.sniper.phase) {
@@ -1573,15 +1728,21 @@ export class GameEngine {
         this.sniper.adsBlend = p.adsBlend
 
         const respawning = Boolean(wasAlive === false && p.alive)
+        // Whole countdown: pin feet to server team pad (movement locked)
+        const pinToPad = p.alive && snap.phase === 'countdown'
+        const fullSnap =
+          p.alive && (respawning || enteringCountdown)
+
         if (!p.alive) {
           this.deathReason = 'combat'
           this.spectateTimer = p.respawnIn ?? 0
-        } else if (respawning) {
+        } else if (fullSnap || pinToPad) {
           this.deathReason = null
           this.spectateTimer = 0
           this.freeCam = null
           this.voluntaryFreeCam = false
-          this.prediction.clear()
+          if (fullSnap) this.prediction.clear()
+          // Always pin feet/vel to server pad during countdown
           this.player.position.x = p.x
           this.player.position.y = p.y
           this.player.position.z = p.z
@@ -1590,21 +1751,42 @@ export class GameEngine {
           this.player.velocity.z = 0
           this.player.grounded = true
           this.player.state = 'idle'
-          this.player.yaw = p.yaw
-          this.player.pitch = p.pitch
-          this.input.setLook(p.yaw, p.pitch)
+          this.playSpawn = {
+            spawn: { x: p.x, y: p.y, z: p.z },
+            spawnYaw: p.yaw,
+          }
+          // Only force look on full snap so player can aim around during countdown
+          if (fullSnap) {
+            this.player.yaw = p.yaw
+            this.player.pitch = p.pitch
+            this.input.setLook(p.yaw, p.pitch)
+          }
           if (this.viewmodel.root && !this.thirdPerson) {
             this.viewmodel.root.visible = true
           }
         }
       } else {
         seen.add(p.id)
+        this.enemyKills = p.kills
+        this.enemyReady = p.ready === true
       }
     }
 
     for (const id of this.remotes.ids()) {
       if (!seen.has(id)) this.remotes.remove(id)
     }
+  }
+
+  /**
+   * Authoritative shot for permanent tracers. Skip local shooter — already
+   * drew an optimistic permanent tracer on fire.
+   */
+  private applyNetShotEvent(shot: NetShotEvent) {
+    if (shot.shooterId === this.localPlayerId) return
+    this.combatFx.showTracer(shot.origin, shot.dir, shot.end, {
+      killed: shot.hit?.killed === true,
+      permanent: true,
+    })
   }
 
   private applyNetHitEvent(ev: NetHitEvent) {
@@ -1630,6 +1812,20 @@ export class GameEngine {
       ev.zone === 'head' ? 'head' : 'body',
       ev.killed,
     )
+
+    // Upgrade local optimistic tracer to kill style when we confirm a kill
+    if (
+      ev.killed &&
+      ev.shooterId === this.localPlayerId &&
+      ev.origin &&
+      ev.dir &&
+      ev.end
+    ) {
+      this.combatFx.showTracer(ev.origin, ev.dir, ev.end, {
+        killed: true,
+        permanent: true,
+      })
+    }
 
     // Remote body reactions (local player is first-person — no body clip)
     if (ev.targetId !== this.localPlayerId) {
@@ -1815,6 +2011,13 @@ export class GameEngine {
       matchWinnerId: this.matchEnd?.winnerId ?? null,
       matchEndReason: this.matchEnd?.reason ?? null,
       matchWaiting: this.isOnline && this.matchWaiting,
+      matchPhase: this.isOnline ? this.matchPhase : null,
+      matchPhaseTimer: this.isOnline ? this.matchPhaseTimer : 0,
+      matchFirstTo: this.isOnline ? this.matchFirstTo : MATCH.firstTo,
+      localReady: this.isOnline && this.localReady,
+      enemyReady: this.isOnline && this.enemyReady,
+      enemyKills: this.isOnline ? this.enemyKills : 0,
+      teamColor: this.isOnline ? this.teamColor : null,
     }
     for (const fn of this.hudListeners) fn(snap)
   }

@@ -212,6 +212,72 @@
   animation: hitmarker-life 0.55s linear forwards;
 }
 
+/*
+ * Hit impact shake for hipfire crosshair + hitmarker.
+ * Applied via remount key (lastHitId) so HUD frame ticks don't restart it.
+ */
+@keyframes reticle-shake {
+  0% {
+    transform: translate(0, 0);
+  }
+  10% {
+    transform: translate(-2.4px, 1.6px);
+  }
+  22% {
+    transform: translate(2.6px, -2.1px);
+  }
+  34% {
+    transform: translate(-2.1px, -1.4px);
+  }
+  48% {
+    transform: translate(1.8px, 1.9px);
+  }
+  62% {
+    transform: translate(-1.1px, 0.9px);
+  }
+  78% {
+    transform: translate(0.7px, -0.5px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes reticle-shake-hard {
+  0% {
+    transform: translate(0, 0);
+  }
+  8% {
+    transform: translate(-3.6px, 2.4px);
+  }
+  18% {
+    transform: translate(3.8px, -3.1px);
+  }
+  30% {
+    transform: translate(-3.2px, -2.2px);
+  }
+  44% {
+    transform: translate(2.6px, 2.8px);
+  }
+  58% {
+    transform: translate(-1.8px, 1.4px);
+  }
+  74% {
+    transform: translate(1.1px, -0.9px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+.reticle-shake {
+  animation: reticle-shake 0.2s ease-out;
+}
+
+.reticle-shake-hard {
+  animation: reticle-shake-hard 0.26s ease-out;
+}
+
 /* Damage float: rise + hold + fade once per hit (keep x-center in transform) */
 @keyframes hitmarker-dmg {
   0% {

@@ -17,6 +17,8 @@ interface GameHudProps {
   onOpenSettings?: () => void
   /** Return to map select (main page). */
   onExit?: () => void
+  /** Pregame ready toggle (online). */
+  onReady?: (ready: boolean) => void
 }
 
 /** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
@@ -77,6 +79,25 @@ function matchEndTitle(reason: HudSnapshot['matchEndReason']): string {
   if (reason === 'forfeit' || reason === 'disconnect') return 'Forfeit'
   if (reason === 'time') return 'Time'
   return 'Match over'
+}
+
+function matchPhaseLabel(phase: NonNullable<HudSnapshot['matchPhase']>): string {
+  switch (phase) {
+    case 'waiting':
+      return 'waiting'
+    case 'pregame':
+      return 'pregame'
+    case 'countdown':
+      return 'countdown'
+    case 'live':
+      return 'live'
+    case 'round_reset':
+      return 'reset'
+    case 'ended':
+      return 'ended'
+    default:
+      return phase
+  }
 }
 
 /** Shared tactical glass panel used across HUD chrome. */
@@ -244,9 +265,15 @@ function HitMarkerX({
   // Display size (art is 25×25). Slightly larger on head/kill for readability only.
   const size = kill ? 28 : head ? 26 : 24
   // How far each corner starts outside its rest pose (px in SVG space)
-  const shootPx = 10
-  const shootDur = 0.05
-  const shootEase = [0.2, 0.85, 0.25, 1] as const
+  const shootPx = 16
+  // Fade in while still offset, then punch into rest (numeric animate values so
+  // HUD re-renders do not restart keyframe arrays as a pulse).
+  const fadeDur = 0.07
+  const shootDur = 0.09
+  const stagger = 0.01
+  /** Fade first, then accelerate into place */
+  const fadeEase = [0.2, 0.8, 0.3, 1] as const
+  const shootEase = [0.55, 0.02, 0.35, 1] as const
   // Prefer art red on kill; otherwise HUD color (white body / gold head)
   const fill = kill ? HITMARKER_ART_RED : color
 
@@ -275,23 +302,41 @@ function HitMarkerX({
         }}
       >
         <g transform="translate(-19.690239,-27.701106)">
-          {HITMARKER_CORNERS.map((c, i) => (
-            <motion.path
-              key={i}
-              d={c.d}
-              fill={fill}
-              initial={{
-                x: c.ox * shootPx,
-                y: c.oy * shootPx,
-              }}
-              animate={{ x: 0, y: 0 }}
-              transition={{
-                duration: shootDur,
-                ease: shootEase,
-                delay: i * 0.006,
-              }}
-            />
-          ))}
+          {HITMARKER_CORNERS.map((c, i) => {
+            const delay = i * stagger
+            return (
+              <motion.path
+                key={i}
+                d={c.d}
+                fill={fill}
+                initial={{
+                  x: c.ox * shootPx,
+                  y: c.oy * shootPx,
+                  opacity: 0,
+                }}
+                animate={{ x: 0, y: 0, opacity: 1 }}
+                transition={{
+                  opacity: {
+                    duration: fadeDur,
+                    ease: fadeEase,
+                    delay,
+                  },
+                  x: {
+                    duration: shootDur,
+                    ease: shootEase,
+                    // Start travel once fade is mostly done so corners
+                    // appear out wide, then speed into rest.
+                    delay: delay + fadeDur * 0.55,
+                  },
+                  y: {
+                    duration: shootDur,
+                    ease: shootEase,
+                    delay: delay + fadeDur * 0.55,
+                  },
+                }}
+              />
+            )
+          })}
         </g>
       </svg>
     </div>
@@ -319,7 +364,12 @@ function ChromeBtn({
   )
 }
 
-export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
+export function GameHud({
+  hud,
+  onOpenSettings,
+  onExit,
+  onReady,
+}: GameHudProps) {
   if (!hud) return null
 
   const phaseLabel =
@@ -340,8 +390,21 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
   const thick = gap > 100 ? 2.5 : 2
   const chromeOpacity = fullyScoped ? 0.32 : 1
   const hit = hud.lastHit
+  /** Body hits get a light punch; head/kill hit a harder reticle shake. */
+  const reticleShakeClass =
+    showHit && hit
+      ? hit.killed || hit.zone === 'head'
+        ? 'reticle-shake-hard'
+        : 'reticle-shake'
+      : undefined
   const lowAmmo = hud.ammo <= 1
   const emptyMag = hud.ammo === 0
+  const online = hud.matchPhase != null
+  const inPregame = hud.matchPhase === 'pregame'
+  const inCountdown = hud.matchPhase === 'countdown'
+  const inRoundReset = hud.matchPhase === 'round_reset'
+  const countdownN = Math.max(0, Math.ceil(hud.matchPhaseTimer))
+  const firstTo = hud.matchFirstTo || 7
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
@@ -368,7 +431,110 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
                 Waiting for opponent…
               </div>
               <div className="mt-1 text-xs text-white/45">
-                Share the same match id — first to score wins.
+                Share the same match id — first to {firstTo} wins.
+              </div>
+            </HudPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Pregame: free fire until both ready */}
+      <AnimatePresence>
+        {inPregame && !hud.matchWaiting && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="pointer-events-none absolute bottom-24 left-1/2 z-40 w-[min(28rem,92vw)] -translate-x-1/2"
+          >
+            <HudPanel className="px-6 py-4 text-center" accent="tech">
+              <div className="text-[10px] font-semibold tracking-[0.28em] text-arena-tech uppercase">
+                Pre-game
+              </div>
+              <div className="mt-1 text-sm font-semibold">
+                Warmup — run around and shoot. First to {firstTo} when live.
+              </div>
+              <div className="mt-2 flex items-center justify-center gap-4 text-xs">
+                <span
+                  className={cn(
+                    'font-mono uppercase tracking-wide',
+                    hud.localReady ? 'text-arena-ok' : 'text-white/45',
+                  )}
+                >
+                  You: {hud.localReady ? 'Ready' : 'Not ready'}
+                </span>
+                <span className="text-white/20">|</span>
+                <span
+                  className={cn(
+                    'font-mono uppercase tracking-wide',
+                    hud.enemyReady ? 'text-arena-ok' : 'text-white/45',
+                  )}
+                >
+                  Opp: {hud.enemyReady ? 'Ready' : 'Not ready'}
+                </span>
+              </div>
+              {onReady && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.uiConfirm()
+                    onReady(!hud.localReady)
+                  }}
+                  className={cn(
+                    'pointer-events-auto mt-3 inline-flex items-center gap-2 rounded-md border px-5 py-2 text-xs font-semibold tracking-wide uppercase transition-colors',
+                    hud.localReady
+                      ? 'border-white/20 bg-white/10 text-white/70 hover:bg-white/15'
+                      : 'border-arena-ok/50 bg-arena-ok/20 text-arena-ok hover:bg-arena-ok/30',
+                  )}
+                >
+                  {hud.localReady ? 'Unready' : 'Ready up'}
+                </button>
+              )}
+            </HudPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Round countdown */}
+      <AnimatePresence>
+        {inCountdown && countdownN > 0 && (
+          <motion.div
+            key={`cd-${countdownN}`}
+            initial={{ opacity: 0, scale: 1.15 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center"
+          >
+            <div className="text-center">
+              <div className="text-[10px] font-semibold tracking-[0.35em] text-white/50 uppercase">
+                Round starting
+              </div>
+              <div className="mt-1 font-mono text-7xl font-bold tabular-nums text-white drop-shadow-[0_0_24px_rgba(255,120,40,0.55)]">
+                {countdownN}
+              </div>
+              <div className="mt-1 text-xs text-white/40">
+                Weapons locked until go
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Round reset after kill */}
+      <AnimatePresence>
+        {inRoundReset && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none absolute top-20 left-1/2 z-40 -translate-x-1/2"
+          >
+            <HudPanel className="px-5 py-2.5 text-center" accent="heat">
+              <div className="text-[10px] font-semibold tracking-[0.25em] text-arena-heat uppercase">
+                Round over
+              </div>
+              <div className="mt-0.5 font-mono text-sm tabular-nums text-white/70">
+                Reset in {countdownN}s
               </div>
             </HudPanel>
           </motion.div>
@@ -392,7 +558,10 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
                 {hud.matchWinnerId ? 'Winner decided' : 'Draw'}
               </div>
               <div className="mt-2 font-mono text-sm text-white/70">
-                Your elims: {hud.kills}
+                {hud.kills} – {hud.enemyKills}
+                <span className="ml-2 text-white/40">
+                  (first to {firstTo})
+                </span>
               </div>
               {onExit && (
                 <button
@@ -426,22 +595,49 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
               aria-hidden
               className="size-4 object-contain drop-shadow-sm"
             />
-            <HudLabel>Dual Arena</HudLabel>
+            <HudLabel>
+              {online
+                ? hud.teamColor === 'red'
+                  ? 'Red'
+                  : hud.teamColor === 'blue'
+                    ? 'Blue'
+                    : 'Dual Arena'
+                : 'Dual Arena'}
+            </HudLabel>
           </div>
           <div className="mt-2 flex items-end gap-3">
             <div>
-              <div className="font-mono text-3xl font-bold leading-none tracking-tight tabular-nums text-arena-heat drop-shadow-[0_0_12px_var(--arena-heat-dim)]">
-                {hud.kills}
-              </div>
-              <div className="mt-0.5 text-[10px] tracking-widest text-white/45 uppercase">
-                Elims
-              </div>
+              {online ? (
+                <>
+                  <div className="font-mono text-3xl font-bold leading-none tracking-tight tabular-nums">
+                    <span className="text-arena-heat drop-shadow-[0_0_12px_var(--arena-heat-dim)]">
+                      {hud.kills}
+                    </span>
+                    <span className="mx-1 text-lg text-white/25">–</span>
+                    <span className="text-white/80">{hud.enemyKills}</span>
+                  </div>
+                  <div className="mt-0.5 text-[10px] tracking-widest text-white/45 uppercase">
+                    First to {firstTo}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-mono text-3xl font-bold leading-none tracking-tight tabular-nums text-arena-heat drop-shadow-[0_0_12px_var(--arena-heat-dim)]">
+                    {hud.kills}
+                  </div>
+                  <div className="mt-0.5 text-[10px] tracking-widest text-white/45 uppercase">
+                    Elims
+                  </div>
+                </>
+              )}
             </div>
             <div className="mb-0.5 h-8 w-px bg-white/10" />
             <div className="min-w-0 pb-0.5">
               <div className="flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-white/70 uppercase">
                 <Zap className="size-3 text-arena-tech" />
-                {hud.moveState}
+                {online && hud.matchPhase
+                  ? matchPhaseLabel(hud.matchPhase)
+                  : hud.moveState}
               </div>
               <div className="mt-0.5 font-mono text-[11px] tabular-nums text-white/40">
                 {hud.speed.toFixed(1)} m/s
@@ -512,87 +708,94 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
         cannot drift relative to each other.
       */}
       <div className="pointer-events-none absolute top-1/2 left-1/2 z-20 h-0 w-0">
-        {/* Hipfire crosshair — box centered on the pivot */}
-        {!fullyScoped && !hud.spectating && (
-          <div
-            className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
-            style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
-          >
+        {/*
+          Impact shake on the whole reticle group (crosshair + hitmarker).
+          key=lastHitId remounts so the CSS shake restarts only on a new hit —
+          not on every HUD frame. Damage float stays outside so numbers stay readable.
+        */}
+        <div
+          key={showHit ? `reticle-${hud.lastHitId}` : 'reticle-idle'}
+          className={cn(reticleShakeClass)}
+        >
+          {/* Hipfire crosshair — box centered on the pivot */}
+          {!fullyScoped && !hud.spectating && (
             <div
-              className="relative"
-              style={{
-                width: gap * 2 + arm * 2 + 8,
-                height: gap * 2 + arm * 2 + 8,
-                transition: 'width 70ms linear, height 70ms linear',
-              }}
+              className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
+              style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
             >
               <div
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-                style={{ width: 2, height: 2 }}
-              />
-              <div
-                className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                className="relative"
                 style={{
-                  width: thick,
-                  height: arm,
-                  top: `calc(50% - ${gap}px - ${arm}px)`,
-                  transition:
-                    'top 70ms linear, height 70ms linear, width 70ms linear',
+                  width: gap * 2 + arm * 2 + 8,
+                  height: gap * 2 + arm * 2 + 8,
+                  transition: 'width 70ms linear, height 70ms linear',
                 }}
-              />
-              <div
-                className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-                style={{
-                  width: thick,
-                  height: arm,
-                  top: `calc(50% + ${gap}px)`,
-                  transition:
-                    'top 70ms linear, height 70ms linear, width 70ms linear',
-                }}
-              />
-              <div
-                className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-                style={{
-                  height: thick,
-                  width: arm,
-                  left: `calc(50% - ${gap}px - ${arm}px)`,
-                  transition:
-                    'left 70ms linear, width 70ms linear, height 70ms linear',
-                }}
-              />
-              <div
-                className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
-                style={{
-                  height: thick,
-                  width: arm,
-                  left: `calc(50% + ${gap}px)`,
-                  transition:
-                    'left 70ms linear, width 70ms linear, height 70ms linear',
-                }}
+              >
+                <div
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                  style={{ width: 2, height: 2 }}
+                />
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                  style={{
+                    width: thick,
+                    height: arm,
+                    top: `calc(50% - ${gap}px - ${arm}px)`,
+                    transition:
+                      'top 70ms linear, height 70ms linear, width 70ms linear',
+                  }}
+                />
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                  style={{
+                    width: thick,
+                    height: arm,
+                    top: `calc(50% + ${gap}px)`,
+                    transition:
+                      'top 70ms linear, height 70ms linear, width 70ms linear',
+                  }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                  style={{
+                    height: thick,
+                    width: arm,
+                    left: `calc(50% - ${gap}px - ${arm}px)`,
+                    transition:
+                      'left 70ms linear, width 70ms linear, height 70ms linear',
+                  }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+                  style={{
+                    height: thick,
+                    width: arm,
+                    left: `calc(50% + ${gap}px)`,
+                    transition:
+                      'left 70ms linear, width 70ms linear, height 70ms linear',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/*
+            Lifecycle via static CSS classes (theme.css). HUD re-renders every
+            frame; framer keyframe arrays / inline animation styles restart and
+            read as a pulse. Class animations only restart on remount (new key).
+          */}
+          {showHit && hit && (
+            <div className="hitmarker-life absolute top-0 left-0">
+              <HitMarkerX
+                color={hitmarkerColor(hit)}
+                kill={hit.killed}
+                head={hit.zone === 'head'}
               />
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/*
-          Lifecycle via static CSS classes (theme.css). HUD re-renders every
-          frame; framer keyframe arrays / inline animation styles restart and
-          read as a pulse. Class animations only restart on remount (new key).
-        */}
-        {showHit && hit && (
-          <div
-            key={hud.lastHitId}
-            className="hitmarker-life absolute top-0 left-0"
-          >
-            <HitMarkerX
-              color={hitmarkerColor(hit)}
-              kill={hit.killed}
-              head={hit.zone === 'head'}
-            />
-          </div>
-        )}
-
-        {/* Damage float — same once-per-mount CSS lifecycle */}
+        {/* Damage float — same once-per-mount CSS lifecycle (no shake) */}
         {showHit && hit && (
           <div
             key={`dmg-${hud.lastHitId}`}
