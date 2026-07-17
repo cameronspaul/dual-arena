@@ -390,6 +390,24 @@ export const PLAYER = {
   bodyHeadClearance: 0.1,
 } as const
 
+/**
+ * Player death / fall kill / free-cam spectate (round restart loop).
+ * Fall death is opt-in per map via MapDef.fallDeath.
+ */
+export const DEATH = {
+  /** Free-cam spectate duration before the round restarts (seconds). */
+  spectateDuration: 5,
+  /**
+   * Kill when feet drop this many meters below the lowest spawn pad Y
+   * (or catalog spawn Y when no team pads exist).
+   */
+  fallKillDepth: 12,
+  /** Free-cam fly speed (m/s). */
+  freeCamSpeed: 14,
+  /** Sprint multiplier while free-camming. */
+  freeCamSprintMul: 2.2,
+} as const
+
 export const WORLD = {
   floorSize: 48,
   /** Dummy placements on the range */

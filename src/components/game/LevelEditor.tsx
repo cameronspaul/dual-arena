@@ -50,6 +50,8 @@ export function LevelEditor({ engine, open, mapName, onClose }: Props) {
   const [wallLength, setWallLength] = useState(8)
   const [wallHeight, setWallHeight] = useState(4)
   const [wallThickness, setWallThickness] = useState(0.5)
+  const [infiniteHeight, setInfiniteHeight] = useState(false)
+  const [infiniteWidth, setInfiniteWidth] = useState(false)
   const [status, setStatus] = useState('')
   const [pos, setPos] = useState({ x: 0, y: 0, z: 0, yaw: 0 })
   const spawnFileRef = useRef<HTMLInputElement>(null)
@@ -71,6 +73,8 @@ export function LevelEditor({ engine, open, mapName, onClose }: Props) {
     setWallLength(defs.length)
     setWallHeight(defs.height)
     setWallThickness(defs.thickness)
+    setInfiniteHeight(defs.infiniteHeight)
+    setInfiniteWidth(defs.infiniteWidth)
     setLayout(engine.getSpawnLayout())
     setBarriers(engine.getBarrierLayout())
     setStatus('Walk the map (collides) — Space/crouch to fly, LMB place')
@@ -115,8 +119,18 @@ export function LevelEditor({ engine, open, mapName, onClose }: Props) {
       length: wallLength,
       height: wallHeight,
       thickness: wallThickness,
+      infiniteHeight,
+      infiniteWidth,
     })
-  }, [wallLength, wallHeight, wallThickness, open, engine])
+  }, [
+    wallLength,
+    wallHeight,
+    wallThickness,
+    infiniteHeight,
+    infiniteWidth,
+    open,
+    engine,
+  ])
 
   // Hotkeys while editor is open (don't steal when typing in inputs)
   useEffect(() => {
@@ -522,29 +536,62 @@ export function LevelEditor({ engine, open, mapName, onClose }: Props) {
             <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 p-2 leading-relaxed text-amber-50/80">
               <div className="mb-1 font-medium text-amber-100">Barrier walls</div>
               <p>
-                Invisible blockers that stop walking (and bullets). Place while
-                facing the direction you want to block — the thin face orients
-                to your look (cardinal snap). Amber boxes only show in the
-                editor.
+                Invisible blockers that stop walking (and bullets). In-game
+                they show red no-entry signs when you get close. Amber boxes
+                are editor-only. Face the block direction (cardinal snap).
+                Use ∞ height / width for map-edge walls.
               </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="flex cursor-pointer items-center gap-2 text-white/80">
+                <input
+                  type="checkbox"
+                  checked={infiniteHeight}
+                  onChange={(e) => {
+                    setInfiniteHeight(e.target.checked)
+                    gameAudio.uiClick()
+                  }}
+                />
+                <span>
+                  Infinite height{' '}
+                  <span className="text-white/40">(blocks jumps / fly)</span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-white/80">
+                <input
+                  type="checkbox"
+                  checked={infiniteWidth}
+                  onChange={(e) => {
+                    setInfiniteWidth(e.target.checked)
+                    gameAudio.uiClick()
+                  }}
+                />
+                <span>
+                  Infinite width{' '}
+                  <span className="text-white/40">(runs forever along wall)</span>
+                </span>
+              </label>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
               <SizeField
-                label="Length"
+                label={infiniteWidth ? 'Length (∞)' : 'Length'}
                 value={wallLength}
                 min={0.5}
                 max={80}
                 step={0.5}
                 onChange={setWallLength}
+                disabled={infiniteWidth}
               />
               <SizeField
-                label="Height"
+                label={infiniteHeight ? 'Height (∞)' : 'Height'}
                 value={wallHeight}
                 min={0.5}
                 max={40}
                 step={0.25}
                 onChange={setWallHeight}
+                disabled={infiniteHeight}
               />
               <SizeField
                 label="Thick"
@@ -559,6 +606,7 @@ export function LevelEditor({ engine, open, mapName, onClose }: Props) {
             <div className="flex flex-wrap gap-1.5">
               <Btn onClick={place} primary="amber">
                 Place wall
+                {(infiniteHeight || infiniteWidth) && ' ∞'}
               </Btn>
               <Btn
                 onClick={() => {
@@ -732,6 +780,7 @@ function SizeField({
   max,
   step,
   onChange,
+  disabled,
 }: {
   label: string
   value: number
@@ -739,9 +788,10 @@ function SizeField({
   max: number
   step: number
   onChange: (n: number) => void
+  disabled?: boolean
 }) {
   return (
-    <label className="block">
+    <label className={`block ${disabled ? 'opacity-45' : ''}`}>
       <span className="mb-0.5 block text-[10px] text-white/45">{label}</span>
       <input
         type="number"
@@ -749,11 +799,12 @@ function SizeField({
         max={max}
         step={step}
         value={value}
+        disabled={disabled}
         onChange={(e) => {
           const n = Number(e.target.value)
           if (Number.isFinite(n)) onChange(n)
         }}
-        className="w-full rounded-md border border-white/15 bg-black/50 px-1.5 py-1 font-mono text-[11px] text-white outline-none focus:border-amber-400/50"
+        className="w-full rounded-md border border-white/15 bg-black/50 px-1.5 py-1 font-mono text-[11px] text-white outline-none focus:border-amber-400/50 disabled:cursor-not-allowed"
       />
     </label>
   )
@@ -827,6 +878,18 @@ function SpawnList({
   )
 }
 
+function barrierSizeLabel(b: BarrierWall) {
+  const w = b.infiniteWidth && b.width >= b.depth ? '∞' : fmt(b.width)
+  const h = b.infiniteHeight ? '∞' : fmt(b.height)
+  const d = b.infiniteWidth && b.depth > b.width ? '∞' : fmt(b.depth)
+  // When width == depth and infinite width, show ∞ on the long axis we expand
+  // (both equal → length was set equal to thickness; rare)
+  if (b.infiniteWidth && b.width === b.depth) {
+    return `∞×${h}×${fmt(b.depth)}`
+  }
+  return `${w}×${h}×${d}`
+}
+
 function BarrierList({
   items,
   onGo,
@@ -868,8 +931,11 @@ function BarrierList({
                 {fmt(b.x)} {fmt(b.y)} {fmt(b.z)}
                 <span className="text-white/35">
                   {' '}
-                  · {fmt(b.width)}×{fmt(b.height)}×{fmt(b.depth)}
+                  · {barrierSizeLabel(b)}
                 </span>
+                {(b.infiniteHeight || b.infiniteWidth) && (
+                  <span className="ml-1 text-orange-300/90">∞</span>
+                )}
               </span>
               <button
                 type="button"

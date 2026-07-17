@@ -3,9 +3,14 @@
  */
 import * as THREE from 'three'
 import { gameAudio } from '../core/audio'
-import { LOOK } from '../core/config'
+import { DEATH, LOOK, PLAYER } from '../core/config'
 import { InputManager } from '../core/input'
-import type { HitEvent, HudSnapshot, SniperState } from '../core/types'
+import type {
+  DeathReason,
+  HitEvent,
+  HudSnapshot,
+  SniperState,
+} from '../core/types'
 import { stepEditorMove } from '../editor/noclip'
 import { LevelEditorSystem } from '../editor/LevelEditorSystem'
 import {
@@ -14,12 +19,12 @@ import {
   getMap,
   loadEnvForMap,
   loadGltfMap,
+  authoredBarrierLayout,
   authoredLayout,
   BARRIER_DEFAULTS,
   barriersToAabbs,
   clearBarrierLayout,
   clearSpawnLayout,
-  emptyBarrierLayout,
   loadBarrierLayout,
   loadSpawnLayout,
   makeBarrierId,
@@ -38,20 +43,28 @@ import {
 } from '../maps'
 import { facingXZ } from '../core/math'
 import type { SkyboxId } from '../scene/skyboxes'
-import { createPlayer, stepPlayer } from '../sim/player'
+import { computeFallKillY, isBelowFallKill } from '../sim/death'
+import { createPlayer, eyePosition, stepPlayer } from '../sim/player'
 import {
   aimSpread,
   applyRecoil,
   createSniper,
+  resetSniper,
   stepSniper,
   tryFire,
 } from '../sim/sniper'
+import {
+  createFreeCam,
+  stepFreeCam,
+  type FreeCamState,
+} from '../sim/spectate'
 import {
   createDummies,
   stepDummies,
   stepRespawns,
   type RespawnTimer,
 } from '../sim/world'
+import { BarrierVisuals } from '../systems/BarrierVisuals'
 import { CombatFx } from '../systems/CombatFx'
 import { DummySystem } from '../systems/DummySystem'
 import { PlayerVisuals } from '../systems/PlayerVisuals'
@@ -84,12 +97,21 @@ export class GameEngine {
   private running = false
   private raf = 0
   private lastTime = 0
+  /** EMA of frame time (seconds) for a stable FPS readout. */
+  private frameTimeEma = 1 / 60
+  private fps = 60
+  /**
+   * Last measured RTT to the game server (ms). Stays null until multiplayer
+   * session wiring lands — local range has no network hop.
+   */
+  private pingMs: number | null = null
   private container: HTMLElement
 
   private viewmodel = new ViewmodelSystem()
   private dummiesSys = new DummySystem()
   private playerVisuals = new PlayerVisuals()
   private combatFx = new CombatFx()
+  private barrierVisuals = new BarrierVisuals()
   private viewFeel = new ViewFeel()
 
   private hudListeners = new Set<HudListener>()
@@ -97,7 +119,22 @@ export class GameEngine {
   private lastHitAge = 999
   private lastHitId = 0
   private kills = 0
-  private playerHp = 100
+  private playerHp: number = PLAYER.maxHp
+  private playerAlive = true
+  private deathReason: DeathReason | null = null
+  /** Countdown while free-cam spectating after death. */
+  private spectateTimer = 0
+  private freeCam: FreeCamState | null = null
+  /**
+   * Feet Y kill plane (spawn min Y − depth). Null when fall death is off
+   * for this map or still loading.
+   */
+  private fallKillY: number | null = null
+  /** Last applied play spawn — used when restarting the round after death. */
+  private playSpawn = {
+    spawn: { x: 0, y: 0, z: 8 },
+    spawnYaw: 0,
+  }
   private clock = new THREE.Clock()
   private floorMat: THREE.MeshStandardMaterial | null = null
   private coverMat: THREE.MeshStandardMaterial | null = null
@@ -127,6 +164,8 @@ export class GameEngine {
   private barrierLength: number = BARRIER_DEFAULTS.length
   private barrierHeight: number = BARRIER_DEFAULTS.height
   private barrierThickness: number = BARRIER_DEFAULTS.thickness
+  private barrierInfiniteHeight: boolean = BARRIER_DEFAULTS.infiniteHeight
+  private barrierInfiniteWidth: boolean = BARRIER_DEFAULTS.infiniteWidth
   private lastPlacedSpawnId: string | null = null
   private lastPlacedBarrierId: string | null = null
   private spawnLayoutListeners = new Set<(layout: MapSpawnLayout) => void>()
@@ -183,8 +222,10 @@ export class GameEngine {
     this.combatFx.build(this.scene)
     this.playerVisuals.buildPlaceholder(this.scene)
     this.scene.add(this.levelEditor.root)
+    this.scene.add(this.barrierVisuals.root)
     this.levelEditor.sync(this.spawnLayout.spawns)
     this.levelEditor.syncBarriers(this.barrierLayout.barriers)
+    this.barrierVisuals.sync(this.barrierLayout.barriers)
     void this.bootstrapMap()
     void this.viewmodel.load(this.camera, this.scene)
     this.input.attach(this.renderer.domElement)
@@ -207,6 +248,10 @@ export class GameEngine {
     this.player.yaw = spawnYaw
     this.player.pitch = 0
     this.player.grounded = true
+    this.player.state = 'idle'
+    this.player.slideTimer = 0
+    this.player.slideCd = 0
+    this.player.slideSpeed = 0
     this.input.setLook(spawnYaw, 0)
   }
 
@@ -217,10 +262,96 @@ export class GameEngine {
   }) {
     const pad = pickPlaySpawn(this.spawnLayout)
     if (pad) {
-      this.applySpawn({ x: pad.x, y: pad.y, z: pad.z }, pad.yaw)
+      this.playSpawn = {
+        spawn: { x: pad.x, y: pad.y, z: pad.z },
+        spawnYaw: pad.yaw,
+      }
+      this.applySpawn(this.playSpawn.spawn, this.playSpawn.spawnYaw)
+      this.rebuildFallKillY()
       return
     }
+    this.playSpawn = {
+      spawn: { ...fallback.spawn },
+      spawnYaw: fallback.spawnYaw,
+    }
     this.applySpawn(fallback.spawn, fallback.spawnYaw)
+    this.rebuildFallKillY()
+  }
+
+  /** Recompute fall kill plane from current team pads + catalog fallback. */
+  private rebuildFallKillY() {
+    this.fallKillY = computeFallKillY({
+      enabled: this.mapDef.fallDeath,
+      depth: this.mapDef.fallKillDepth,
+      spawnYs: this.spawnLayout.spawns.map((s) => s.y),
+      fallbackSpawnY: this.playSpawn.spawn.y,
+    })
+  }
+
+  /**
+   * Local player death → free-cam spectate for DEATH.spectateDuration,
+   * then restartRound(). Safe to call only once while already dead.
+   */
+  private killPlayer(reason: DeathReason) {
+    if (!this.playerAlive || this.levelEditorActive) return
+    this.playerAlive = false
+    this.playerHp = 0
+    this.deathReason = reason
+    this.spectateTimer = DEATH.spectateDuration
+
+    // Freeze body at death pose; free-cam detaches from the corpse.
+    this.player.velocity.x = 0
+    this.player.velocity.y = 0
+    this.player.velocity.z = 0
+    this.sniper.ads = false
+    this.sniper.adsBlend = 0
+
+    const eye = eyePosition(this.player)
+    this.freeCam = createFreeCam(eye, this.player.yaw, this.player.pitch)
+
+    // Show third-person body so freecam can orbit the death spot / tracers.
+    if (this.playerVisuals.body) {
+      this.playerVisuals.body.visible = true
+    }
+    if (this.viewmodel.root) this.viewmodel.root.visible = false
+
+    gameAudio.unlock()
+    // Soft confirm — dedicated death sting can replace later.
+    gameAudio.play('hitBody', { volume: 0.55 })
+  }
+
+  /** Respawn at play pad, full HP / mag, exit free-cam. Keeps match kills. */
+  private restartRound() {
+    this.playerAlive = true
+    this.playerHp = PLAYER.maxHp
+    this.deathReason = null
+    this.spectateTimer = 0
+    this.freeCam = null
+    resetSniper(this.sniper)
+    this.prevSniperPhase = 'ready'
+    this.applyPlaySpawn(this.playSpawn)
+
+    if (this.playerVisuals.body) {
+      this.playerVisuals.body.visible = this.thirdPerson
+    }
+    if (this.viewmodel.root && !this.thirdPerson) {
+      this.viewmodel.root.visible = true
+    }
+  }
+
+  /** Public entry for future combat damage (hitscan vs local player). */
+  damagePlayer(amount: number, reason: DeathReason = 'combat') {
+    if (!this.playerAlive || this.levelEditorActive) return
+    this.playerHp = Math.max(0, this.playerHp - amount)
+    if (this.playerHp <= 0) this.killPlayer(reason)
+  }
+
+  isPlayerAlive() {
+    return this.playerAlive
+  }
+
+  isSpectating() {
+    return !this.playerAlive && this.freeCam !== null
   }
 
   private async bootstrapMap() {
@@ -468,6 +599,8 @@ export class GameEngine {
       length: this.barrierLength,
       height: this.barrierHeight,
       thickness: this.barrierThickness,
+      infiniteHeight: this.barrierInfiniteHeight,
+      infiniteWidth: this.barrierInfiniteWidth,
     }
   }
 
@@ -475,11 +608,19 @@ export class GameEngine {
     length?: number
     height?: number
     thickness?: number
+    infiniteHeight?: boolean
+    infiniteWidth?: boolean
   }) {
     if (opts.length != null && opts.length > 0.1) this.barrierLength = opts.length
     if (opts.height != null && opts.height > 0.1) this.barrierHeight = opts.height
     if (opts.thickness != null && opts.thickness > 0.05) {
       this.barrierThickness = opts.thickness
+    }
+    if (opts.infiniteHeight != null) {
+      this.barrierInfiniteHeight = opts.infiniteHeight
+    }
+    if (opts.infiniteWidth != null) {
+      this.barrierInfiniteWidth = opts.infiniteWidth
     }
   }
 
@@ -523,6 +664,15 @@ export class GameEngine {
       )
       if (floor !== null) floorY = floor
     }
+    // Signs face the placer: thin-axis face whose normal points back at the player
+    const alongX = size.width >= size.depth
+    const signFace: 1 | -1 = alongX
+      ? look.z < 0
+        ? 1
+        : -1
+      : look.x < 0
+        ? 1
+        : -1
     const wall: BarrierWall = {
       id: makeBarrierId(this.barrierLayout.barriers),
       x,
@@ -531,6 +681,9 @@ export class GameEngine {
       width: size.width,
       height: size.height,
       depth: size.depth,
+      infiniteHeight: this.barrierInfiniteHeight,
+      infiniteWidth: this.barrierInfiniteWidth,
+      signFace,
     }
     this.barrierLayout.barriers.push(wall)
     this.lastPlacedBarrierId = wall.id
@@ -559,14 +712,21 @@ export class GameEngine {
   }
 
   clearAllBarriers() {
+    // Drop browser override so baked authored walls (e.g. tdm-location) return
     clearBarrierLayout(this.mapDef.id)
-    this.barrierLayout = emptyBarrierLayout(this.mapDef.id)
+    this.barrierLayout = authoredBarrierLayout(this.mapDef.id)
     this.lastPlacedBarrierId = null
     this.rebuildBarrierColliders()
     this.levelEditor.syncBarriers(this.barrierLayout.barriers)
     this.levelEditor.highlightBarrier(null)
+    this.barrierVisuals.sync(this.barrierLayout.barriers)
     const snap = this.getBarrierLayout()
     for (const fn of this.barrierLayoutListeners) fn(snap)
+  }
+
+  /** Force authored barrier defaults (clears localStorage override). */
+  resetBarriersToAuthored() {
+    this.clearAllBarriers()
   }
 
   setBarrierLayout(layout: MapBarrierLayout) {
@@ -582,13 +742,16 @@ export class GameEngine {
   goToBarrier(id: string): boolean {
     const b = this.barrierLayout.barriers.find((w) => w.id === id)
     if (!b) return false
-    // Stand just outside the thin face
+    // Stand just outside the thin face (finite thickness, not infinite axes)
     const halfThin = Math.min(b.width, b.depth) * 0.5 + this.player.radius + 0.4
     const alongX = b.width < b.depth
+    const feetY = b.infiniteHeight
+      ? Math.max(0, b.y - b.height * 0.5)
+      : b.y - b.height * 0.5
     this.applySpawn(
       {
         x: alongX ? b.x + halfThin : b.x,
-        y: b.y - b.height * 0.5,
+        y: feetY,
         z: alongX ? b.z : b.z + halfThin,
       },
       this.player.yaw,
@@ -608,6 +771,7 @@ export class GameEngine {
     this.rebuildBarrierColliders()
     this.levelEditor.syncBarriers(this.barrierLayout.barriers)
     this.levelEditor.highlightBarrier(this.lastPlacedBarrierId)
+    this.barrierVisuals.sync(this.barrierLayout.barriers)
     const snap = this.getBarrierLayout()
     for (const fn of this.barrierLayoutListeners) fn(snap)
   }
@@ -756,6 +920,7 @@ export class GameEngine {
     saveSpawnLayout(this.spawnLayout)
     this.levelEditor.sync(this.spawnLayout.spawns)
     this.levelEditor.highlight(this.lastPlacedSpawnId)
+    this.rebuildFallKillY()
     const snap = this.getSpawnLayout()
     for (const fn of this.spawnLayoutListeners) fn(snap)
   }
@@ -778,6 +943,7 @@ export class GameEngine {
     this.input.detach()
     window.removeEventListener('resize', this.onResize)
     this.levelEditor.dispose()
+    this.barrierVisuals.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     for (const t of this.envTextures) t.dispose()
@@ -806,6 +972,13 @@ export class GameEngine {
     const now = performance.now()
     let dt = (now - this.lastTime) / 1000
     this.lastTime = now
+
+    // Sample raw frame time for FPS before the sim clamp (which caps spikes).
+    if (dt > 0 && dt < 1) {
+      this.frameTimeEma = this.frameTimeEma * 0.9 + dt * 0.1
+      this.fps = Math.round(1 / this.frameTimeEma)
+    }
+
     dt = Math.min(dt, 0.05)
 
     this.tick(dt)
@@ -821,6 +994,12 @@ export class GameEngine {
       return
     }
 
+    // Dead: free-cam spectate, world still runs, no combat / player move.
+    if (!this.playerAlive) {
+      this.tickSpectate(dt, input)
+      return
+    }
+
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
     stepPlayer(
@@ -831,6 +1010,14 @@ export class GameEngine {
       this.meshWorld,
       this.barrierColliders,
     )
+
+    // Fall out of world (maps with fallDeath) → death → free-cam.
+    if (isBelowFallKill(this.player.position.y, this.fallKillY)) {
+      this.killPlayer('fall')
+      this.tickSpectate(dt, input)
+      return
+    }
+
     stepSniper(this.sniper, input, dt)
     if (!this.dummiesPaused) {
       stepDummies(this.dummies, dt)
@@ -899,9 +1086,62 @@ export class GameEngine {
 
     this.playerVisuals.updatePose(this.player, this.thirdPerson)
     this.combatFx.update(dt)
+    this.barrierVisuals.update(this.player.position)
 
     this.lastHitAge += dt
     this.emitHud()
+  }
+
+  /**
+   * Free-cam death spectate: fly + look, world/dummies/FX keep updating,
+   * then restart the round after the countdown.
+   */
+  private tickSpectate(
+    dt: number,
+    input: import('../core/types').PlayerInput,
+  ) {
+    if (!this.freeCam) {
+      const eye = eyePosition(this.player)
+      this.freeCam = createFreeCam(eye, this.player.yaw, this.player.pitch)
+    }
+
+    stepFreeCam(this.freeCam, input, dt)
+
+    // Keep mouse look on free-cam (input already drives cam via sample)
+    this.camera.position.set(
+      this.freeCam.position.x,
+      this.freeCam.position.y,
+      this.freeCam.position.z,
+    )
+    this.camera.rotation.order = 'YXZ'
+    this.camera.rotation.y = this.freeCam.yaw
+    this.camera.rotation.x = this.freeCam.pitch
+    this.camera.fov = LOOK.hipFov
+    this.camera.updateProjectionMatrix()
+
+    if (this.viewmodel.root) this.viewmodel.root.visible = false
+
+    // Corpse stays at death feet — pose without live locomotion.
+    this.playerVisuals.updatePose(this.player, true)
+    if (this.playerVisuals.body) this.playerVisuals.body.visible = true
+
+    if (!this.dummiesPaused) {
+      stepDummies(this.dummies, dt)
+      stepRespawns(this.dummies, this.respawns, dt)
+    }
+    this.dummiesSys.update(dt, this.dummies, this.dummiesPaused)
+    this.combatFx.update(dt)
+    if (this.freeCam) {
+      this.barrierVisuals.update(this.freeCam.position)
+    }
+
+    this.spectateTimer = Math.max(0, this.spectateTimer - dt)
+    this.lastHitAge += dt
+    this.emitHud()
+
+    if (this.spectateTimer <= 0) {
+      this.restartRound()
+    }
   }
 
   /** Walk / fly with map collision + place spawns / barriers; no combat. */
@@ -951,30 +1191,40 @@ export class GameEngine {
     if (this.viewmodel.root) this.viewmodel.root.visible = false
     this.dummiesSys.update(dt, this.dummies, true)
     this.combatFx.update(dt)
+    // Always show signs in the editor so placement is obvious
+    this.barrierVisuals.update(this.player.position, true)
     this.lastHitAge += dt
     this.emitHud()
   }
 
   private emitHud() {
-    const speed = Math.hypot(this.player.velocity.x, this.player.velocity.z)
+    const speed = this.playerAlive
+      ? Math.hypot(this.player.velocity.x, this.player.velocity.z)
+      : 0
     const snap: HudSnapshot = {
       hp: this.playerHp,
       ammo: this.sniper.ammo,
       magSize: this.sniper.magSize,
       reserve: this.sniper.reserve,
       phase: this.sniper.phase,
-      ads: this.sniper.ads,
-      adsBlend: this.sniper.adsBlend,
+      ads: this.playerAlive ? this.sniper.ads : false,
+      adsBlend: this.playerAlive ? this.sniper.adsBlend : 0,
       reloadJiggleX: this.sniper.reloadJiggleX,
       reloadJiggleY: this.sniper.reloadJiggleY,
-      aimSpread: aimSpread(this.sniper, this.player),
-      moveState: this.player.state,
+      aimSpread: this.playerAlive ? aimSpread(this.sniper, this.player) : 0,
+      moveState: this.playerAlive ? this.player.state : 'idle',
       speed,
       pointerLocked: this.input.isPointerLocked(),
       kills: this.kills,
       lastHit: this.lastHit,
       lastHitAge: this.lastHitAge,
       lastHitId: this.lastHitId,
+      alive: this.playerAlive,
+      spectating: !this.playerAlive,
+      respawnIn: this.playerAlive ? 0 : this.spectateTimer,
+      deathReason: this.deathReason,
+      fps: this.fps,
+      ping: this.pingMs,
     }
     for (const fn of this.hudListeners) fn(snap)
   }

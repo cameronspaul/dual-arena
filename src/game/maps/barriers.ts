@@ -1,26 +1,36 @@
 /**
  * Editor-placed barrier walls — invisible (or translucent in editor) AABB
  * blockers so players cannot walk past map edges / out-of-bounds zones.
- * Priority: localStorage override → empty (no baked defaults yet).
+ * Priority: localStorage override → authored defaults → empty.
  */
 import { aabbFromCenter } from '../core/math'
 import type { AABB } from '../core/types'
+import { getAuthoredBarriers } from './authoredBarriers'
 import type { MapId } from './catalog'
 
 export interface BarrierWall {
   id: string
   /** Center X */
   x: number
-  /** Center Y */
+  /** Center Y (finite walls: mid of box; infinite height still stores place Y) */
   y: number
   /** Center Z */
   z: number
-  /** Full extent on X */
+  /** Full extent on X (finite size; infinite width expands long axis) */
   width: number
-  /** Full extent on Y */
+  /** Full extent on Y (finite size; ignored for collision when infiniteHeight) */
   height: number
   /** Full extent on Z */
   depth: number
+  /** Expand vertically to cover practically all play height */
+  infiniteHeight?: boolean
+  /** Expand along the wall's long axis (length), keep thickness */
+  infiniteWidth?: boolean
+  /**
+   * Which thin face shows the no-entry signs: +1 or -1 along the thin axis.
+   * Set at place time so signs face the placer.
+   */
+  signFace?: 1 | -1
 }
 
 export interface MapBarrierLayout {
@@ -34,7 +44,24 @@ export const BARRIER_DEFAULTS = {
   length: 8,
   height: 4,
   thickness: 0.5,
+  infiniteHeight: false,
+  infiniteWidth: false,
 } as const
+
+/**
+ * Practical "infinite" full extent for collision (AABB can't be true ∞).
+ * Sized well beyond any playable map so edges are never reachable in play.
+ */
+export const BARRIER_INFINITE_EXTENT = 50_000
+
+/** Editor gizmo size when a dimension is infinite (readable, not world-scale). */
+export const BARRIER_VISUAL_INFINITE = {
+  height: 18,
+  length: 80,
+} as const
+
+/** Gameplay hazard strip / signs length for infinite-width walls. */
+export const BARRIER_GAME_INFINITE_LENGTH = 240
 
 const STORAGE_PREFIX = 'dual-arena:barriers:v1:'
 
@@ -56,6 +83,10 @@ export function makeBarrierId(existing: BarrierWall[]): string {
 
 export function emptyBarrierLayout(mapId: string): MapBarrierLayout {
   return { version: 1, mapId, barriers: [] }
+}
+
+export function authoredBarrierLayout(mapId: string): MapBarrierLayout {
+  return { version: 1, mapId, barriers: getAuthoredBarriers(mapId) }
 }
 
 function normalizeBarriers(raw: unknown[] | undefined): BarrierWall[] | null {
@@ -83,11 +114,19 @@ function normalizeBarriers(raw: unknown[] | undefined): BarrierWall[] | null {
       width: o.width,
       height: o.height,
       depth: o.depth,
+      infiniteHeight: o.infiniteHeight === true,
+      infiniteWidth: o.infiniteWidth === true,
+      signFace: o.signFace === -1 ? -1 : o.signFace === 1 ? 1 : undefined,
     })
   }
   return barriers
 }
 
+/**
+ * Load barriers for a map.
+ * - Browser editor save for this map wins when present.
+ * - Otherwise use baked authored barriers (e.g. tdm-location edges).
+ */
 export function loadBarrierLayout(mapId: string): MapBarrierLayout {
   if (typeof window !== 'undefined') {
     try {
@@ -95,15 +134,16 @@ export function loadBarrierLayout(mapId: string): MapBarrierLayout {
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<MapBarrierLayout>
         const barriers = normalizeBarriers(parsed.barriers)
+        // Override when the key exists *and* parses (incl. empty clear).
         if (barriers) {
           return { version: 1, mapId, barriers }
         }
       }
     } catch {
-      // fall through
+      // fall through to authored
     }
   }
-  return emptyBarrierLayout(mapId)
+  return authoredBarrierLayout(mapId)
 }
 
 export function saveBarrierLayout(layout: MapBarrierLayout): void {
@@ -131,8 +171,69 @@ export function clearBarrierLayout(mapId: string): void {
   }
 }
 
+/** Resolved world extents used for collision / hitscan. */
+export function resolveBarrierCollision(b: BarrierWall): {
+  x: number
+  y: number
+  z: number
+  width: number
+  height: number
+  depth: number
+} {
+  let width = b.width
+  let height = b.height
+  let depth = b.depth
+  let y = b.y
+
+  if (b.infiniteHeight) {
+    height = BARRIER_INFINITE_EXTENT
+    // Center so the slab covers deep voids and sky (not only near y=0)
+    y = 0
+  }
+
+  if (b.infiniteWidth) {
+    // Expand the long axis only; keep the thin face as thickness
+    if (width >= depth) width = BARRIER_INFINITE_EXTENT
+    else depth = BARRIER_INFINITE_EXTENT
+  }
+
+  return { x: b.x, y, z: b.z, width, height, depth }
+}
+
+/**
+ * Editor-only display size. Infinite axes use a capped preview so gizmos
+ * stay readable instead of filling the entire frustum.
+ */
+export function resolveBarrierVisual(b: BarrierWall): {
+  x: number
+  y: number
+  z: number
+  width: number
+  height: number
+  depth: number
+} {
+  let width = b.width
+  let height = b.height
+  let depth = b.depth
+  let y = b.y
+
+  if (b.infiniteHeight) {
+    height = BARRIER_VISUAL_INFINITE.height
+    // Sit preview on the placed floor-ish center
+    y = b.y - b.height * 0.5 + height * 0.5
+  }
+
+  if (b.infiniteWidth) {
+    if (width >= depth) width = BARRIER_VISUAL_INFINITE.length
+    else depth = BARRIER_VISUAL_INFINITE.length
+  }
+
+  return { x: b.x, y, z: b.z, width, height, depth }
+}
+
 export function barrierToAabb(b: BarrierWall): AABB {
-  return aabbFromCenter(b.x, b.y, b.z, b.width / 2, b.height / 2, b.depth / 2)
+  const r = resolveBarrierCollision(b)
+  return aabbFromCenter(r.x, r.y, r.z, r.width / 2, r.height / 2, r.depth / 2)
 }
 
 export function barriersToAabbs(barriers: BarrierWall[]): AABB[] {
@@ -173,6 +274,11 @@ export function exportBarrierLayoutJson(layout: MapBarrierLayout): string {
         width: round(b.width),
         height: round(b.height),
         depth: round(b.depth),
+        ...(b.infiniteHeight ? { infiniteHeight: true } : {}),
+        ...(b.infiniteWidth ? { infiniteWidth: true } : {}),
+        ...(b.signFace === -1 || b.signFace === 1
+          ? { signFace: b.signFace }
+          : {}),
       })),
     },
     null,

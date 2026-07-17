@@ -232,12 +232,71 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
 }
 
 /**
- * Push the player out of extra AABBs without re-integrating velocity.
- * Used for barrier walls after triangle-mesh collision on GLB maps.
+ * Barrier / extra AABB resolve using **minimum penetration** on XZ.
+ *
+ * The older center-based shove (push to min or max of the long axis) was
+ * catastrophic for long or "infinite" walls: walking into the thin face
+ * teleported the player thousands of metres to an end-cap, then fall-death
+ * killed them.
+ *
+ * Rules:
+ * - Always unstick on the shallowest horizontal axis (thin face of a wall).
+ * - Only land on top when the top face is clearly the nearest (short pen-up).
+ * - Never "ceiling" launch onto the roof of a multi-km tall infinite wall.
  */
 export function resolveExtraAabbColliders(p: PlayerBody, walls: AABB[]) {
   if (!walls.length) return
-  resolveAabbOverlaps(p, walls, { infiniteFloor: false, integrate: false }, 0)
+  const pos = p.position
+  const vel = p.velocity
+  const r = p.radius
+  const h = p.height
+
+  for (const box of walls) {
+    const pMinX = pos.x - r
+    const pMaxX = pos.x + r
+    const pMinY = pos.y
+    const pMaxY = pos.y + h
+    const pMinZ = pos.z - r
+    const pMaxZ = pos.z + r
+
+    if (pMaxX <= box.min.x || pMinX >= box.max.x) continue
+    if (pMaxY <= box.min.y || pMinY >= box.max.y) continue
+    if (pMaxZ <= box.min.z || pMinZ >= box.max.z) continue
+
+    const penPosX = pMaxX - box.min.x // push −X
+    const penNegX = box.max.x - pMinX // push +X
+    const penPosY = pMaxY - box.min.y // push −Y (ceiling)
+    const penNegY = box.max.y - pMinY // push +Y (stand on top)
+    const penPosZ = pMaxZ - box.min.z // push −Z
+    const penNegZ = box.max.z - pMinZ // push +Z
+
+    const px = Math.min(penPosX, penNegX)
+    const pz = Math.min(penPosZ, penNegZ)
+
+    // Stand on top only for short tops (cover crates), never for sky-high walls
+    const topIsShallow =
+      penNegY <= penPosY &&
+      penNegY <= 0.55 &&
+      penNegY <= px + 1e-4 &&
+      penNegY <= pz + 1e-4
+    if (topIsShallow && vel.y <= 0.05) {
+      pos.y = box.max.y
+      vel.y = 0
+      p.grounded = true
+      continue
+    }
+
+    // Prefer horizontal unstick; ignore deep Y (player is "inside" a tall slab)
+    if (px <= pz) {
+      if (penPosX < penNegX) pos.x = box.min.x - r - 1e-4
+      else pos.x = box.max.x + r + 1e-4
+      vel.x = 0
+    } else {
+      if (penPosZ < penNegZ) pos.z = box.min.z - r - 1e-4
+      else pos.z = box.max.z + r + 1e-4
+      vel.z = 0
+    }
+  }
 }
 
 function overlapsCapsule(pos: Vec3, r: number, h: number, box: AABB): boolean {
@@ -371,16 +430,16 @@ export function stepPlayer(
   p.velocity.y += MOVE.gravity * dt
 
   // collide + integrate
+  // Barriers always use min-penetration resolve (never merged into center-shove AABBs).
   const extras = extraColliders?.length ? extraColliders : null
   if (meshWorld && meshWorld.meshes.length > 0) {
     // Real map geometry (floors, walls, ramps)
     resolveMeshCollisions(p, meshWorld, dt)
-    if (extras) resolveExtraAabbColliders(p, extras)
   } else {
-    // Procedural range: infinite floor + cover AABBs (+ barriers)
-    const boxes = extras ? worldColliders.concat(extras) : worldColliders
-    resolveCollisions(p, boxes, dt)
+    // Procedural range: infinite floor + cover AABBs
+    resolveCollisions(p, worldColliders, dt)
   }
+  if (extras) resolveExtraAabbColliders(p, extras)
 
   // height / eye lerp — stand up faster when recovering from slide/crouch
   const th = targetHeight(p.state)
@@ -417,11 +476,10 @@ export function resolvePlayerWorldCollisions(
   const extras = extraColliders?.length ? extraColliders : null
   if (meshWorld && meshWorld.meshes.length > 0) {
     resolveMeshCollisions(p, meshWorld, dt)
-    if (extras) resolveExtraAabbColliders(p, extras)
   } else {
-    const boxes = extras ? worldColliders.concat(extras) : worldColliders
-    resolveCollisions(p, boxes, dt)
+    resolveCollisions(p, worldColliders, dt)
   }
+  if (extras) resolveExtraAabbColliders(p, extras)
 }
 
 /**

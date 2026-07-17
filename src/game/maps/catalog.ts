@@ -65,6 +65,14 @@ export interface MapDef {
    * Skyboxes are always applied from user settings on every map.
    */
   loadEnvTextures: boolean
+  /**
+   * When true, falling below the lowest spawn Y by `fallKillDepth` meters
+   * kills the player and enters free-cam spectate → round restart.
+   * Practice range stays off (flat floor); open GLB arenas enable it.
+   */
+  fallDeath: boolean
+  /** Override DEATH.fallKillDepth for this map (meters below spawn Y). */
+  fallKillDepth?: number
 }
 
 const rangeDummies: MapDummyDef[] = WORLD.dummies.map((d) => ({
@@ -106,6 +114,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0xa8c4e0,
     bgColor: 0x87a0b8,
     loadEnvTextures: true,
+    fallDeath: false,
   },
   desert: {
     id: 'desert',
@@ -129,6 +138,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0xc9b48a,
     bgColor: 0xb8a070,
     loadEnvTextures: false,
+    fallDeath: true,
   },
   'arena-v3': {
     id: 'arena-v3',
@@ -152,6 +162,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0x8a9aaa,
     bgColor: 0x6a7a8a,
     loadEnvTextures: false,
+    fallDeath: true,
   },
   'arena-v4': {
     id: 'arena-v4',
@@ -174,6 +185,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0x7a8a9a,
     bgColor: 0x5a6a7a,
     loadEnvTextures: false,
+    fallDeath: true,
   },
   tdm: {
     id: 'tdm',
@@ -197,6 +209,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0x9aa8b8,
     bgColor: 0x7a8898,
     loadEnvTextures: false,
+    fallDeath: true,
   },
   'tdm-location': {
     id: 'tdm-location',
@@ -221,6 +234,7 @@ export const MAPS: Record<MapId, MapDef> = {
     fogColor: 0x8a9a8a,
     bgColor: 0x6a7a6a,
     loadEnvTextures: false,
+    fallDeath: true,
   },
 }
 

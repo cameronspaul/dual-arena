@@ -19,6 +19,22 @@ export function createSniper(): SniperState {
   }
 }
 
+/** Full mag / phase reset for round restart after death. */
+export function resetSniper(s: SniperState) {
+  s.ammo = SNIPER.magSize
+  s.magSize = SNIPER.magSize
+  s.reserve = SNIPER.reserve
+  s.phase = 'ready'
+  s.phaseTimer = 0
+  s.ads = false
+  s.adsBlend = 0
+  s.recoil = 0
+  s.fireBloom = 0
+  s.reloadQueued = false
+  s.reloadJiggleX = 0
+  s.reloadJiggleY = 0
+}
+
 function canReload(s: SniperState): boolean {
   return s.ammo < s.magSize && s.reserve > 0
 }

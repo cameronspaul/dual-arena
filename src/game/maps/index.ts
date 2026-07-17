@@ -46,11 +46,20 @@ export {
   parseBarrierLayout,
   makeBarrierId,
   emptyBarrierLayout,
+  authoredBarrierLayout,
   barrierToAabb,
   barriersToAabbs,
+  resolveBarrierCollision,
+  resolveBarrierVisual,
   wallSizeFromYaw,
   BARRIER_DEFAULTS,
+  BARRIER_INFINITE_EXTENT,
+  BARRIER_GAME_INFINITE_LENGTH,
   type BarrierWall,
   type MapBarrierLayout,
 } from './barriers'
 export { AUTHORED_SPAWNS, getAuthoredSpawns } from './authoredSpawns'
+export {
+  AUTHORED_BARRIERS,
+  getAuthoredBarriers,
+} from './authoredBarriers'

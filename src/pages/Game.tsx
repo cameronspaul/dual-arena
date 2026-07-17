@@ -46,6 +46,13 @@ function hudKey(s: HudSnapshot): string {
     s.lastHitId,
     s.lastHitAge < 0.605 ? 1 : 0,
     s.hp,
+    s.alive ? 1 : 0,
+    s.spectating ? 1 : 0,
+    // Whole-second ticks for death countdown UI
+    Math.ceil(s.respawnIn),
+    s.deathReason ?? '',
+    s.fps,
+    s.ping ?? -1,
   ].join('|')
 }
 

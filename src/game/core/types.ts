@@ -149,6 +149,9 @@ export interface RayHit {
   world?: boolean
 }
 
+/** Why the local player died (HUD + future killfeed). */
+export type DeathReason = 'fall' | 'combat'
+
 export interface HudSnapshot {
   hp: number
   ammo: number
@@ -173,4 +176,19 @@ export interface HudSnapshot {
    * hitmarker animations even when zone/damage repeat.
    */
   lastHitId: number
+  /** False while dead / free-cam spectating. */
+  alive: boolean
+  /** Free-cam death cam after dying. */
+  spectating: boolean
+  /** Seconds until round restart while spectating (0 when alive). */
+  respawnIn: number
+  /** Present while dead / spectating. */
+  deathReason: DeathReason | null
+  /** Smoothed client frames per second. */
+  fps: number
+  /**
+   * Round-trip latency to the game server in ms.
+   * `null` while offline / local range (no network session).
+   */
+  ping: number | null
 }

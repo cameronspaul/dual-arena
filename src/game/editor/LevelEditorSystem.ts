@@ -2,7 +2,10 @@
  * Visual spawn markers, barrier wall previews, + floor snap for the level editor.
  */
 import * as THREE from 'three'
-import type { BarrierWall } from '../maps/barriers'
+import {
+  resolveBarrierVisual,
+  type BarrierWall,
+} from '../maps/barriers'
 import type { SpawnPoint, TeamId } from '../maps/spawns'
 
 const TEAM_COLOR: Record<TeamId, number> = {
@@ -131,15 +134,16 @@ export class LevelEditorSystem {
         this.barrierMeshes.set(b.id, obj)
         this.root.add(obj)
       }
-      // Unit cube scaled to wall extents — keep culled off so thin slabs
-      // never drop out of the frustum from bad local bounds.
-      obj.position.set(b.x, b.y, b.z)
+      // Visual uses capped size for infinite axes; collision is separate.
+      const v = resolveBarrierVisual(b)
+      obj.position.set(v.x, v.y, v.z)
       obj.scale.set(
-        Math.max(0.05, b.width),
-        Math.max(0.05, b.height),
-        Math.max(0.05, b.depth),
+        Math.max(0.05, v.width),
+        Math.max(0.05, v.height),
+        Math.max(0.05, v.depth),
       )
       obj.visible = true
+      setBarrierInfiniteStyle(obj, !!(b.infiniteHeight || b.infiniteWidth))
       obj.updateMatrixWorld(true)
     }
   }
@@ -175,6 +179,8 @@ export class LevelEditorSystem {
     this.root.removeFromParent()
   }
 }
+
+const BARRIER_INFINITE_COLOR = 0xf97316
 
 function buildBarrierMesh(): THREE.Group {
   const g = new THREE.Group()
@@ -240,6 +246,22 @@ function buildBarrierMesh(): THREE.Group {
   g.add(stripe)
 
   return g
+}
+
+/** Tint infinite walls slightly hotter so they read as "∞" blockers. */
+function setBarrierInfiniteStyle(obj: THREE.Object3D, infinite: boolean) {
+  const fillColor = infinite ? BARRIER_INFINITE_COLOR : BARRIER_COLOR
+  const edgeColor = infinite ? 0xfdba74 : BARRIER_EDGE
+  obj.traverse((child) => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      const m = child.material
+      if (m && !Array.isArray(m) && 'color' in m) {
+        ;(m as THREE.MeshBasicMaterial).color.setHex(
+          child.name === 'fill' ? fillColor : edgeColor,
+        )
+      }
+    }
+  })
 }
 
 function buildMarker(team: TeamId): THREE.Group {

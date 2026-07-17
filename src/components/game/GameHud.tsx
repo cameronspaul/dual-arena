@@ -36,6 +36,21 @@ function damageLabelColor(hit: HitEvent): string {
   return 'text-amber-200'
 }
 
+/** Green when smooth, amber when soft, red when struggling. */
+function fpsColor(fps: number): string {
+  if (fps >= 55) return 'text-emerald-400'
+  if (fps >= 30) return 'text-amber-300'
+  return 'text-red-400'
+}
+
+/** Lower is better; muted when offline (no session RTT). */
+function pingColor(ping: number | null): string {
+  if (ping == null) return 'text-white/40'
+  if (ping < 50) return 'text-emerald-400'
+  if (ping < 100) return 'text-amber-300'
+  return 'text-red-400'
+}
+
 /** Classic FPS / Overwatch-style X hitmarker (four diagonal ticks). */
 function HitMarkerX({
   color,
@@ -132,6 +147,29 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Perf / net — top-right chrome next to settings */}
+          <div className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 font-mono text-xs backdrop-blur-sm">
+            <div className="flex items-baseline gap-3 tabular-nums">
+              <span className={fpsColor(hud.fps)}>
+                <span className="font-semibold">{hud.fps}</span>
+                <span className="ml-1 text-white/40">FPS</span>
+              </span>
+              <span className="text-white/20">|</span>
+              <span className={pingColor(hud.ping)}>
+                {hud.ping == null ? (
+                  <>
+                    <span className="font-semibold">—</span>
+                    <span className="ml-1 text-white/40">ms</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">{Math.round(hud.ping)}</span>
+                    <span className="ml-1 text-white/40">ms</span>
+                  </>
+                )}
+              </span>
+            </div>
+          </div>
           {onOpenSettings && (
             <button
               type="button"
@@ -155,8 +193,8 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
         </div>
       </div>
 
-      {/* Hipfire crosshair — fades out as scope takes over */}
-      {!fullyScoped && (
+      {/* Hipfire crosshair — fades out as scope takes over (hidden in death cam) */}
+      {!fullyScoped && !hud.spectating && (
         <div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
           style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
@@ -294,8 +332,34 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
         </div>
       </div>
 
+      {/* Death free-cam spectate → round restart countdown */}
+      {hud.spectating && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center">
+          <div className="rounded-xl border border-red-500/40 bg-black/75 px-10 py-7 text-center shadow-[0_0_40px_rgba(255,40,40,0.2)] backdrop-blur-md">
+            <div className="text-xs font-semibold tracking-[0.35em] text-red-400/90 uppercase">
+              You died
+            </div>
+            <div className="mt-2 text-2xl font-bold tracking-wide text-white">
+              {hud.deathReason === 'fall'
+                ? 'Fell out of the world'
+                : 'Eliminated'}
+            </div>
+            <div className="mt-4 font-mono text-sm text-white/70">
+              Free cam · respawning in{' '}
+              <span className="tabular-nums text-white">
+                {Math.ceil(hud.respawnIn)}
+              </span>
+              s
+            </div>
+            <p className="mt-2 text-[11px] text-white/45">
+              WASD + mouse · Space / crouch to fly · Sprint to boost
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Click to play */}
-      {!hud.pointerLocked && (
+      {!hud.pointerLocked && !hud.spectating && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
           <div className="rounded-xl border border-white/15 bg-black/70 px-8 py-6 text-center backdrop-blur-md">
             <div className="text-lg font-semibold">Click to play</div>
