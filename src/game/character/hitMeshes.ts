@@ -411,6 +411,163 @@ export type MeshHitscanScratch = {
   raycaster: THREE.Raycaster
   origin: THREE.Vector3
   dir: THREE.Vector3
+  /** World-space skinned triangle tests (see castMeshHitscan). */
+  vA: THREE.Vector3
+  vB: THREE.Vector3
+  vC: THREE.Vector3
+  e1: THREE.Vector3
+  e2: THREE.Vector3
+  pvec: THREE.Vector3
+  tvec: THREE.Vector3
+  qvec: THREE.Vector3
+  hitPoint: THREE.Vector3
+  normal: THREE.Vector3
+  sphere: THREE.Sphere
+}
+
+export function createMeshHitscanScratch(): MeshHitscanScratch {
+  return {
+    raycaster: new THREE.Raycaster(),
+    origin: new THREE.Vector3(),
+    dir: new THREE.Vector3(),
+    vA: new THREE.Vector3(),
+    vB: new THREE.Vector3(),
+    vC: new THREE.Vector3(),
+    e1: new THREE.Vector3(),
+    e2: new THREE.Vector3(),
+    pvec: new THREE.Vector3(),
+    tvec: new THREE.Vector3(),
+    qvec: new THREE.Vector3(),
+    hitPoint: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    sphere: new THREE.Sphere(),
+  }
+}
+
+type MeshHitCand = {
+  distance: number
+  point: THREE.Vector3
+  normal: THREE.Vector3
+  object: THREE.Object3D
+  zone: HitZone
+}
+
+/**
+ * Möller–Trumbore in world space. Double-sided (no backface cull) so extreme
+ * poses like Roll still register when looking at the "back" of a limb.
+ * Returns distance along ray, or null.
+ */
+function rayTriangleWorld(
+  scratch: MeshHitscanScratch,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  c: THREE.Vector3,
+  maxRange: number,
+): number | null {
+  const { origin, dir, e1, e2, pvec, tvec, qvec } = scratch
+  e1.subVectors(b, a)
+  e2.subVectors(c, a)
+  pvec.crossVectors(dir, e2)
+  const det = e1.dot(pvec)
+  if (Math.abs(det) < 1e-10) return null
+  const invDet = 1 / det
+  tvec.subVectors(origin, a)
+  const u = tvec.dot(pvec) * invDet
+  if (u < 0 || u > 1) return null
+  qvec.crossVectors(tvec, e1)
+  const v = dir.dot(qvec) * invDet
+  if (v < 0 || u + v > 1) return null
+  const t = e2.dot(qvec) * invDet
+  if (t < 0 || t > maxRange) return null
+  return t
+}
+
+/**
+ * Skinned hit test in **world space**.
+ *
+ * Three.Raycaster + SkinnedMesh.raycast is unreliable on FBX-style man.glb
+ * (scale-100 armature, non-identity hierarchy): local-space triangle tests
+ * miss for extreme clips like Roll even when the visible mesh is under the
+ * crosshair. getVertexPosition → matrixWorld → world Möller–Trumbore matches
+ * the rendered pose.
+ */
+function raycastSkinnedWorld(
+  scratch: MeshHitscanScratch,
+  mesh: THREE.SkinnedMesh,
+  maxRange: number,
+): MeshHitCand | null {
+  // Pose-aware early-out (recomputed each shot; see Three SkinnedMesh docs)
+  mesh.computeBoundingSphere()
+  if (!mesh.boundingSphere) return null
+  scratch.sphere.copy(mesh.boundingSphere).applyMatrix4(mesh.matrixWorld)
+  // Slight pad — sphere from vertex sample can undershoot thin shells
+  scratch.sphere.radius += 0.05
+  if (!scratch.raycaster.ray.intersectsSphere(scratch.sphere)) return null
+
+  const geo = mesh.geometry
+  const index = geo.index
+  const pos = geo.getAttribute('position')
+  if (!pos) return null
+
+  const { vA, vB, vC, hitPoint, normal, origin, dir } = scratch
+  const mw = mesh.matrixWorld
+  let bestT: number | null = null
+  let bestNa = 0
+  let bestNb = 0
+  let bestNc = 0
+
+  const triCount = index ? index.count / 3 : pos.count / 3
+  for (let t = 0; t < triCount; t++) {
+    let ia: number
+    let ib: number
+    let ic: number
+    if (index) {
+      const i3 = t * 3
+      ia = index.getX(i3)
+      ib = index.getX(i3 + 1)
+      ic = index.getX(i3 + 2)
+    } else {
+      ia = t * 3
+      ib = ia + 1
+      ic = ia + 2
+    }
+
+    mesh.getVertexPosition(ia, vA).applyMatrix4(mw)
+    mesh.getVertexPosition(ib, vB).applyMatrix4(mw)
+    mesh.getVertexPosition(ic, vC).applyMatrix4(mw)
+
+    const dist = rayTriangleWorld(scratch, vA, vB, vC, maxRange)
+    if (dist === null) continue
+    if (bestT === null || dist < bestT) {
+      bestT = dist
+      // face normal from world verts (stable for damage FX)
+      scratch.e1.subVectors(vB, vA)
+      scratch.e2.subVectors(vC, vA)
+      normal.crossVectors(scratch.e1, scratch.e2)
+      bestNa = normal.x
+      bestNb = normal.y
+      bestNc = normal.z
+    }
+  }
+
+  if (bestT === null) return null
+
+  hitPoint.copy(origin).addScaledVector(dir, bestT)
+  normal.set(bestNa, bestNb, bestNc)
+  if (normal.lengthSq() < 1e-12) {
+    normal.copy(dir).negate()
+  } else {
+    normal.normalize()
+    if (normal.dot(dir) > 0) normal.negate()
+  }
+
+  return {
+    distance: bestT,
+    point: hitPoint.clone(),
+    normal: normal.clone(),
+    object: mesh,
+    zone: (mesh.userData.hitZone as HitZone) ?? 'chest',
+  }
 }
 
 /**
@@ -432,37 +589,69 @@ export function castMeshHitscan(
 
   if (targets.length === 0) return null
 
-  const hits = scratch.raycaster.intersectObjects(targets, false)
-  if (hits.length === 0) return null
+  const cands: MeshHitCand[] = []
 
-  const closest = hits[0].distance
-  const near = hits.filter((h) => h.distance - closest < 0.05)
-  const headHit = near.find(
-    (h) => (h.object.userData.hitZone as HitZone) === 'head',
-  )
-  const best = headHit ?? hits[0]
-  const obj = best.object
-  const ownerId = obj.userData.ownerId as string
+  for (const obj of targets) {
+    if (obj instanceof THREE.SkinnedMesh) {
+      const hit = raycastSkinnedWorld(scratch, obj, maxRange)
+      if (hit) cands.push(hit)
+      continue
+    }
+    // Placeholder / non-skinned meshes — Three raycaster is fine
+    if (obj instanceof THREE.Mesh) {
+      const hits = scratch.raycaster.intersectObject(obj, false)
+      if (hits.length === 0) continue
+      const h = hits[0]
+      const n =
+        h.face?.normal
+          ?.clone()
+          .transformDirection(obj.matrixWorld)
+          .normalize() ?? scratch.dir.clone().negate()
+      if (n.dot(scratch.dir) > 0) n.negate()
+      cands.push({
+        distance: h.distance,
+        point: h.point.clone(),
+        normal: n,
+        object: obj,
+        zone: (obj.userData.hitZone as HitZone) ?? 'chest',
+      })
+    }
+  }
+
+  if (cands.length === 0) return null
+
+  cands.sort((a, b) => {
+    if (Math.abs(a.distance - b.distance) < 0.05) {
+      if (a.zone === 'head' && b.zone !== 'head') return -1
+      if (b.zone === 'head' && a.zone !== 'head') return 1
+    }
+    return a.distance - b.distance
+  })
+
+  const best = cands[0]
+  const ownerId = best.object.userData.ownerId as string
   if (!ownerId) return null
 
-  const zone = (obj.userData.hitZone as HitZone) ?? 'chest'
-
-  const n = best.normal ?? scratch.dir.clone().negate()
-  const nl = Math.hypot(n.x, n.y, n.z) || 1
-
+  const n = best.normal
   return {
     point: { x: best.point.x, y: best.point.y, z: best.point.z },
     distance: best.distance,
-    normal: { x: n.x / nl, y: n.y / nl, z: n.z / nl },
+    normal: { x: n.x, y: n.y, z: n.z },
     hitbox: {
-      id: `${ownerId}-${zone}`,
+      id: `${ownerId}-${best.zone}`,
       ownerId,
-      zone,
+      zone: best.zone,
     },
   }
 }
 
-/** Collect visible hit meshes from alive dummy roots (updates world matrices). */
+/**
+ * Collect visible hit meshes from alive dummy roots.
+ *
+ * Must use `updateMatrixWorld` (not `updateWorldMatrix`): SkinnedMesh only
+ * refreshes `bindMatrixInverse` inside `updateMatrixWorld`. Without that,
+ * getVertexPosition / world hitscan is wrong for animated poses.
+ */
 export function collectDummyHitTargets(
   dummyIds: { id: string; alive: boolean }[],
   meshes: Map<string, THREE.Group>,
@@ -472,7 +661,8 @@ export function collectDummyHitTargets(
     if (!d.alive) continue
     const root = meshes.get(d.id)
     if (!root || !root.visible) continue
-    root.updateWorldMatrix(true, true)
+    // SkinnedMesh.updateMatrixWorld also writes bindMatrixInverse
+    root.updateMatrixWorld(true)
     const hitMeshes = root.userData.hitMeshes as THREE.Mesh[] | undefined
     if (!hitMeshes) continue
     for (const m of hitMeshes) {

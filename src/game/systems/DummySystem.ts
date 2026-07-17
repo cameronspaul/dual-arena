@@ -19,11 +19,11 @@ import {
 import {
   castMeshHitscan,
   collectDummyHitTargets,
+  createMeshHitscanScratch,
   makePlaceholderDummy,
   paintDummyMeshes,
   registerHitMeshes,
   splitChestMeshesByArmWeights,
-  type MeshHitscanScratch,
 } from '../character/hitMeshes'
 import { findClip } from '../character/locomotion'
 import { DUMMY, MOVE } from '../core/config'
@@ -33,11 +33,7 @@ import type { PlayerVisuals } from './PlayerVisuals'
 export class DummySystem {
   meshes = new Map<string, THREE.Group>()
   private mixers = new Map<string, THREE.AnimationMixer>()
-  private readonly hitscanScratch: MeshHitscanScratch = {
-    raycaster: new THREE.Raycaster(),
-    origin: new THREE.Vector3(),
-    dir: new THREE.Vector3(),
-  }
+  private readonly hitscanScratch = createMeshHitscanScratch()
 
   async load(
     scene: THREE.Scene,

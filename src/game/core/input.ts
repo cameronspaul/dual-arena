@@ -176,6 +176,7 @@ export class InputManager {
     window.addEventListener('mousemove', this.onMouseMove)
     canvas.addEventListener('contextmenu', this.onContextMenu)
     document.addEventListener('pointerlockchange', this.onPointerLockChange)
+    void this.lockKeyboard()
   }
 
   detach() {
