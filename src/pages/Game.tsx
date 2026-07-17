@@ -106,6 +106,19 @@ function readPickerSkybox(params: URLSearchParams): SkyboxPreference {
   return 'day'
 }
 
+/** Dev/admin tools only on local machines (not production hosts). */
+function isLocalhostHost(): boolean {
+  if (typeof window === 'undefined') return false
+  const h = window.location.hostname
+  return (
+    h === 'localhost' ||
+    h === '127.0.0.1' ||
+    h === '[::1]' ||
+    h === '::1' ||
+    h.endsWith('.local')
+  )
+}
+
 export default function Game() {
   const [searchParams, setSearchParams] = useSearchParams()
   const serverUrl = useAppStore((s) => s.serverUrl)
@@ -155,6 +168,9 @@ export default function Game() {
   const [thirdPerson, setThirdPerson] = useState(false)
   const [freeCam, setFreeCam] = useState(false)
   const [dummiesEnabled, setDummiesEnabled] = useState(true)
+  /** Bottom-left admin strip — localhost only, toggled with L. */
+  const [adminOpen, setAdminOpen] = useState(false)
+  const isLocalhost = isLocalhostHost()
   const lastKey = useRef('')
 
   const onHud = useCallback((snap: HudSnapshot) => {
@@ -185,6 +201,34 @@ export default function Game() {
     if (!engine || vmEdit) return
     engine.setGameplayEnabled(!settingsOpen)
   }, [engine, settingsOpen, vmEdit])
+
+  // Admin tools: L toggles the bottom-left strip (localhost + play only).
+  useEffect(() => {
+    if (!isLocalhost || phase !== 'play') return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (
+        t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable)
+      ) {
+        return
+      }
+      if (e.code !== 'KeyL') return
+      e.preventDefault()
+      setAdminOpen((v) => !v)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isLocalhost, phase])
+
+  // Leaving play or non-local: hide admin strip.
+  useEffect(() => {
+    if (phase !== 'play' || !isLocalhost) setAdminOpen(false)
+  }, [phase, isLocalhost])
 
   // Only one editor at a time
   const openLevelEdit = useCallback(() => {
@@ -317,27 +361,29 @@ export default function Game() {
         />
       )}
 
-      {/* Map + sky badge — sticker chip */}
+      {/* Map + sky badge — top-left so center scoreboard owns the middle */}
       {!vmEdit && !levelEdit && (
-        <div className="pointer-events-none absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-1.5 text-[11px] font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)]">
+        <div className="pointer-events-none absolute top-3 left-3 z-30 flex max-w-[40vw] items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)]">
           <img
             src={icons.map}
             alt=""
             aria-hidden
-            className="size-4 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
+            className="size-3.5 shrink-0 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
           />
-          <span className="text-arena-heat">{mapName}</span>
-          <span className="mx-0.5 text-white/30">·</span>
-          <span className="text-arena-tech">{SKYBOX_LABELS[sessionSkybox]}</span>
+          <span className="truncate text-arena-heat">{mapName}</span>
+          <span className="text-white/30">·</span>
+          <span className="truncate text-arena-tech">
+            {SKYBOX_LABELS[sessionSkybox]}
+          </span>
           {isOnline && (
             <>
-              <span className="mx-0.5 text-white/30">·</span>
-              <span className="inline-flex items-center gap-1 text-arena-ok">
+              <span className="text-white/30">·</span>
+              <span className="inline-flex shrink-0 items-center gap-1 text-arena-ok">
                 <img
                   src={icons.globe}
                   alt=""
                   aria-hidden
-                  className="size-3.5 object-contain"
+                  className="size-3 object-contain"
                 />
                 Online
               </span>
@@ -370,67 +416,77 @@ export default function Game() {
           onClose={() => setLevelEdit(false)}
         />
       ) : (
-        <div className="absolute bottom-3 left-3 z-40 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={backToPicker}
-            className={devBtn}
-            title="Return to map select"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <img
-                src={icons.map}
-                alt=""
-                aria-hidden
-                draggable={false}
-                className="size-4 object-contain"
-              />
-              Change map
+        isLocalhost &&
+        adminOpen && (
+          <div className="absolute bottom-3 left-3 z-40 flex max-w-[min(96vw,42rem)] flex-wrap items-center gap-2">
+            <span className="pointer-events-none rounded-lg border-[2.5px] border-arena-ink bg-arena-heat px-2 py-1 text-[10px] font-extrabold tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)]">
+              Admin · L
             </span>
-          </button>
-          {!isOnline && (
-            <>
-              <button type="button" onClick={openLevelEdit} className={devBtn}>
-                Level editor
-              </button>
-              <button type="button" onClick={openVmEdit} className={devBtn}>
-                Viewmodel editor
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={toggleThirdPerson}
-            className={thirdPerson ? devBtnOn : devBtn}
-            title="Toggle over-the-shoulder third-person camera"
-          >
-            {thirdPerson ? 'Third person: on' : 'Third person'}
-          </button>
-          {!isOnline && (
-            <>
-              <button
-                type="button"
-                onClick={toggleFreeCam}
-                className={freeCam ? devBtnOn : devBtn}
-                title={
-                  freeCam
-                    ? 'Exit free cam (while dead: respawn now)'
-                    : 'Fly freely — WASD, Space/crouch, sprint boost'
-                }
-              >
-                {freeCam ? 'Free cam: on' : 'Free cam'}
-              </button>
-              <button
-                type="button"
-                onClick={toggleDummies}
-                className={dummiesEnabled ? devBtn : devBtnOn}
-                title="Turn practice dummies fully off (no AI, anims, hitscan, or drawing)"
-              >
-                {dummiesEnabled ? 'Dummies: on' : 'Dummies: off'}
-              </button>
-            </>
-          )}
-        </div>
+            <button
+              type="button"
+              onClick={backToPicker}
+              className={devBtn}
+              title="Return to map select"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <img
+                  src={icons.map}
+                  alt=""
+                  aria-hidden
+                  draggable={false}
+                  className="size-4 object-contain"
+                />
+                Change map
+              </span>
+            </button>
+            {!isOnline && (
+              <>
+                <button
+                  type="button"
+                  onClick={openLevelEdit}
+                  className={devBtn}
+                >
+                  Level editor
+                </button>
+                <button type="button" onClick={openVmEdit} className={devBtn}>
+                  Viewmodel editor
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={toggleThirdPerson}
+              className={thirdPerson ? devBtnOn : devBtn}
+              title="Toggle over-the-shoulder third-person camera"
+            >
+              {thirdPerson ? 'Third person: on' : 'Third person'}
+            </button>
+            {!isOnline && (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleFreeCam}
+                  className={freeCam ? devBtnOn : devBtn}
+                  title={
+                    freeCam
+                      ? 'Exit free cam (while dead: respawn now)'
+                      : 'Fly freely — WASD, Space/crouch, sprint boost'
+                  }
+                >
+                  {freeCam ? 'Free cam: on' : 'Free cam'}
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleDummies}
+                  className={dummiesEnabled ? devBtn : devBtnOn}
+                  title="Turn practice dummies fully off (no AI, anims, hitscan, or drawing)"
+                >
+                  {dummiesEnabled ? 'Dummies: on' : 'Dummies: off'}
+                </button>
+              </>
+            )}
+          </div>
+        )
       )}
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

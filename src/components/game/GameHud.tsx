@@ -136,25 +136,6 @@ function matchEndTitle(reason: HudSnapshot['matchEndReason']): string {
   return 'Match over'
 }
 
-function matchPhaseLabel(phase: NonNullable<HudSnapshot['matchPhase']>): string {
-  switch (phase) {
-    case 'waiting':
-      return 'waiting'
-    case 'pregame':
-      return 'pregame'
-    case 'countdown':
-      return 'countdown'
-    case 'live':
-      return 'live'
-    case 'round_reset':
-      return 'reset'
-    case 'ended':
-      return 'ended'
-    default:
-      return phase
-  }
-}
-
 /**
  * Cartoon sticker panel — thick ink border, hard drop shadow, chunky radius.
  * Matches /public/icons outline language (not tactical glass).
@@ -181,14 +162,6 @@ function HudPanel({
     >
       {/* Soft top sheen like icon highlights */}
       <div className="pointer-events-none absolute inset-x-3 top-0 h-2 rounded-b-full bg-white/10" />
-      {children}
-    </div>
-  )
-}
-
-function HudLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="text-[10px] font-extrabold tracking-wide text-white/55 uppercase">
       {children}
     </div>
   )
@@ -389,7 +362,7 @@ function HitMarkerX({
   )
 }
 
-/** Chunky sticker button for HUD chrome. */
+/** Chunky sticker button for HUD chrome (icon-friendly). */
 function ChromeBtn({
   children,
   onClick,
@@ -404,7 +377,7 @@ function ChromeBtn({
       type="button"
       onClick={onClick}
       title={title}
-      className="inline-flex items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-3 py-2 text-xs font-extrabold tracking-wide text-white shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 hover:shadow-[2px_4px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+      className="inline-flex size-10 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-arena-panel text-white shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 hover:shadow-[2px_4px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
     >
       {children}
     </button>
@@ -419,17 +392,6 @@ export function GameHud({
 }: GameHudProps) {
   if (!hud) return null
 
-  const phaseLabel =
-    hud.phase === 'bolt'
-      ? 'BOLT'
-      : hud.phase === 'reloading'
-        ? 'RELOAD'
-        : hud.phase === 'firing'
-          ? 'FIRE'
-          : 'READY'
-
-  const phaseHot =
-    hud.phase === 'reloading' || hud.phase === 'bolt' || hud.phase === 'firing'
   const showHit = Boolean(hud.lastHit && hud.lastHitAge < HITMARKER_DURATION)
   const fullyScoped = hud.adsBlend > 0.55
   const gap = spreadToGap(hud.aimSpread)
@@ -665,76 +627,65 @@ export function GameHud({
         )}
       </AnimatePresence>
 
-      {/* Top chrome */}
+      {/* Top chrome — score dead-center; utilities corners */}
       <div
-        className="pointer-events-auto absolute top-3 left-3 right-3 flex items-start justify-between gap-3 transition-opacity duration-150"
+        className="pointer-events-none absolute top-3 left-3 right-3 z-30 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
-        {/* Score / status */}
-        <HudPanel className="min-w-[12rem] px-3.5 py-2.5" accent="heat">
-          <div className="flex items-center gap-2">
-            <GameIcon src={icons.aim} className="size-5" />
-            <HudLabel>
-              {online
-                ? hud.teamColor === 'red'
-                  ? 'Red team'
-                  : hud.teamColor === 'blue'
-                    ? 'Blue team'
-                    : 'Dual Arena'
-                : 'Dual Arena'}
-            </HudLabel>
-          </div>
-          <div className="mt-1.5 flex items-end gap-3">
-            <div>
-              {online ? (
-                <>
-                  <div className="text-3xl font-black leading-none tracking-tight tabular-nums">
-                    <span className="text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                      {hud.kills}
-                    </span>
-                    <span className="mx-1 text-lg text-white/30">–</span>
-                    <span className="text-white/90">{hud.enemyKills}</span>
-                  </div>
-                  <div className="mt-0.5 text-[10px] font-extrabold tracking-wide text-white/50 uppercase">
-                    First to {firstTo}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-3xl font-black leading-none tracking-tight tabular-nums text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                    {hud.kills}
-                  </div>
-                  <div className="mt-0.5 text-[10px] font-extrabold tracking-wide text-white/50 uppercase">
-                    Elims
-                  </div>
-                </>
+        {/* Scoreboard — center of screen, pure game state (0 – 2) */}
+        <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2">
+          <HudPanel
+            className="min-w-[9.5rem] px-5 py-2 text-center"
+            accent="heat"
+          >
+            {online ? (
+              <div className="flex items-center justify-center gap-2.5">
+                <span
+                  className={cn(
+                    'min-w-[1.6rem] text-center text-4xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
+                    hud.teamColor === 'blue' ? 'text-sky-300' : 'text-arena-heat',
+                  )}
+                >
+                  {hud.kills}
+                </span>
+                <span className="text-xl font-black text-white/25">–</span>
+                <span
+                  className={cn(
+                    'min-w-[1.6rem] text-center text-4xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
+                    hud.teamColor === 'red' ? 'text-sky-300' : 'text-white',
+                  )}
+                >
+                  {hud.enemyKills}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2">
+                <GameIcon src={icons.aim} className="size-6" />
+                <span className="text-4xl font-black leading-none tabular-nums text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
+                  {hud.kills}
+                </span>
+              </div>
+            )}
+            <div className="mt-0.5 flex items-center justify-center gap-2 text-[10px] font-extrabold tracking-wide text-white/45 uppercase">
+              {online && <span>FT{firstTo}</span>}
+              {online && hud.matchTimeLeft != null && (
+                <span className="text-white/25">·</span>
               )}
-            </div>
-            <div className="mb-0.5 h-9 w-[3px] rounded-full bg-arena-ink/50" />
-            <div className="min-w-0 pb-0.5">
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold tracking-wide text-white/80 uppercase">
-                <GameIcon src={icons.bolt} className="size-3.5" />
-                {online && hud.matchPhase
-                  ? matchPhaseLabel(hud.matchPhase)
-                  : hud.moveState}
-              </div>
-              <div className="mt-0.5 flex items-center gap-1 text-[11px] font-bold tabular-nums text-white/50">
-                <GameIcon src={icons.speed} className="size-3.5" />
-                {hud.speed.toFixed(1)} m/s
-              </div>
               {hud.matchTimeLeft != null && (
-                <div className="mt-0.5 text-[11px] font-extrabold tabular-nums text-arena-tech">
+                <span className="tabular-nums text-arena-tech">
                   {formatMatchClock(hud.matchTimeLeft)}
-                </div>
+                </span>
               )}
+              {!online && <span>elims</span>}
             </div>
-          </div>
-        </HudPanel>
+          </HudPanel>
+        </div>
 
-        <div className="flex items-start gap-2">
-          <HudPanel className="px-3 py-2 text-xs" accent="tech">
+        {/* Top-right utilities */}
+        <div className="pointer-events-auto absolute top-0 right-0 flex items-start gap-2">
+          <HudPanel className="px-2.5 py-1.5 text-xs" accent="tech">
             <div
-              className="flex items-baseline gap-3 font-extrabold tabular-nums"
+              className="flex items-baseline gap-2.5 font-extrabold tabular-nums"
               title={
                 hud.ping == null
                   ? 'Ping: offline (local range)'
@@ -742,20 +693,22 @@ export function GameHud({
               }
             >
               <span className={fpsColor(hud.fps)}>
-                <span className="text-lg">{hud.fps}</span>
-                <span className="ml-1 text-[10px] font-bold text-white/40">
+                <span className="text-base">{hud.fps}</span>
+                <span className="ml-0.5 text-[9px] font-bold text-white/40">
                   FPS
                 </span>
               </span>
-              <span className="text-white/20">|</span>
-              <span className={pingColor(hud.ping)}>
-                <span className="text-lg">
-                  {hud.ping == null ? '—' : Math.round(hud.ping)}
-                </span>
-                <span className="ml-1 text-[10px] font-bold text-white/40">
-                  ms
-                </span>
-              </span>
+              {hud.ping != null && (
+                <>
+                  <span className="text-white/20">|</span>
+                  <span className={pingColor(hud.ping)}>
+                    <span className="text-base">{Math.round(hud.ping)}</span>
+                    <span className="ml-0.5 text-[9px] font-bold text-white/40">
+                      ms
+                    </span>
+                  </span>
+                </>
+              )}
             </div>
             {hud.perf && <PerfPanel perf={hud.perf} fps={hud.fps} />}
           </HudPanel>
@@ -766,9 +719,9 @@ export function GameHud({
                 gameAudio.uiClick()
                 onOpenSettings()
               }}
+              title="Settings"
             >
-              <GameIcon src={icons.settings} className="size-4" />
-              Settings
+              <GameIcon src={icons.settings} className="size-5" />
             </ChromeBtn>
           )}
           {onExit && (
@@ -779,8 +732,7 @@ export function GameHud({
               }}
               title="Return to map select"
             >
-              <GameIcon src={icons.map} className="size-4" />
-              Maps
+              <GameIcon src={icons.map} className="size-5" />
             </ChromeBtn>
           )}
         </div>
@@ -885,106 +837,70 @@ export function GameHud({
         )}
       </div>
 
-      {/* Bottom chrome — vitals + ammo */}
+      {/* Bottom chrome — health left, mag bullets right */}
       <div
         className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
-        {/* Health */}
-        <HudPanel className="min-w-[14rem] px-4 py-3" accent="none">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <GameIcon
-                src={icons.heart}
-                className={cn(
-                  'size-7 transition-transform',
-                  hud.hp <= 30 && 'scale-110',
-                )}
-              />
-              <HudLabel>Health</HudLabel>
-            </div>
-            <span className="text-2xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]">
-              {hud.hp}
-            </span>
-          </div>
-          <div className="mt-2.5 h-3.5 w-48 overflow-hidden rounded-full border-[3px] border-arena-ink bg-black/55 shadow-[inset_0_2px_4px_rgba(0,0,0,0.45)]">
-            <div
+        {/* Health — compact row */}
+        <HudPanel className="px-3 py-2.5" accent="none">
+          <div className="flex items-center gap-3">
+            <GameIcon
+              src={icons.heart}
               className={cn(
-                'h-full rounded-full transition-all duration-200',
-                hpBarColor(hud.hp),
-                'shadow-[inset_0_2px_0_rgba(255,255,255,0.35)]',
+                'size-9 shrink-0',
+                hud.hp <= 30 && 'scale-110',
               )}
-              style={{ width: `${Math.max(0, Math.min(100, hud.hp))}%` }}
             />
-          </div>
-          {/* Segment ticks */}
-          <div className="relative mt-1.5 flex w-48 justify-between px-1">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-1.5 w-1.5 rounded-full bg-white/25"
-              />
-            ))}
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-1.5">
+                <span
+                  className={cn(
+                    'text-2xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
+                    hud.hp <= 30 && 'text-arena-danger',
+                  )}
+                >
+                  {hud.hp}
+                </span>
+              </div>
+              <div className="mt-1.5 h-2.5 w-36 overflow-hidden rounded-full border-[2.5px] border-arena-ink bg-black/55 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)]">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all duration-200',
+                    hpBarColor(hud.hp),
+                    'shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
+                  )}
+                  style={{ width: `${Math.max(0, Math.min(100, hud.hp))}%` }}
+                />
+              </div>
+            </div>
           </div>
         </HudPanel>
 
-        {/* Weapon / ammo */}
+        {/* Mag — bullet icons only */}
         <HudPanel
           className={cn(
-            'min-w-[11rem] px-5 py-3 text-right',
+            'px-3.5 py-2.5',
             emptyMag && 'ring-2 ring-arena-danger/60',
           )}
-          accent={phaseHot || lowAmmo ? 'danger' : 'tech'}
+          accent={lowAmmo || emptyMag ? 'danger' : 'none'}
         >
-          <div className="flex items-center justify-end gap-2">
-            <HudLabel>
-              <span
-                className={cn(
-                  phaseHot && 'text-arena-danger',
-                  !phaseHot && 'text-arena-tech',
-                )}
-              >
-                {phaseLabel}
-              </span>
-            </HudLabel>
-            <GameIcon
-              src={icons.ammo}
-              className={cn(
-                'size-7',
-                emptyMag && 'opacity-45 grayscale',
-                lowAmmo && !emptyMag && 'animate-pulse',
-              )}
-            />
-          </div>
-          <div
-            className={cn(
-              'mt-0.5 text-4xl font-black leading-none tracking-tighter tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
-              emptyMag
-                ? 'text-arena-danger'
-                : lowAmmo
-                  ? 'text-arena-heat'
-                  : 'text-white',
-            )}
-          >
-            {hud.ammo}
-            <span className="text-xl font-extrabold text-white/40">
-              /{hud.magSize}
-            </span>
-          </div>
-          {/* Mag segment bar — chunky bullet pips */}
-          <div className="mt-2 flex justify-end gap-1">
+          <div className="flex items-center gap-1">
             {Array.from({ length: hud.magSize }).map((_, i) => {
-              const filled = i < hud.ammo
+              // Fill from the right so remaining rounds read left→right
+              const filled = i >= hud.magSize - hud.ammo
               return (
-                <div
+                <GameIcon
                   key={i}
+                  src={icons.ammo}
                   className={cn(
-                    'h-2.5 w-3 rounded-md border-2 border-arena-ink transition-colors',
+                    'size-8 transition-all duration-150',
                     filled
                       ? lowAmmo
-                        ? 'bg-arena-heat'
-                        : 'bg-arena-tech'
-                      : 'bg-white/10',
+                        ? 'opacity-100 drop-shadow-[0_0_6px_var(--arena-heat)]'
+                        : 'opacity-100'
+                      : 'scale-90 opacity-20 grayscale',
+                    emptyMag && 'opacity-25 grayscale',
                   )}
                 />
               )
