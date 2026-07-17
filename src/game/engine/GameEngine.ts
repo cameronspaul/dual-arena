@@ -15,6 +15,7 @@ import {
   type MapDef,
   type MapId,
 } from '../maps'
+import type { SkyboxId } from '../scene/skyboxes'
 import { createPlayer, stepPlayer } from '../sim/player'
 import {
   aimSpread,
@@ -41,6 +42,11 @@ export type HudListener = (hud: HudSnapshot) => void
 
 export type GameEngineOptions = {
   mapId?: MapId | string
+  /**
+   * Concrete skybox for this session (already resolved — not `"random"`).
+   * Shared via URL / match config so all players see the same sky.
+   */
+  skybox?: SkyboxId
 }
 
 export class GameEngine {
@@ -79,6 +85,8 @@ export class GameEngine {
   private prevSniperPhase: SniperState['phase'] = 'ready'
 
   private mapDef: MapDef
+  /** Session skybox (concrete id; default day). */
+  private skyboxId: SkyboxId
   private mapHitMeshes: THREE.Object3D[] = []
   /** Live triangle collision for GLB maps (null on procedural range). */
   private meshWorld: { meshes: THREE.Object3D[] } | null = null
@@ -88,6 +96,7 @@ export class GameEngine {
   constructor(container: HTMLElement, opts: GameEngineOptions = {}) {
     this.container = container
     this.mapDef = getMap(opts.mapId)
+    this.skyboxId = opts.skybox ?? 'day'
 
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(this.mapDef.bgColor)
@@ -176,6 +185,7 @@ export class GameEngine {
           this.renderer,
           this.floorMat,
           this.coverMat,
+          this.skyboxId,
         )
         this.envTextures.push(...textures)
       } else {
@@ -196,6 +206,16 @@ export class GameEngine {
           this.camera.far = Math.max(this.mapDef.cameraFar, span * 1.2 + 40)
           this.camera.updateProjectionMatrix()
         }
+        // Session skybox over solid map bgColor (shared via match / URL)
+        const textures = await loadEnvForMap(
+          this.mapDef,
+          this.scene,
+          this.renderer,
+          null,
+          null,
+          this.skyboxId,
+        )
+        this.envTextures.push(...textures)
         console.info(
           `[map] ${this.mapDef.id} fitted`,
           built.bounds,

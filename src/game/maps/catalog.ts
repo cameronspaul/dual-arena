@@ -4,7 +4,13 @@
 import type { Vec3 } from '../core/types'
 import { WORLD } from '../core/config'
 
-export type MapId = 'range' | 'desert' | 'arena-v3' | 'tdm'
+export type MapId =
+  | 'range'
+  | 'desert'
+  | 'arena-v3'
+  | 'arena-v4'
+  | 'tdm'
+  | 'tdm-location'
 
 export interface MapDummyDef {
   id: string
@@ -55,8 +61,8 @@ export interface MapDef {
   fogColor: number
   bgColor: number
   /**
-   * When true, keep Kenney sky/floor textures for the procedural range.
-   * GLB maps use solid fog color as background unless they carry their own.
+   * When true, load Kenney prototype floor/cover textures (procedural range).
+   * Skyboxes are always applied from user settings on every map.
    */
   loadEnvTextures: boolean
 }
@@ -145,6 +151,27 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x6a7a8a,
     loadEnvTextures: false,
   },
+  'arena-v4': {
+    id: 'arena-v4',
+    name: 'Shooter Arena V4',
+    blurb: 'Updated box arena layout — tight corridors and multi-level peeks.',
+    tags: ['close', 'duel'],
+    kind: 'gltf',
+    url: '/models/maps/fps_shooter_game_arena_map_v4.glb',
+    scale: 1,
+    rotateY: 0,
+    offset: { x: 0, y: 0, z: 0 },
+    spawn: { x: 6, y: 0, z: 0 },
+    spawnYaw: Math.PI,
+    dummies: arenaDummies(8),
+    dummyBounds: 12,
+    cameraFar: 120,
+    fogNear: 30,
+    fogFar: 90,
+    fogColor: 0x7a8a9a,
+    bgColor: 0x5a6a7a,
+    loadEnvTextures: false,
+  },
   tdm: {
     id: 'tdm',
     name: 'TDM Compound',
@@ -167,13 +194,38 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x7a8898,
     loadEnvTextures: false,
   },
+  'tdm-location': {
+    id: 'tdm-location',
+    name: 'TDM Location',
+    blurb: 'Low-poly TDM location map — open lanes with natural props and cover.',
+    tags: ['mid range', 'tdm'],
+    kind: 'gltf',
+    url: '/models/maps/lowpoly__location__map__tdm.glb',
+    // Authored ~cm/mixed units with km-scale backdrop shells; robust fit
+    // centers the real ~60×400 m lane pad. Stay 1:1 after that.
+    scale: 1,
+    rotateY: 0,
+    offset: { x: 0, y: 0, z: 0 },
+    spawn: { x: 0, y: 0, z: 6 },
+    spawnYaw: Math.PI,
+    dummies: arenaDummies(12),
+    dummyBounds: 40,
+    cameraFar: 280,
+    fogNear: 40,
+    fogFar: 200,
+    fogColor: 0x8a9a8a,
+    bgColor: 0x6a7a6a,
+    loadEnvTextures: false,
+  },
 }
 
 export const MAP_LIST: MapDef[] = [
   MAPS.range,
   MAPS.desert,
   MAPS['arena-v3'],
+  MAPS['arena-v4'],
   MAPS.tdm,
+  MAPS['tdm-location'],
 ]
 
 export const DEFAULT_MAP_ID: MapId = 'range'

@@ -5,15 +5,23 @@ import {
   type GameEngineOptions,
 } from '@/game/engine'
 import type { MapId } from '@/game/maps'
+import type { SkyboxId } from '@/game/scene/skyboxes'
 
 interface GameCanvasProps {
   onHud: HudListener
   /** Called once the engine is constructed (and again with null on dispose). */
   onEngine?: (engine: GameEngine | null) => void
   mapId?: MapId | string
+  /** Concrete session skybox (shared; default day). */
+  skybox?: SkyboxId
 }
 
-export function GameCanvas({ onHud, onEngine, mapId }: GameCanvasProps) {
+export function GameCanvas({
+  onHud,
+  onEngine,
+  mapId,
+  skybox = 'day',
+}: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const onHudRef = useRef(onHud)
@@ -25,7 +33,7 @@ export function GameCanvas({ onHud, onEngine, mapId }: GameCanvasProps) {
     const el = containerRef.current
     if (!el) return
 
-    const opts: GameEngineOptions = { mapId }
+    const opts: GameEngineOptions = { mapId, skybox }
     const engine = new GameEngine(el, opts)
     engineRef.current = engine
     onEngineRef.current?.(engine)
@@ -38,7 +46,7 @@ export function GameCanvas({ onHud, onEngine, mapId }: GameCanvasProps) {
       engineRef.current = null
       onEngineRef.current?.(null)
     }
-  }, [mapId])
+  }, [mapId, skybox])
 
   return (
     <div

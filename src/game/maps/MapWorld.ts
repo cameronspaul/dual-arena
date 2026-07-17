@@ -10,6 +10,7 @@ import {
   buildRange as buildRangeScene,
   loadEnvironmentTextures,
 } from '../scene/environment'
+import type { SkyboxId } from '../scene/skyboxes'
 import type { MapDef, MapDummyDef } from './catalog'
 import {
   castMeshWorldHitscan,
@@ -86,12 +87,18 @@ export async function loadEnvForMap(
   renderer: THREE.WebGLRenderer,
   floorMat: THREE.MeshStandardMaterial | null,
   coverMat: THREE.MeshStandardMaterial | null,
+  /** Concrete session skybox (not `"random"`). Defaults to day. */
+  skybox?: SkyboxId,
 ): Promise<THREE.Texture[]> {
-  if (!map.loadEnvTextures) {
-    scene.background = new THREE.Color(map.bgColor)
-    return []
-  }
-  return loadEnvironmentTextures({ scene, renderer, floorMat, coverMat })
+  // Always load a Kenney skybox; floor/cover textures only on the procedural range.
+  return loadEnvironmentTextures({
+    scene,
+    renderer,
+    floorMat,
+    coverMat,
+    skybox: skybox ?? 'day',
+    loadFloorTextures: map.loadEnvTextures,
+  })
 }
 
 /**
@@ -114,8 +121,10 @@ export async function loadGltfMap(
   root.rotation.y = map.rotateY
   root.updateMatrixWorld(true)
 
-  // Fit: floor at y=0, center on XZ
-  const preBox = new THREE.Box3().setFromObject(root)
+  // Fit using *robust* bounds so giant Sketchfab shells / far debris
+  // (e.g. TDM Location's km-scale wrappers) don't yank the playable pad
+  // into empty space — that was spawning the player with no floor underfoot.
+  const preBox = robustMeshBounds(root)
   const preCenter = new THREE.Vector3()
   preBox.getCenter(preCenter)
 
@@ -135,10 +144,15 @@ export async function loadGltfMap(
   root.updateMatrixWorld(true)
 
   // Collision + hitscan use prepared meshes (DoubleSide, optional COL_* only)
-  const hitMeshes: THREE.Object3D[] = prepareCollisionMeshes(root)
+  let hitMeshes: THREE.Object3D[] = prepareCollisionMeshes(root)
 
-  const bounds = measureBounds(root)
+  // Playable footprint after robust fit (not the inflated full-scene AABB)
+  const playBox = robustMeshBounds(root)
+  const bounds = boxToMapBounds(playBox)
   const size = bounds.size
+
+  // Drop absurd wrapper shells from collision (keeps bullets/walk sane)
+  hitMeshes = filterPlayableCollisionMeshes(hitMeshes, playBox)
 
   // Soft ground plane under the map (visual only — not a collider).
   const ground = new THREE.Mesh(
@@ -200,8 +214,7 @@ export async function loadGltfMap(
   }
 }
 
-function measureBounds(root: THREE.Object3D): MapBounds {
-  const box = new THREE.Box3().setFromObject(root)
+function boxToMapBounds(box: THREE.Box3): MapBounds {
   const sizeV = new THREE.Vector3()
   const centerV = new THREE.Vector3()
   box.getSize(sizeV)
@@ -212,6 +225,144 @@ function measureBounds(root: THREE.Object3D): MapBounds {
     size: { x: sizeV.x, y: sizeV.y, z: sizeV.z },
     center: { x: centerV.x, y: centerV.y, z: centerV.z },
   }
+}
+
+function percentileSorted(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0
+  const t = clamp(p, 0, 1) * (sorted.length - 1)
+  const lo = Math.floor(t)
+  const hi = Math.ceil(t)
+  if (lo === hi) return sorted[lo]
+  const f = t - lo
+  return sorted[lo] * (1 - f) + sorted[hi] * f
+}
+
+/**
+ * World AABB of the *playable bulk* of a map.
+ *
+ * Full `Box3.setFromObject` fails on marketplace GLBs that include km-scale
+ * backdrop shells, distant debris, or mis-scaled props — the true arena ends
+ * up as a speck, and spawn/floor probes land in empty space.
+ *
+ * We drop extreme-extent meshes, then take per-mesh AABB percentiles so a few
+ * outliers cannot dominate. Falls back to the full box if the sample is tiny.
+ */
+function robustMeshBounds(root: THREE.Object3D): THREE.Box3 {
+  root.updateMatrixWorld(true)
+  const tmp = new THREE.Box3()
+  type MeshBox = { min: THREE.Vector3; max: THREE.Vector3; extent: number }
+  const meshBoxes: MeshBox[] = []
+
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh) || !obj.geometry) return
+    tmp.setFromObject(obj)
+    if (tmp.isEmpty()) return
+    const sx = tmp.max.x - tmp.min.x
+    const sy = tmp.max.y - tmp.min.y
+    const sz = tmp.max.z - tmp.min.z
+    if (!Number.isFinite(sx + sy + sz) || sx + sy + sz < 1e-5) return
+    meshBoxes.push({
+      min: tmp.min.clone(),
+      max: tmp.max.clone(),
+      extent: Math.max(sx, sy, sz),
+    })
+  })
+
+  const full = new THREE.Box3().setFromObject(root)
+  if (meshBoxes.length < 8) return full
+
+  const sortNum = (a: number, b: number) => a - b
+  const extents = meshBoxes.map((b) => b.extent).sort(sortNum)
+  const p75 = percentileSorted(extents, 0.75)
+  const p96 = percentileSorted(extents, 0.96)
+  // Keep typical props + buildings; drop km-scale Sketchfab shells
+  const maxExtentKeep = Math.max(p96, p75 * 3, 25)
+
+  const kept = meshBoxes.filter((b) => b.extent <= maxExtentKeep)
+  const sample = kept.length >= 6 ? kept : meshBoxes
+
+  const minsX = sample.map((b) => b.min.x).sort(sortNum)
+  const minsY = sample.map((b) => b.min.y).sort(sortNum)
+  const minsZ = sample.map((b) => b.min.z).sort(sortNum)
+  const maxsX = sample.map((b) => b.max.x).sort(sortNum)
+  const maxsY = sample.map((b) => b.max.y).sort(sortNum)
+  const maxsZ = sample.map((b) => b.max.z).sort(sortNum)
+
+  // Percentile trim: ignore a few remaining far props for center/floor.
+  const lo = 0.06
+  const hi = 0.94
+  const robust = new THREE.Box3(
+    new THREE.Vector3(
+      percentileSorted(minsX, lo),
+      percentileSorted(minsY, lo),
+      percentileSorted(minsZ, lo),
+    ),
+    new THREE.Vector3(
+      percentileSorted(maxsX, hi),
+      percentileSorted(maxsY, hi),
+      percentileSorted(maxsZ, hi),
+    ),
+  )
+
+  const sizeScratch = new THREE.Vector3()
+  if (
+    !Number.isFinite(robust.min.x + robust.max.x) ||
+    robust.isEmpty() ||
+    robust.getSize(sizeScratch).length() < 1
+  ) {
+    return full
+  }
+
+  // Clamp into the true full box and ensure a valid volume
+  robust.min.max(full.min)
+  robust.max.min(full.max)
+  if (
+    robust.min.x >= robust.max.x ||
+    robust.min.y >= robust.max.y ||
+    robust.min.z >= robust.max.z
+  ) {
+    return full
+  }
+  return robust
+}
+
+/**
+ * Remove map-wrapping backdrop shells from collision/hitscan.
+ * Visuals stay; walk/bullet probes only see the playable bulk.
+ */
+function filterPlayableCollisionMeshes(
+  meshes: THREE.Object3D[],
+  playBox: THREE.Box3,
+): THREE.Object3D[] {
+  const playSize = new THREE.Vector3()
+  playBox.getSize(playSize)
+  const playFoot = Math.max(playSize.x, playSize.z, 1)
+  const playHeight = Math.max(playSize.y, 1)
+  // Shells that dwarf the playable pad in both horizontal axes
+  const maxFoot = playFoot * 2.2
+  const maxHeight = Math.max(playHeight * 3.5, playFoot * 1.5)
+
+  const tmp = new THREE.Box3()
+  const kept: THREE.Object3D[] = []
+  for (const obj of meshes) {
+    if (!(obj instanceof THREE.Mesh)) {
+      kept.push(obj)
+      continue
+    }
+    tmp.setFromObject(obj)
+    if (tmp.isEmpty()) continue
+    const sx = tmp.max.x - tmp.min.x
+    const sy = tmp.max.y - tmp.min.y
+    const sz = tmp.max.z - tmp.min.z
+    const foot = Math.max(sx, sz)
+    // Giant backdrop / inverted skybox hulls
+    if (foot > maxFoot && sy > playHeight * 0.8) continue
+    if (foot > maxFoot * 1.4) continue
+    if (sy > maxHeight && foot > playFoot * 0.9) continue
+    kept.push(obj)
+  }
+  // Safety: never return empty (would disable mesh collision entirely)
+  return kept.length > 0 ? kept : meshes
 }
 
 /**
@@ -231,13 +382,26 @@ function placeActors(
   const margin = Math.min(2.5, Math.min(halfX, halfZ) * 0.12)
   const maxX = Math.max(0.5, halfX - margin)
   const maxZ = Math.max(0.5, halfZ - margin)
+  // Prefer offsets from the *playable* center (robust fit), not world 0 —
+  // some maps still have a small residual offset after centering.
+  const cx = bounds.center.x
+  const cz = bounds.center.z
 
-  // Catalog spawn is preferred offset from map center (post-fit origin ≈ center).
+  // Catalog spawn is preferred offset from map center.
   // Clamp hard so we never start outside the footprint.
-  const prefX = clamp(map.spawn.x, -maxX, maxX)
-  const prefZ = clamp(map.spawn.z, -maxZ, maxZ)
+  const prefX = clamp(cx + map.spawn.x, cx - maxX, cx + maxX)
+  const prefZ = clamp(cz + map.spawn.z, cz - maxZ, cz + maxZ)
 
-  const spawnXZ = findOpenPoint(hitMeshes, bounds, prefX, prefZ, maxX, maxZ)
+  const spawnXZ = findOpenPoint(
+    hitMeshes,
+    bounds,
+    prefX,
+    prefZ,
+    maxX,
+    maxZ,
+    cx,
+    cz,
+  )
   const spawnY = sampleFloorY(hitMeshes, bounds, spawnXZ.x, spawnXZ.z)
   const spawn: Vec3 = { x: spawnXZ.x, y: spawnY, z: spawnXZ.z }
 
@@ -258,6 +422,8 @@ function placeActors(
     spawn,
     maxX,
     maxZ,
+    cx,
+    cz,
   )
 
   return { spawn, spawnYaw, dummies }
@@ -275,6 +441,8 @@ function placeDummies(
   playerSpawn: Vec3,
   maxX: number,
   maxZ: number,
+  originX = 0,
+  originZ = 0,
 ): MapDummyDef[] {
   const count = Math.max(3, Math.min(map.dummies.length || 5, 6))
   const minFromPlayer = Math.min(
@@ -297,16 +465,16 @@ function placeDummies(
     if (catalog) {
       seeds.push({
         id: catalog.id,
-        x: clamp(catalog.x, -maxX, maxX),
-        z: clamp(catalog.z, -maxZ, maxZ),
+        x: clamp(originX + catalog.x, originX - maxX, originX + maxX),
+        z: clamp(originZ + catalog.z, originZ - maxZ, originZ + maxZ),
       })
     } else {
       // Fan in front of player look (roughly -Z from spawn toward center)
       const ang = -Math.PI * 0.5 + ((i + 0.5) / count) * Math.PI
       seeds.push({
         id: `d${i}`,
-        x: clamp(Math.cos(ang) * ringR, -maxX, maxX),
-        z: clamp(Math.sin(ang) * ringR, -maxZ, maxZ),
+        x: clamp(originX + Math.cos(ang) * ringR, originX - maxX, originX + maxX),
+        z: clamp(originZ + Math.sin(ang) * ringR, originZ - maxZ, originZ + maxZ),
       })
     }
   }
@@ -320,8 +488,8 @@ function placeDummies(
       const u = ix / denom
       const v = iz / denom
       grid.push({
-        x: -maxX + u * maxX * 2,
-        z: -maxZ + v * maxZ * 2,
+        x: originX - maxX + u * maxX * 2,
+        z: originZ - maxZ + v * maxZ * 2,
       })
     }
   }
@@ -334,33 +502,36 @@ function placeDummies(
       null
 
     const tryPoint = (x: number, z: number, bias = 0) => {
-      const cx = clamp(x, -maxX, maxX)
-      const cz = clamp(z, -maxZ, maxZ)
-      const distP = Math.hypot(cx - playerSpawn.x, cz - playerSpawn.z)
+      const px = clamp(x, originX - maxX, originX + maxX)
+      const pz = clamp(z, originZ - maxZ, originZ + maxZ)
+      const distP = Math.hypot(px - playerSpawn.x, pz - playerSpawn.z)
       if (distP < minFromPlayer) return
 
       let nearOther = false
       for (const p of placed) {
-        if (Math.hypot(cx - p.x, cz - p.z) < minBetween) {
+        if (Math.hypot(px - p.x, pz - p.z) < minBetween) {
           nearOther = true
           break
         }
       }
       if (nearOther) return
 
-      const walk = scoreSpawn(hitMeshes, bounds, cx, cz)
+      const walk = scoreSpawn(hitMeshes, bounds, px, pz)
       // Reject unwalkable (no floor / roof / no headroom)
       if (walk < 2) return
 
-      const y = sampleFloorY(hitMeshes, bounds, cx, cz)
+      const y = sampleFloorY(hitMeshes, bounds, px, pz)
       // Prefer mid-range duel spacing (not jammed on player, not map edge)
       const spacing =
         distP > minFromPlayer * 1.4 && distP < minFromPlayer * 3.5 ? 1.5 : 0
       const edge =
-        Math.min(maxX - Math.abs(cx), maxZ - Math.abs(cz)) > 1.2 ? 0.8 : -1
+        Math.min(maxX - Math.abs(px - originX), maxZ - Math.abs(pz - originZ)) >
+        1.2
+          ? 0.8
+          : -1
       const score = walk + spacing + edge + bias
       if (!best || score > best.score) {
-        best = { x: cx, z: cz, y, score }
+        best = { x: px, z: pz, y, score }
       }
     }
 
@@ -387,9 +558,26 @@ function placeDummies(
 
     if (!best) {
       // Last resort: opposite side of map from player
-      const fx = clamp(-playerSpawn.x * 0.6 + (i - count / 2) * 2.2, -maxX, maxX)
-      const fz = clamp(-playerSpawn.z * 0.6 - 3, -maxZ, maxZ)
-      const open = findOpenPoint(hitMeshes, bounds, fx, fz, maxX, maxZ)
+      const fx = clamp(
+        originX - (playerSpawn.x - originX) * 0.6 + (i - count / 2) * 2.2,
+        originX - maxX,
+        originX + maxX,
+      )
+      const fz = clamp(
+        originZ - (playerSpawn.z - originZ) * 0.6 - 3,
+        originZ - maxZ,
+        originZ + maxZ,
+      )
+      const open = findOpenPoint(
+        hitMeshes,
+        bounds,
+        fx,
+        fz,
+        maxX,
+        maxZ,
+        originX,
+        originZ,
+      )
       best = {
         x: open.x,
         z: open.z,
@@ -422,20 +610,25 @@ function findOpenPoint(
   preferZ: number,
   maxX: number,
   maxZ: number,
+  originX = 0,
+  originZ = 0,
 ): { x: number; z: number } {
   // Try preferred point, then spiral samples around center / preferred.
   const candidates: { x: number; z: number }[] = [
     { x: preferX, z: preferZ },
-    { x: 0, z: 0 },
-    { x: preferX * 0.5, z: preferZ * 0.5 },
+    { x: originX, z: originZ },
+    {
+      x: originX + (preferX - originX) * 0.5,
+      z: originZ + (preferZ - originZ) * 0.5,
+    },
   ]
   for (let ring = 1; ring <= 6; ring++) {
     const r = (ring / 6) * Math.min(maxX, maxZ)
     for (let k = 0; k < 8; k++) {
       const a = (k / 8) * Math.PI * 2 + ring * 0.35
       candidates.push({
-        x: clamp(preferX + Math.cos(a) * r, -maxX, maxX),
-        z: clamp(preferZ + Math.sin(a) * r, -maxZ, maxZ),
+        x: clamp(preferX + Math.cos(a) * r, originX - maxX, originX + maxX),
+        z: clamp(preferZ + Math.sin(a) * r, originZ - maxZ, originZ + maxZ),
       })
     }
   }
@@ -461,7 +654,10 @@ function scoreSpawn(
   x: number,
   z: number,
 ): number {
-  const floorY = sampleFloorY(hitMeshes, bounds, x, z)
+  const floor = sampleFloor(hitMeshes, bounds, x, z)
+  if (!floor.hit) return -20
+
+  const floorY = floor.y
   let score = 1
 
   // Prefer lower floors (walkable ground, not rooftops)
@@ -486,7 +682,16 @@ function sampleFloorY(
   x: number,
   z: number,
 ): number {
-  if (hitMeshes.length === 0) return 0
+  return sampleFloor(hitMeshes, bounds, x, z).y
+}
+
+function sampleFloor(
+  hitMeshes: THREE.Object3D[],
+  bounds: MapBounds,
+  x: number,
+  z: number,
+): { y: number; hit: boolean } {
+  if (hitMeshes.length === 0) return { y: 0, hit: false }
 
   const top = bounds.max.y + 5
   _origin.set(x, top, z)
@@ -502,9 +707,9 @@ function sampleFloorY(
       const wn = n.clone().transformDirection(h.object.matrixWorld).normalize()
       if (wn.y < 0.35) continue
     }
-    return Math.max(0, h.point.y)
+    return { y: Math.max(0, h.point.y), hit: true }
   }
-  return 0
+  return { y: 0, hit: false }
 }
 
 function sampleClearanceUp(

@@ -3,6 +3,22 @@
  */
 import * as THREE from 'three'
 import type { AABB } from '../core/types'
+import {
+  isSkyboxId,
+  skyboxUrl,
+  SKYBOX_FOG,
+  type SkyboxId,
+} from './skyboxes'
+
+export type { SkyboxId, SkyboxPreference } from './skyboxes'
+export {
+  SKYBOX_IDS,
+  SKYBOX_LABELS,
+  resolveSkyboxId,
+  normalizeSkyboxPreference,
+  isSkyboxId,
+  isSkyboxPreference,
+} from './skyboxes'
 
 export type RangeBuildResult = {
   floorMat: THREE.MeshStandardMaterial
@@ -100,18 +116,32 @@ export function buildRange(
 }
 
 /**
- * Kenney CC0 sky (equirect) + prototype floor/cover textures.
+ * Kenney CC0 sky (equirect) + optional prototype floor/cover textures.
  * Falls back silently to solid materials if assets fail to load.
+ *
+ * @param skybox Concrete skybox for this match (default day). Resolve
+ *   `"random"` once at session start so every client shares the same id.
+ * @param loadFloorTextures Range-only grid/check materials; skip on GLB maps.
  */
 export async function loadEnvironmentTextures(opts: {
   scene: THREE.Scene
   renderer: THREE.WebGLRenderer
   floorMat: THREE.MeshStandardMaterial | null
   coverMat: THREE.MeshStandardMaterial | null
+  skybox?: SkyboxId
+  loadFloorTextures?: boolean
 }): Promise<THREE.Texture[]> {
-  const { scene, renderer, floorMat, coverMat } = opts
+  const {
+    scene,
+    renderer,
+    floorMat,
+    coverMat,
+    skybox = 'day',
+    loadFloorTextures = true,
+  } = opts
   const loaded: THREE.Texture[] = []
   const loader = new THREE.TextureLoader()
+  const skyId: SkyboxId = isSkyboxId(skybox) ? skybox : 'day'
 
   const loadTex = (url: string) =>
     new Promise<THREE.Texture>((resolve, reject) => {
@@ -119,14 +149,20 @@ export async function loadEnvironmentTextures(opts: {
     })
 
   try {
-    const sky = await loadTex('/env/skyboxes/skybox-day.png')
+    const sky = await loadTex(skyboxUrl(skyId))
     sky.mapping = THREE.EquirectangularReflectionMapping
     sky.colorSpace = THREE.SRGBColorSpace
     scene.background = sky
+    // Soft fog under the equirect so horizon edges blend a bit
+    if (scene.fog instanceof THREE.Fog) {
+      scene.fog.color.setHex(SKYBOX_FOG[skyId])
+    }
     loaded.push(sky)
   } catch {
     // keep solid background
   }
+
+  if (!loadFloorTextures) return loaded
 
   try {
     const floorMap = await loadTex('/env/floor/grid.png')

@@ -6,14 +6,30 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { gameAudio } from '@/game/audio'
 import { MAP_LIST, type MapDef, type MapId } from '@/game/maps'
+import {
+  SKYBOX_IDS,
+  SKYBOX_LABELS,
+  type SkyboxPreference,
+} from '@/game/scene/skyboxes'
+
+const SKYBOX_OPTIONS: SkyboxPreference[] = [...SKYBOX_IDS, 'random']
 
 interface MapPickerProps {
   selectedId: MapId
   onSelect: (id: MapId) => void
+  /** Skybox preference for this map session (default day; random resolves on Play). */
+  skybox: SkyboxPreference
+  onSkyboxChange: (sky: SkyboxPreference) => void
   onPlay: () => void
 }
 
-export function MapPicker({ selectedId, onSelect, onPlay }: MapPickerProps) {
+export function MapPicker({
+  selectedId,
+  onSelect,
+  skybox,
+  onSkyboxChange,
+  onPlay,
+}: MapPickerProps) {
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
 
   return (
@@ -69,28 +85,63 @@ export function MapPicker({ selectedId, onSelect, onPlay }: MapPickerProps) {
         </div>
 
         <motion.div
-          className="mt-8 flex flex-col items-center gap-4 rounded-2xl border border-border bg-card/70 p-5 backdrop-blur sm:flex-row sm:justify-between"
+          className="mt-8 flex flex-col gap-4 rounded-2xl border border-border bg-card/70 p-5 backdrop-blur"
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <div className="text-center sm:text-left">
-            <div className="text-sm font-semibold">{selected.name}</div>
-            <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
-              {selected.blurb}
-            </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="text-center sm:text-left">
+              <div className="text-sm font-semibold">{selected.name}</div>
+              <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
+                {selected.blurb}
+              </p>
+            </div>
+            <Button
+              size="lg"
+              className="min-w-44 gap-2 text-base sm:shrink-0"
+              onClick={() => {
+                gameAudio.uiConfirm()
+                onPlay()
+              }}
+            >
+              <Target className="h-5 w-5" />
+              Play
+            </Button>
           </div>
-          <Button
-            size="lg"
-            className="min-w-44 gap-2 text-base"
-            onClick={() => {
-              gameAudio.uiConfirm()
-              onPlay()
-            }}
-          >
-            <Target className="h-5 w-5" />
-            Play
-          </Button>
+
+          <div className="border-t border-border/80 pt-4">
+            <div className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              Skybox
+            </div>
+            <p className="mb-2.5 text-xs text-muted-foreground">
+              Same for everyone in this map session. Default is Day. Random picks
+              once when you hit Play and is locked in the URL.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {SKYBOX_OPTIONS.map((id) => {
+                const active = skybox === id
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      gameAudio.uiClick()
+                      onSkyboxChange(id)
+                    }}
+                    className={cn(
+                      'rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
+                      active
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    {SKYBOX_LABELS[id]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         </motion.div>
       </main>
     </div>

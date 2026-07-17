@@ -26,8 +26,15 @@ export type MeshWorld = {
 
 const WALL_DIRS = 8
 const WALL_HEIGHTS = [0.35, 0.9, 1.35]
+/** How far above the feet we start the down-ray (must clear thin floors). */
 const GROUND_PROBE = 0.55
+/** Max step-up / slope stick while already grounded. */
 const STEP_HEIGHT = 0.4
+/**
+ * While airborne, only land when feet are this close *above* the floor.
+ * Larger values feel like a gravity magnet onto crates/ledges mid-jump.
+ */
+const AIR_LAND_SNAP = 0.1
 const SKIN = 0.02
 
 /**
@@ -164,7 +171,10 @@ export function resolveMeshCollisions(
   pos.z += vel.z * dt
   resolveWalls(pos, vel, r, h, meshes, 'z')
 
-  // --- Y: gravity already applied; snap to ground / ceilings ---
+  // --- Y: gravity already applied; land / stick to ground / ceilings ---
+  // Remember pre-step grounded: step-up + slope stick only while walking.
+  // Airborne must NOT use STEP_HEIGHT as a "pull down" magnet (jump-over feel).
+  const wasGrounded = p.grounded
   pos.y += vel.y * dt
   p.grounded = false
 
@@ -179,7 +189,10 @@ export function resolveMeshCollisions(
   // Ground: cast from above the feet downward
   const probeStartY = pos.y + GROUND_PROBE + STEP_HEIGHT
   _origin.set(pos.x, probeStartY, pos.z)
-  const maxDown = GROUND_PROBE + STEP_HEIGHT + Math.max(0, -vel.y * dt) + 0.35
+  // Reach far enough to recover one-frame overshoot when falling hard
+  const fallStep = Math.max(0, -vel.y * dt)
+  const maxDown =
+    GROUND_PROBE + STEP_HEIGHT + fallStep + (wasGrounded ? 0.35 : 0.2)
   const ground = firstHit(_origin, _down, meshes, maxDown)
 
   if (ground) {
@@ -188,12 +201,26 @@ export function resolveMeshCollisions(
     // Walkable if mostly upward-facing
     if (n.y > 0.45) {
       const feet = pos.y
-      // Snap down onto floor when close / falling; allow small step-up
-      if (vel.y <= 0.1 && feet <= floorY + STEP_HEIGHT + 0.05) {
-        if (feet >= floorY - 0.08 || feet + 0.02 >= floorY - STEP_HEIGHT) {
-          pos.y = floorY
-          if (vel.y < 0) vel.y = 0
-          p.grounded = true
+      // gap > 0 → feet above floor; gap < 0 → penetrated
+      const gap = feet - floorY
+      // Still rising hard: never stick (apex / launch)
+      if (vel.y <= 0.05) {
+        if (wasGrounded) {
+          // Stick to slopes / small drops and allow step-up while walking
+          if (gap <= STEP_HEIGHT + 0.05 && gap >= -(STEP_HEIGHT + 0.08)) {
+            pos.y = floorY
+            if (vel.y < 0) vel.y = 0
+            p.grounded = true
+          }
+        } else {
+          // Airborne: land only when we actually reach the surface.
+          // Snap-up recovers tunneling; tiny snap-down is skin only.
+          const penMax = Math.max(0.22, fallStep + 0.08)
+          if (gap <= AIR_LAND_SNAP && gap >= -penMax) {
+            pos.y = floorY
+            if (vel.y < 0) vel.y = 0
+            p.grounded = true
+          }
         }
       }
     } else if (n.y < 0.2 && ground.distance < r + 0.15) {

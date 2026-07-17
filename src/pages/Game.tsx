@@ -14,6 +14,14 @@ import {
   isMapId,
   type MapId,
 } from '@/game/maps'
+import {
+  isSkyboxId,
+  isSkyboxPreference,
+  resolveSkyboxId,
+  SKYBOX_LABELS,
+  type SkyboxId,
+  type SkyboxPreference,
+} from '@/game/scene/skyboxes'
 import type { HudSnapshot } from '@/game/types'
 import { gameAudio } from '@/game/audio'
 
@@ -51,6 +59,20 @@ function readInitialMap(params: URLSearchParams): MapId {
   return DEFAULT_MAP_ID
 }
 
+/** Session sky from URL (concrete only). Missing → day. */
+function readInitialSkybox(params: URLSearchParams): SkyboxId {
+  const q = params.get('sky')
+  if (q && isSkyboxId(q)) return q
+  return 'day'
+}
+
+/** Picker preference: allow random in UI; URL concrete ids map 1:1. */
+function readPickerSkybox(params: URLSearchParams): SkyboxPreference {
+  const q = params.get('sky')
+  if (q && isSkyboxPreference(q)) return q
+  return 'day'
+}
+
 export default function Game() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [phase, setPhase] = useState<'pick' | 'play'>(() =>
@@ -59,6 +81,14 @@ export default function Game() {
       : 'pick',
   )
   const [mapId, setMapId] = useState<MapId>(() => readInitialMap(searchParams))
+  /** Preference shown on map select (may be random). */
+  const [skyboxPref, setSkyboxPref] = useState<SkyboxPreference>(() =>
+    readPickerSkybox(searchParams),
+  )
+  /** Concrete sky locked for the active play session. */
+  const [sessionSkybox, setSessionSkybox] = useState<SkyboxId>(() =>
+    readInitialSkybox(searchParams),
+  )
   const [hud, setHud] = useState<HudSnapshot | null>(null)
   const [engine, setEngine] = useState<GameEngine | null>(null)
   const [vmEdit, setVmEdit] = useState(() => {
@@ -95,8 +125,12 @@ export default function Game() {
   }, [engine, settingsOpen, vmEdit])
 
   const startPlay = useCallback(
-    (id: MapId) => {
+    (id: MapId, pref: SkyboxPreference) => {
+      // Resolve random once so all clients with the same URL share one sky.
+      const sky = resolveSkyboxId(pref)
       setMapId(id)
+      setSkyboxPref(pref === 'random' ? sky : pref)
+      setSessionSkybox(sky)
       setPhase('play')
       setHud(null)
       lastKey.current = ''
@@ -104,6 +138,7 @@ export default function Game() {
         (prev) => {
           const next = new URLSearchParams(prev)
           next.set('map', id)
+          next.set('sky', sky)
           return next
         },
         { replace: true },
@@ -117,15 +152,19 @@ export default function Game() {
     setPhase('pick')
     setEngine(null)
     setHud(null)
+    // Keep last concrete sky selected in the picker (not random)
+    setSkyboxPref(sessionSkybox)
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
         next.delete('map')
+        // Leave sky so re-enter can reuse the same sky if desired
+        if (sessionSkybox) next.set('sky', sessionSkybox)
         return next
       },
       { replace: true },
     )
-  }, [setSearchParams])
+  }, [setSearchParams, sessionSkybox])
 
   const toggleThirdPerson = useCallback(() => {
     if (!engine) return
@@ -146,7 +185,9 @@ export default function Game() {
       <MapPicker
         selectedId={mapId}
         onSelect={setMapId}
-        onPlay={() => startPlay(mapId)}
+        skybox={skyboxPref}
+        onSkyboxChange={setSkyboxPref}
+        onPlay={() => startPlay(mapId, skyboxPref)}
       />
     )
   }
@@ -155,7 +196,12 @@ export default function Game() {
 
   return (
     <div className="relative h-svh w-full overflow-hidden bg-black">
-      <GameCanvas mapId={mapId} onHud={onHud} onEngine={onEngine} />
+      <GameCanvas
+        mapId={mapId}
+        skybox={sessionSkybox}
+        onHud={onHud}
+        onEngine={onEngine}
+      />
       {!vmEdit && (
         <GameHud
           hud={hud}
@@ -163,10 +209,12 @@ export default function Game() {
         />
       )}
 
-      {/* Map name badge */}
+      {/* Map + sky badge */}
       {!vmEdit && (
         <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs font-medium text-white/80 backdrop-blur">
           {mapName}
+          <span className="mx-1.5 text-white/35">·</span>
+          {SKYBOX_LABELS[sessionSkybox]}
         </div>
       )}
 

@@ -167,7 +167,8 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
     }
   }
 
-  // integrate Y
+  // integrate Y — same split as mesh: stick while grounded, no mid-air magnet
+  const wasGrounded = p.grounded
   pos.y += vel.y * dt
   p.grounded = false
 
@@ -178,14 +179,18 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
     p.grounded = true
   }
 
+  // Air: only land within skin; grounded: allow step-up / small drop stick
+  const landSnap = wasGrounded ? 0.4 : 0.1
+  const penMax = wasGrounded ? 0.45 : Math.max(0.22, Math.max(0, -vel.y * dt) + 0.08)
+
   for (const box of world) {
     if (!overlapsCapsule(pos, r, h, box)) continue
     // top of box (standing on)
     const feet = pos.y
     const head = pos.y + h
-    if (vel.y <= 0 && feet <= box.max.y && head > box.max.y && pos.y + vel.y * dt <= box.max.y + 0.2) {
-      // if mostly above
-      if (pos.y + 0.35 >= box.max.y) {
+    if (vel.y <= 0.05 && head > box.max.y) {
+      const gap = feet - box.max.y
+      if (gap <= landSnap && gap >= -penMax) {
         pos.y = box.max.y
         vel.y = 0
         p.grounded = true
@@ -198,11 +203,11 @@ function resolveCollisions(p: PlayerBody, world: AABB[], dt: number) {
       vel.y = 0
       continue
     }
-    // side shove already handled on XZ; residual push Y out of deep embed
-    if (feet < box.max.y && head > box.min.y) {
+    // side shove already handled on XZ; residual Y unstick only when not rising
+    if (vel.y <= 0.05 && feet < box.max.y && head > box.min.y) {
       const up = box.max.y - feet
       const down = head - box.min.y
-      if (up < down && up < 0.5) {
+      if (up < down && up <= penMax) {
         pos.y = box.max.y
         vel.y = 0
         p.grounded = true
