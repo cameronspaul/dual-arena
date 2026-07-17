@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Keyboard,
   Mouse,
+  Palette,
   Plus,
   RotateCcw,
   Volume2,
@@ -12,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import { gameAudio } from '@/game/audio'
+import { APPEARANCE_PARTS } from '@/game/character/appearance'
 import {
   ACTION_LABELS,
   ACTION_ORDER,
@@ -20,16 +29,23 @@ import {
   mouseButtonCode,
   type ActionId,
 } from '@/game/core/userSettings'
+import { CharacterPreview } from '@/components/game/CharacterPreview'
 import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/stores/useAppStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
-/** audio | mouse (controls) | keybinds */
-type Section = 'audio' | 'mouse' | 'keybinds'
+/** audio | mouse (controls) | keybinds | character */
+export type SettingsSection = 'audio' | 'mouse' | 'keybinds' | 'character'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * When the dialog opens, jump to this tab (e.g. "character" from the lobby
+   * customize button). Ignored while already open.
+   */
+  initialSection?: SettingsSection
 }
 
 /**
@@ -299,7 +315,138 @@ function Divider() {
   )
 }
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+/** How long to wait after the last color-input event before committing. */
+const COLOR_PICKER_DEBOUNCE_MS = 120
+
+/**
+ * Native color input with local draft UI + debounced parent commits.
+ * Swatch / hex update immediately; store / 3D preview update after idle.
+ * Flushes on blur and unmount so the last drag is never dropped.
+ */
+function DebouncedColorPicker({
+  value,
+  label,
+  description,
+  onChange,
+  debounceMs = COLOR_PICKER_DEBOUNCE_MS,
+}: {
+  value: string
+  label: string
+  description: string
+  onChange: (hex: string) => void
+  debounceMs?: number
+}) {
+  const [draft, setDraft] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Latest color not yet confirmed by the `value` prop. */
+  const pendingRef = useRef<string | null>(null)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
+
+  const flush = useCallback(() => {
+    clearTimer()
+    const pending = pendingRef.current
+    if (pending == null) return
+    onChangeRef.current(pending)
+  }, [clearTimer])
+
+  // External updates (reset defaults, rehydrate) — skip while we still own a pending edit
+  useEffect(() => {
+    if (pendingRef.current != null) {
+      if (value.toLowerCase() === pendingRef.current.toLowerCase()) {
+        pendingRef.current = null
+      }
+      return
+    }
+    setDraft(value)
+  }, [value])
+
+  // Flush last color on unmount
+  useEffect(() => {
+    return () => {
+      clearTimer()
+      const pending = pendingRef.current
+      if (pending != null) {
+        pendingRef.current = null
+        onChangeRef.current(pending)
+      }
+    }
+  }, [clearTimer])
+
+  const scheduleCommit = useCallback(
+    (hex: string) => {
+      pendingRef.current = hex
+      clearTimer()
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null
+        const pending = pendingRef.current
+        if (pending == null) return
+        onChangeRef.current(pending)
+      }, debounceMs)
+    },
+    [clearTimer, debounceMs],
+  )
+
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer items-center gap-3 rounded-xl border-[2.5px] bg-muted/40 px-3 py-2.5 transition-colors hover:bg-muted/70 dark:bg-muted/25 dark:hover:bg-muted/40',
+        'border-border dark:border-foreground/20',
+      )}
+    >
+      <span
+        className={cn(
+          'relative size-9 shrink-0 overflow-hidden rounded-lg border-[2.5px]',
+          inkBorder,
+          inkShadowSm,
+        )}
+        style={{ backgroundColor: draft }}
+      >
+        <input
+          type="color"
+          value={draft}
+          aria-label={`${label} color`}
+          onChange={(e) => {
+            const hex = e.target.value
+            setDraft(hex)
+            scheduleCommit(hex)
+          }}
+          onBlur={flush}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-extrabold tracking-wide text-foreground">
+          {label}
+        </span>
+        <span className="block text-[10px] font-semibold text-muted-foreground">
+          {description}
+        </span>
+      </span>
+      <span
+        className={cn(
+          'shrink-0 rounded-md border-[2px] bg-card px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-muted-foreground',
+          'border-foreground/40 dark:border-foreground/30',
+        )}
+      >
+        {draft}
+      </span>
+    </label>
+  )
+}
+
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  initialSection,
+}: SettingsDialogProps) {
   const titleId = useId()
   const descId = useId()
 
@@ -329,9 +476,18 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     resetAll,
   } = useSettingsStore()
 
-  const [section, setSection] = useState<Section>('audio')
+  const characterAppearance = useAppStore((s) => s.characterAppearance)
+  const setAppearancePart = useAppStore((s) => s.setAppearancePart)
+  const resetCharacterAppearance = useAppStore(
+    (s) => s.resetCharacterAppearance,
+  )
+
+  const [section, setSection] = useState<SettingsSection>(
+    initialSection ?? 'audio',
+  )
   /** Action waiting for a new bind (add mode). */
   const [listening, setListening] = useState<ActionId | null>(null)
+  const wasOpenRef = useRef(false)
 
   const cancelListen = useCallback(() => setListening(null), [])
 
@@ -340,9 +496,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     onOpenChange(false)
   }, [cancelListen, onOpenChange])
 
+  // Apply initialSection each time the dialog opens
   useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      setSection(initialSection ?? 'audio')
+      setListening(null)
+    }
     if (!open) setListening(null)
-  }, [open])
+    wasOpenRef.current = open
+  }, [open, initialSection])
 
   // Body scroll lock while open
   useEffect(() => {
@@ -407,7 +569,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   }, [listening, addKeybind])
 
   const nav: {
-    id: Section
+    id: SettingsSection
     label: string
     blurb: string
     icon: typeof Volume2
@@ -429,6 +591,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       label: 'Keybinds',
       blurb: 'Bindings',
       icon: Keyboard,
+    },
+    {
+      id: 'character',
+      label: 'Character',
+      blurb: 'Colors',
+      icon: Palette,
     },
   ]
 
@@ -471,7 +639,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             exit={{ opacity: 0, scale: 0.96, y: 6 }}
             transition={{ type: 'spring', stiffness: 420, damping: 28 }}
             className={cn(
-              'relative flex h-[min(90svh,560px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-[3px] bg-card text-card-foreground sm:h-[min(86svh,580px)] sm:flex-row',
+              'relative flex h-[min(92svh,720px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border-[3px] bg-card text-card-foreground sm:h-[min(90svh,760px)] sm:flex-row',
               inkBorder,
               inkShadowLg,
               panelRing,
@@ -622,6 +790,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       'Sensitivity, invert Y, and hold vs toggle actions.'}
                     {section === 'keybinds' &&
                       'Multiple keys per action. Esc cancels capture.'}
+                    {section === 'character' &&
+                      'Paint face, hair, suit, trousers, shirt & tie.'}
                   </p>
                 </div>
                 <button
@@ -784,6 +954,60 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                         }}
                       />
                     </SettingRow>
+                  </div>
+                )}
+
+                {section === 'character' && (
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs leading-relaxed font-semibold text-muted-foreground">
+                        Drag the preview to spin. Colors save locally and apply
+                        to your third-person body.
+                      </p>
+                      <StickerBtn
+                        className="shrink-0"
+                        onClick={() => {
+                          resetCharacterAppearance()
+                          gameAudio.uiClick()
+                        }}
+                      >
+                        <RotateCcw className="size-3.5" strokeWidth={2.5} />
+                        Defaults
+                      </StickerBtn>
+                    </div>
+
+                    <div
+                      className={cn(
+                        'relative h-44 overflow-hidden rounded-xl border-[2.5px] bg-gradient-to-b from-muted/40 via-muted/20 to-muted/50 sm:h-52',
+                        inkBorder,
+                        inkShadowSm,
+                      )}
+                    >
+                      <CharacterPreview
+                        appearance={characterAppearance}
+                        animation="idle"
+                        spin={false}
+                        className="absolute inset-0 h-full w-full"
+                      />
+                      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center gap-1.5 pt-2">
+                        <GameIcon src={icons.brush} className="size-3.5 opacity-80" />
+                        <span className="text-[9px] font-extrabold tracking-wide text-muted-foreground uppercase">
+                          Live preview
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {APPEARANCE_PARTS.map(({ id, label, description }) => (
+                        <DebouncedColorPicker
+                          key={id}
+                          label={label}
+                          description={description}
+                          value={characterAppearance[id]}
+                          onChange={(hex) => setAppearancePart(id, hex)}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
 

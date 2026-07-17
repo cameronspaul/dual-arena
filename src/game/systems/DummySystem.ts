@@ -28,6 +28,7 @@ import {
 } from '../character/hitMeshes'
 import { findClip } from '../character/locomotion'
 import { DUMMY, MOVE } from '../core/config'
+import type { CharacterAppearance } from '../character/appearance'
 import type { DummyTarget, RayHit } from '../core/types'
 import type { PlayerVisuals } from './PlayerVisuals'
 
@@ -43,6 +44,7 @@ export class DummySystem {
     dummies: DummyTarget[],
     playerVisuals: PlayerVisuals,
     thirdPerson: boolean,
+    playerAppearance?: CharacterAppearance,
   ) {
     type DummyFactory = (id: string) => THREE.Group
     let factory: DummyFactory
@@ -89,6 +91,7 @@ export class DummySystem {
         scale,
         footY,
         thirdPerson,
+        playerAppearance,
       )
 
       factory = (id: string) => {

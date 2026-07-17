@@ -3,13 +3,18 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
 
+import {
+  applyCharacterAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+  type CharacterAppearance,
+} from '@/game/character/appearance'
 import { findClip } from '@/game/character/locomotion'
 import { DUMMY } from '@/game/core/config'
 import { cn } from '@/lib/utils'
 
 interface CharacterPreviewProps {
-  /** Clothing tint; defaults to arena purple. Skin materials stay untouched. */
-  color?: string
+  /** Per-part man.glb colors. */
+  appearance?: CharacterAppearance
   className?: string
   /** Slow yaw spin (idle showcase). Off by default for walk. */
   spin?: boolean
@@ -22,43 +27,22 @@ interface CharacterPreviewProps {
   animation?: 'idle' | 'walk'
 }
 
-type TintEntry = {
-  mat: THREE.MeshStandardMaterial
-  base: THREE.Color
-  isSkin: boolean
-}
-
-function isSkinMeshName(name: string): boolean {
-  return /head|face|skin|eye|hair|brow|mouth|tooth|teeth/i.test(name)
-}
-
-function isSkinMaterial(mat: THREE.MeshStandardMaterial): boolean {
-  const c = mat.color
-  // Rough skin-tone heuristic for untextured / albedo-tinted man.glb mats
-  const r = c.r
-  const g = c.g
-  const b = c.b
-  return r > 0.45 && g > 0.28 && b > 0.2 && r > g && g >= b * 0.85 && r - b > 0.08
-}
-
-const DEFAULT_COLOR = '#a855f7'
-
 /**
  * Mini WebGL stage that loads man.glb (same skin as in-game), loops idle/walk,
- * and optionally tints clothing with a lobby color.
+ * and applies per-part appearance colors.
  */
 export function CharacterPreview({
-  color = DEFAULT_COLOR,
+  appearance = DEFAULT_CHARACTER_APPEARANCE,
   className,
   spin = false,
   interactive = true,
   animation = 'idle',
 }: CharacterPreviewProps) {
   const mountRef = useRef<HTMLDivElement>(null)
-  const colorRef = useRef(color)
-  colorRef.current = color
-  const tintRef = useRef<TintEntry[]>([])
-  const applyColorRef = useRef<(hex: string) => void>(() => {})
+  const appearanceRef = useRef(appearance)
+  appearanceRef.current = appearance
+  const modelRef = useRef<THREE.Object3D | null>(null)
+  const applyAppearanceRef = useRef<(a: CharacterAppearance) => void>(() => {})
 
   useEffect(() => {
     const mount = mountRef.current
@@ -133,16 +117,9 @@ export function CharacterPreview({
     const pivot = new THREE.Group()
     scene.add(pivot)
 
-    applyColorRef.current = (hex: string) => {
-      const tint = new THREE.Color(hex)
-      for (const entry of tintRef.current) {
-        if (entry.isSkin) {
-          entry.mat.color.copy(entry.base)
-          continue
-        }
-        // Multiply clothing albedo by chosen color (keeps map contrast)
-        entry.mat.color.copy(entry.base).multiply(tint)
-      }
+    applyAppearanceRef.current = (a: CharacterAppearance) => {
+      if (!modelRef.current) return
+      applyCharacterAppearance(modelRef.current, a)
     }
 
     const loader = new GLTFLoader()
@@ -163,8 +140,8 @@ export function CharacterPreview({
         model.scale.setScalar(scale)
         model.position.y = -footY * scale
         modelRoot = model
+        modelRef.current = model
 
-        const tints: TintEntry[] = []
         model.traverse((o) => {
           if (!(o instanceof THREE.Mesh) && !(o instanceof THREE.SkinnedMesh)) {
             return
@@ -176,27 +153,18 @@ export function CharacterPreview({
           const list = Array.isArray(o.material) ? o.material : [o.material]
           const cloned = list.map((raw) => {
             const mat = (raw as THREE.Material).clone() as THREE.MeshStandardMaterial
-            if ('color' in mat && mat.color instanceof THREE.Color) {
-              const skin =
-                isSkinMeshName(o.name) || isSkinMaterial(mat)
-              tints.push({
-                mat,
-                base: mat.color.clone(),
-                isSkin: skin,
-              })
-              // Slightly flatter for UI readability
-              if ('flatShading' in mat) mat.flatShading = true
-              if ('roughness' in mat && mat.roughnessMap == null) {
-                mat.roughness = Math.min(0.85, (mat.roughness ?? 0.5) + 0.1)
-              }
-              mat.needsUpdate = true
+            // Slightly flatter for UI readability
+            if ('flatShading' in mat) mat.flatShading = true
+            if ('roughness' in mat && mat.roughnessMap == null) {
+              mat.roughness = Math.min(0.85, (mat.roughness ?? 0.5) + 0.1)
             }
+            mat.needsUpdate = true
             return mat
           })
           o.material = Array.isArray(o.material) ? cloned : cloned[0]
         })
-        tintRef.current = tints
-        applyColorRef.current(colorRef.current)
+
+        applyCharacterAppearance(model, appearanceRef.current)
 
         pivot.add(model)
         // Face slightly toward camera for walk cycle readability
@@ -318,7 +286,7 @@ export function CharacterPreview({
       }
       mixer?.stopAllAction()
       mixer = null
-      tintRef.current = []
+      modelRef.current = null
 
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
@@ -335,10 +303,10 @@ export function CharacterPreview({
     }
   }, [spin, interactive, animation])
 
-  // Live color updates without reloading the GLB
+  // Live appearance updates without reloading the GLB
   useEffect(() => {
-    applyColorRef.current(color)
-  }, [color])
+    applyAppearanceRef.current(appearance)
+  }, [appearance])
 
   return (
     <div

@@ -38,6 +38,10 @@ export type NetClientOpts = {
   token: string
   /** Catalog map id so server assigns blue/red pads for that map. */
   mapId?: string
+  /** Host display name for lobby browser (first joiner). */
+  hostName?: string
+  /** Soft stake for lobby listing. */
+  wager?: number
   handlers?: NetClientHandlers
 }
 
@@ -47,6 +51,8 @@ export class NetClient {
   private readonly matchId: string
   private readonly token: string
   private readonly mapId: string | undefined
+  private readonly hostName: string | undefined
+  private readonly wager: number | undefined
   private handlers: NetClientHandlers
   private seq = 0
   private status: NetClientStatus = 'idle'
@@ -66,6 +72,8 @@ export class NetClient {
     this.matchId = opts.matchId
     this.token = opts.token
     this.mapId = opts.mapId
+    this.hostName = opts.hostName
+    this.wager = opts.wager
     this.handlers = opts.handlers ?? {}
   }
 
@@ -89,6 +97,8 @@ export class NetClient {
         matchId: this.matchId,
         token: this.token,
         mapId: this.mapId,
+        hostName: this.hostName,
+        wager: this.wager,
       })
       this.pingTimer = setInterval(() => this.sendPing(), 1000)
       this.sendPing()

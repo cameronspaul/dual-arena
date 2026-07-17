@@ -791,8 +791,8 @@ export function GameHud({
           without fighting per-frame HUD ticks. Hit confirm chip stays outside.
         */}
         <div key={reticleKey} className={cn(reticleDisplaceClass)}>
-          {/* Hipfire crosshair — box centered on the pivot */}
-          {!fullyScoped && !hud.spectating && (
+          {/* Hipfire crosshair — hidden while pointer-lock menu is up */}
+          {!fullyScoped && !hud.spectating && hud.pointerLocked && (
             <div
               className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
               style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
@@ -1030,15 +1030,11 @@ export function GameHud({
         </div>
       )}
 
-      {/* Click to play */}
+      {/* Click to play — settings (keybinds) + prompt only; no reticle decoration */}
       {!hud.pointerLocked && !(!hud.alive && hud.spectating) && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45">
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-black/45">
           <HudPanel className="px-10 py-8 text-center" accent="heat">
-            <GameIcon src={icons.aim} className="mx-auto size-12" />
-            <div className="mt-2 text-[11px] font-extrabold tracking-wide text-arena-heat uppercase">
-              Ready
-            </div>
-            <div className="mt-1 text-2xl font-black tracking-tight">
+            <div className="text-2xl font-black tracking-tight">
               {hud.spectating ? 'Click to look' : 'Click to play'}
             </div>
             <ControlsHint />

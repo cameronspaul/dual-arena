@@ -4,6 +4,10 @@
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
 import {
+  applyCharacterAppearance,
+  type CharacterAppearance,
+} from '../character/appearance'
+import {
   applyDummyCrouchScale,
   fadeDummyLoco,
   getDummyActions,
@@ -75,6 +79,7 @@ export class PlayerVisuals {
     scale: number,
     footY: number,
     visible: boolean,
+    appearance?: CharacterAppearance,
   ) {
     if (this.body) {
       scene.remove(this.body)
@@ -110,6 +115,10 @@ export class PlayerVisuals {
       const cloned = list.map((m) => m.clone())
       o.material = Array.isArray(o.material) ? cloned : cloned[0]
     })
+
+    if (appearance) {
+      applyCharacterAppearance(model, appearance)
+    }
 
     root.add(model)
 
@@ -259,5 +268,12 @@ export class PlayerVisuals {
 
   update(dt: number) {
     this.mixer?.update(dt)
+  }
+
+  /** Live-update man.glb part colors (settings customizer). */
+  applyAppearance(appearance: CharacterAppearance) {
+    const model = this.body?.userData.model as THREE.Object3D | undefined
+    if (!model || !this.isMan) return
+    applyCharacterAppearance(model, appearance)
   }
 }

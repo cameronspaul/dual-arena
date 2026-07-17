@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import {
+  cloneAppearance,
+  DEFAULT_CHARACTER_APPEARANCE,
+  normalizeAppearance,
+  type AppearancePart,
+  type CharacterAppearance,
+} from '@/game/character/appearance'
+
 export type ServerRegion = 'us-east' | 'eu'
 export type WagerAmount = 1 | 3 | 5 | 10
 
@@ -13,8 +21,11 @@ interface AppState {
   username: string
   setUsername: (name: string) => void
 
-  characterColor: string
-  setCharacterColor: (color: string) => void
+  /** Custom man.glb part colors (face, hair, suit, …). */
+  characterAppearance: CharacterAppearance
+  setCharacterAppearance: (appearance: CharacterAppearance) => void
+  setAppearancePart: (part: AppearancePart, color: string) => void
+  resetCharacterAppearance: () => void
 
   serverRegion: ServerRegion
   setServerRegion: (region: ServerRegion) => void
@@ -34,8 +45,6 @@ interface AppState {
   setMatchId: (id: string) => void
 }
 
-const DEFAULT_COLOR = '#a855f7'
-
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -47,8 +56,18 @@ export const useAppStore = create<AppState>()(
       username: '',
       setUsername: (username) => set({ username: username.slice(0, 24) }),
 
-      characterColor: DEFAULT_COLOR,
-      setCharacterColor: (characterColor) => set({ characterColor }),
+      characterAppearance: cloneAppearance(),
+      setCharacterAppearance: (characterAppearance) =>
+        set({ characterAppearance: normalizeAppearance(characterAppearance) }),
+      setAppearancePart: (part, color) =>
+        set({
+          characterAppearance: {
+            ...get().characterAppearance,
+            [part]: color,
+          },
+        }),
+      resetCharacterAppearance: () =>
+        set({ characterAppearance: cloneAppearance(DEFAULT_CHARACTER_APPEARANCE) }),
 
       serverRegion: 'eu',
       setServerRegion: (serverRegion) => set({ serverRegion }),
@@ -70,12 +89,34 @@ export const useAppStore = create<AppState>()(
       partialize: (s) => ({
         theme: s.theme,
         username: s.username,
-        characterColor: s.characterColor,
+        characterAppearance: s.characterAppearance,
         serverRegion: s.serverRegion,
         wagerAmount: s.wagerAmount,
         serverUrl: s.serverUrl,
         matchId: s.matchId,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState> & {
+          /** Legacy single clothing tint from earlier builds. */
+          characterColor?: string
+        }
+        const appearance = p.characterAppearance
+          ? normalizeAppearance(p.characterAppearance)
+          : p.characterColor
+            ? {
+                ...cloneAppearance(DEFAULT_CHARACTER_APPEARANCE),
+                // Old store only tinted clothes — keep skin defaults.
+                suit: p.characterColor,
+                trousers: p.characterColor,
+              }
+            : current.characterAppearance
+
+        return {
+          ...current,
+          ...p,
+          characterAppearance: appearance,
+        }
+      },
     },
   ),
 )

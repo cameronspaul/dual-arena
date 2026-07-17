@@ -74,7 +74,9 @@ import {
 import { BarrierVisuals } from '../systems/BarrierVisuals'
 import { CombatFx } from '../systems/CombatFx'
 import { DummySystem } from '../systems/DummySystem'
+import type { CharacterAppearance } from '../character/appearance'
 import { PlayerVisuals } from '../systems/PlayerVisuals'
+import { useAppStore } from '@/stores/useAppStore'
 import { ViewFeel } from '../systems/ViewFeel'
 import { fireShot, playSniperPhaseSfx } from '../systems/combat'
 import { ViewmodelSystem } from '../viewmodel/ViewmodelSystem'
@@ -109,6 +111,10 @@ export type OnlineSessionOpts = {
   matchId: string
   /** Auth / identity token (opaque for now). */
   token?: string
+  /** Host display name for lobby browser (first joiner). */
+  hostName?: string
+  /** Soft stake for lobby listing. */
+  wager?: number
 }
 
 export type GameEngineOptions = {
@@ -337,6 +343,8 @@ export class GameEngine {
       matchId: online.matchId,
       token,
       mapId: this.mapDef.id,
+      hostName: online.hostName,
+      wager: online.wager,
       handlers: {
         onWelcome: (w) => this.onNetWelcome(w),
         onSnapshot: (s) => this.pendingSnapshots.push(s),
@@ -640,10 +648,20 @@ export class GameEngine {
       this.levelEditor.sync(this.spawnLayout.spawns)
       this.levelEditor.syncBarriers(this.barrierLayout.barriers)
       void this.dummiesSys
-        .load(this.scene, this.dummies, this.playerVisuals, this.thirdPerson)
+        .load(
+          this.scene,
+          this.dummies,
+          this.playerVisuals,
+          this.thirdPerson,
+          useAppStore.getState().characterAppearance,
+        )
         .then(() => {
           // Re-apply in case user toggled off while GLB was loading
           this.dummiesSys.setEnabled(this.dummiesEnabled)
+          // Settings may have changed colors while the GLB was loading
+          this.applyPlayerAppearance(
+            useAppStore.getState().characterAppearance,
+          )
         })
     } catch (e) {
       console.error('Map load failed', e)
@@ -852,6 +870,11 @@ export class GameEngine {
     if (this.isOnline) return // no practice dummies in duel rooms
     this.dummiesEnabled = enabled
     this.dummiesSys.setEnabled(enabled)
+  }
+
+  /** Apply lobby/settings colors onto the local third-person body. */
+  applyPlayerAppearance(appearance: CharacterAppearance) {
+    this.playerVisuals.applyAppearance(appearance)
   }
 
   isDummiesEnabled() {

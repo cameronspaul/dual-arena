@@ -11,11 +11,14 @@ import {
 } from 'react-icons/si'
 
 import { CharacterPreview } from '@/components/game/CharacterPreview'
-import { SettingsDialog } from '@/components/SettingsDialog'
+import {
+  SettingsDialog,
+  type SettingsSection,
+} from '@/components/SettingsDialog'
 import { icons, WAGER_ICONS } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { gameAudio } from '@/game/audio'
-import { MAP_LIST, type MapId } from '@/game/maps'
+import { isMapId, MAP_LIST, type MapId } from '@/game/maps'
 import {
   SKYBOX_IDS,
   SKYBOX_LABELS,
@@ -64,14 +67,53 @@ const COMMUNITY_LINKS = [
   },
 ] as const
 
+export type OnlineLobbyJoin = {
+  matchId: string
+  /** Prefer the host's map when joining a listed lobby. */
+  mapId?: MapId
+}
+
 interface MapPickerProps {
   selectedId: MapId
   onSelect: (id: MapId) => void
   skybox: SkyboxPreference
   onSkyboxChange: (sky: SkyboxPreference) => void
   onPlay: () => void
-  /** Start an online 1v1 against the configured server / match id. */
-  onPlayOnline?: () => void
+  /** Host a new open lobby (map/region/stake from picker). */
+  onHostOnline?: () => void
+  /** Join an existing lobby by match id (optional map from browser). */
+  onJoinOnline?: (lobby: OnlineLobbyJoin) => void
+}
+
+type LobbyRow = {
+  matchId: string
+  mapId: string
+  phase: string
+  playerCount: number
+  maxPlayers: number
+  hostName: string
+  wager: number
+  createdAt: number
+}
+
+/** ws(s)://host:port → http(s)://host:port for lobby HTTP polling. */
+function httpBaseFromWs(wsUrl: string): string | null {
+  const trimmed = wsUrl.trim()
+  if (!trimmed) return null
+  try {
+    const u = new URL(trimmed)
+    if (u.protocol === 'ws:') u.protocol = 'http:'
+    else if (u.protocol === 'wss:') u.protocol = 'https:'
+    else if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return u.origin
+  } catch {
+    return null
+  }
+}
+
+function mapLabel(mapId: string): string {
+  const m = MAP_LIST.find((x) => x.id === mapId)
+  return m?.name ?? mapId
 }
 
 /** Cartoon PNG from /public/icons — thick outline sticker set (matches HUD). */
@@ -252,13 +294,15 @@ export function MapPicker({
   skybox,
   onSkyboxChange,
   onPlay,
-  onPlayOnline,
+  onHostOnline,
+  onJoinOnline,
 }: MapPickerProps) {
   const {
     theme,
     toggleTheme,
     username,
     setUsername,
+    characterAppearance,
     serverRegion,
     setServerRegion,
     wagerAmount,
@@ -271,10 +315,19 @@ export function MapPicker({
   } = useAppStore()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<
+    SettingsSection | undefined
+  >(undefined)
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(username)
   /** Map carousel page — 2 maps visible at a time (1×2). */
   const [mapPage, setMapPage] = useState(0)
+  const [lobbies, setLobbies] = useState<LobbyRow[]>([])
+  const [lobbyStatus, setLobbyStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>(
+    'idle',
+  )
+  const [lobbyError, setLobbyError] = useState<string | null>(null)
+  const [joinCode, setJoinCode] = useState(matchId)
 
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
   const displayName = username.trim() || 'Operator'
@@ -321,10 +374,50 @@ export function MapPicker({
     onPlay()
   }
 
-  const handlePlayOnline = () => {
+  const handleHostOnline = () => {
     gameAudio.uiConfirm()
-    onPlayOnline?.()
+    onHostOnline?.()
   }
+
+  const handleJoinOnline = (lobby: OnlineLobbyJoin) => {
+    gameAudio.uiConfirm()
+    if (lobby.matchId) setMatchId(lobby.matchId)
+    onJoinOnline?.(lobby)
+  }
+
+  const refreshLobbies = async () => {
+    const base = httpBaseFromWs(serverUrl)
+    if (!base) {
+      setLobbyStatus('error')
+      setLobbyError('Invalid server URL')
+      setLobbies([])
+      return
+    }
+    setLobbyStatus('loading')
+    setLobbyError(null)
+    try {
+      const res = await fetch(`${base}/lobbies`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as { lobbies?: LobbyRow[] }
+      setLobbies(Array.isArray(data.lobbies) ? data.lobbies : [])
+      setLobbyStatus('ok')
+    } catch (err) {
+      setLobbies([])
+      setLobbyStatus('error')
+      setLobbyError(err instanceof Error ? err.message : 'Failed to load lobbies')
+    }
+  }
+
+  // Keep the Lobbies panel fresh while the picker is open.
+  useEffect(() => {
+    void refreshLobbies()
+    const id = window.setInterval(() => void refreshLobbies(), 4000)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll target is serverUrl
+  }, [serverUrl])
 
   const solBalanceLabel = balance.toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -378,6 +471,7 @@ export function MapPicker({
         <ChromeBtn
           onClick={() => {
             gameAudio.uiClick()
+            setSettingsSection(undefined)
             setSettingsOpen(true)
           }}
           title="Settings"
@@ -388,14 +482,14 @@ export function MapPicker({
 
       {/*
         Layout (lg+):
-          [ SOL balance ] [ Online 1v1 ] [ Callsign + walking character ]
-          [ Map 1×2 + sky …………… ]   [ Community                    ]
+          [ Balance ] [ Host duel ] [ Lobbies ] [ Operator ]
+          [ Map 1×2 + sky ………………… ]           [ Community ]
       */}
       <main
         className={cn(
-          'relative z-10 mx-auto grid min-h-0 w-full max-w-7xl flex-1 gap-2.5 overflow-hidden p-2.5 sm:gap-3 sm:p-3 md:p-4',
+          'relative z-10 mx-auto grid min-h-0 w-full max-w-[90rem] flex-1 gap-2.5 overflow-hidden p-2.5 sm:gap-3 sm:p-3 md:p-4',
           'grid-cols-1',
-          'lg:grid-cols-[minmax(11.5rem,14rem)_minmax(0,1fr)_minmax(16rem,20rem)]',
+          'lg:grid-cols-[minmax(10rem,12.5rem)_minmax(13rem,1fr)_minmax(14rem,1.15fr)_minmax(15rem,18rem)]',
           'lg:grid-rows-[minmax(0,1fr)_auto]',
         )}
       >
@@ -446,7 +540,7 @@ export function MapPicker({
           </HudPanel>
         </motion.div>
 
-        {/* Online 1v1 — top middle */}
+        {/* Host duel — settings for creating a lobby */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -459,41 +553,42 @@ export function MapPicker({
           >
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
-                <GameIcon src={icons.globe} className="size-4" />
-                <span className="text-sm font-extrabold">Online 1v1</span>
+                <GameIcon src={icons.flag} className="size-4" />
+                <span className="text-sm font-extrabold">Host duel</span>
               </div>
               <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink bg-arena-ok/25 px-1.5 py-0.5 text-[9px] font-extrabold text-arena-ok uppercase">
                 <GameIcon src={icons.fire} className="size-3" />
-                Live
+                1v1
               </span>
             </div>
 
-            <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-2 sm:grid-cols-2">
+            <div className="mb-2 shrink-0">
+              <SectionLabel iconSrc={icons.globe}>Server</SectionLabel>
+              <input
+                type="text"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                spellCheck={false}
+                className="w-full rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
+                placeholder="ws://localhost:2567"
+              />
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-2">
               <div>
-                <SectionLabel iconSrc={icons.globe}>Server</SectionLabel>
-                <input
-                  type="text"
-                  value={serverUrl}
-                  onChange={(e) => setServerUrl(e.target.value)}
-                  spellCheck={false}
-                  className="w-full rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
-                  placeholder="ws://localhost:2567"
-                />
+                <SectionLabel iconSrc={icons.map}>Map</SectionLabel>
+                <div className="flex items-center gap-2 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2.5 py-1.5">
+                  <GameIcon src={icons.location} className="size-3.5 shrink-0" />
+                  <span className="truncate text-xs font-extrabold text-arena-fg">
+                    {selected.name}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[9px] font-bold tracking-wide text-arena-fg/40 uppercase">
+                    Picker
+                  </span>
+                </div>
               </div>
 
               <div>
-                <SectionLabel iconSrc={icons.friend}>Match id</SectionLabel>
-                <input
-                  type="text"
-                  value={matchId}
-                  onChange={(e) => setMatchId(e.target.value)}
-                  spellCheck={false}
-                  className="w-full rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
-                  placeholder="duel-1"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
                 <SectionLabel iconSrc={icons.location}>Region</SectionLabel>
                 <div className="flex gap-1.5">
                   {(
@@ -517,7 +612,7 @@ export function MapPicker({
                 </div>
               </div>
 
-              <div className="sm:col-span-2">
+              <div>
                 <SectionLabel iconSrc={icons.trade}>Stake</SectionLabel>
                 <div className="flex gap-1.5">
                   {WAGER_OPTIONS.map((w, i) => (
@@ -541,24 +636,148 @@ export function MapPicker({
               </div>
             </div>
 
+            <p className="mt-2 shrink-0 text-[10px] font-semibold text-arena-fg/40">
+              Opens a lobby in the browser next door. Room code is generated for you.
+            </p>
+
             <button
               type="button"
-              disabled={!onPlayOnline || !serverUrl.trim()}
-              onClick={handlePlayOnline}
-              className="mt-2.5 inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-4 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+              disabled={!onHostOnline || !serverUrl.trim()}
+              onClick={handleHostOnline}
+              className="mt-2 inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-4 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
             >
-              <GameIcon src={icons.aim} className="size-5" />
-              Join duel
+              <GameIcon src={icons.flag} className="size-5" />
+              Host duel
             </button>
           </HudPanel>
         </motion.div>
 
-        {/* Map 1×2 carousel — bottom left+middle */}
+        {/* Lobbies — browse + join open rooms */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.06, duration: 0.28 }}
-          className="min-h-0 lg:col-span-2 lg:col-start-1 lg:row-start-2"
+          className="min-h-0 lg:col-start-3 lg:row-start-1"
+        >
+          <HudPanel
+            className="flex h-full min-h-0 flex-col overflow-hidden p-3 sm:p-3.5"
+            accent="tech"
+          >
+            <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <GameIcon src={icons.friend} className="size-4" />
+                <span className="text-sm font-extrabold">Lobbies</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  gameAudio.uiClick()
+                  void refreshLobbies()
+                }}
+                className="inline-flex h-7 items-center gap-1 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-extrabold text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover hover:text-arena-fg"
+              >
+                <GameIcon src={icons.reberth} className="size-3" />
+                Refresh
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-0.5">
+              {lobbyStatus === 'loading' && lobbies.length === 0 && (
+                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-fg/45">
+                  Loading lobbies…
+                </p>
+              )}
+              {lobbyStatus === 'error' && (
+                <p className="rounded-lg border-[2px] border-arena-danger/40 bg-arena-danger/10 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-danger">
+                  {lobbyError ?? 'Could not reach server'}
+                </p>
+              )}
+              {lobbyStatus === 'ok' && lobbies.length === 0 && (
+                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-fg/45">
+                  No open lobbies — host one or join by code below.
+                </p>
+              )}
+              {lobbies.map((lobby) => (
+                <div
+                  key={lobby.matchId}
+                  className="flex items-center gap-2 rounded-xl border-[2.5px] border-arena-ink bg-arena-surface px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-xs font-extrabold text-arena-fg">
+                        {lobby.hostName || 'Host'}
+                      </span>
+                      <span className="shrink-0 rounded border border-arena-ink/50 bg-arena-panel px-1 py-px text-[8px] font-bold text-arena-fg/50 uppercase">
+                        {lobby.playerCount}/{lobby.maxPlayers}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-semibold text-arena-fg/50">
+                      <span className="truncate text-arena-tech">
+                        {mapLabel(lobby.mapId)}
+                      </span>
+                      {lobby.wager > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-arena-heat">
+                          <GameIcon src={icons.coins} className="size-2.5" />$
+                          {lobby.wager}
+                        </span>
+                      )}
+                      <span className="truncate font-mono text-[9px] text-arena-fg/35">
+                        {lobby.matchId}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!onJoinOnline || !serverUrl.trim()}
+                    onClick={() =>
+                      handleJoinOnline({
+                        matchId: lobby.matchId,
+                        mapId: isMapId(lobby.mapId) ? lobby.mapId : undefined,
+                      })
+                    }
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2.5 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-none"
+                  >
+                    Join
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-2 shrink-0 border-t-2 border-arena-ink/35 pt-2">
+              <SectionLabel iconSrc={icons.link}>Join by code</SectionLabel>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
+                  placeholder="duel-abc123"
+                />
+                <button
+                  type="button"
+                  disabled={
+                    !onJoinOnline || !serverUrl.trim() || !joinCode.trim()
+                  }
+                  onClick={() =>
+                    handleJoinOnline({ matchId: joinCode.trim() })
+                  }
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+                >
+                  <GameIcon src={icons.aim} className="size-4" />
+                  Join
+                </button>
+              </div>
+            </div>
+          </HudPanel>
+        </motion.div>
+
+        {/* Map 1×2 carousel — bottom row, left of operator */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08, duration: 0.28 }}
+          className="min-h-0 lg:col-span-3 lg:col-start-1 lg:row-start-2"
         >
           <HudPanel className="p-2.5 sm:p-3" accent="tech">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -670,69 +889,57 @@ export function MapPicker({
               </button>
             </div>
 
-            {/* Sky + selected + deploy */}
-            <div className="mt-2.5 space-y-2.5 border-t-2 border-arena-ink/35 pt-2.5">
-              <div>
-                <div className="mb-1.5 flex items-center gap-1.5">
-                  <GameIcon src={icons.compass} className="size-3.5" />
-                  <span className="text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
-                    Sky
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {SKYBOX_OPTIONS.map((id) => (
-                    <Chip
-                      key={id}
-                      active={skybox === id}
-                      className="h-7 px-2 text-[10px]"
-                      onClick={() => {
-                        gameAudio.uiClick()
-                        onSkyboxChange(id)
-                      }}
-                    >
-                      {SKYBOX_LABELS[id]}
-                    </Chip>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={selected.id}
-                    initial={{ opacity: 0, x: 4 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -4 }}
-                    transition={{ duration: 0.15 }}
-                    className="min-w-0 flex-1"
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <GameIcon src={icons.location} className="size-4" />
-                      <h3 className="truncate text-sm font-black tracking-tight sm:text-base">
-                        {selected.name}
-                      </h3>
-                      {selected.kind === 'range' && (
-                        <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink bg-arena-ok/20 px-1.5 py-0.5 text-[9px] font-extrabold text-arena-ok uppercase">
-                          <GameIcon src={icons.star} className="size-3" />
-                          Training
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 line-clamp-1 text-[11px] font-semibold text-arena-fg/45">
-                      {selected.blurb}
-                    </p>
-                  </motion.div>
-                </AnimatePresence>
-
-                <button
-                  type="button"
-                  onClick={handlePlay}
-                  className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-5 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-12 sm:px-6"
+            {/* Selected map + sky chips + deploy — one compact row */}
+            <div className="mt-2 flex flex-col gap-2 border-t-2 border-arena-ink/35 pt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={selected.id}
+                  initial={{ opacity: 0, x: 4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -4 }}
+                  transition={{ duration: 0.15 }}
+                  className="min-w-0 sm:max-w-[11rem] sm:shrink-0"
                 >
-                  <GameIcon src={icons.rocket} className="size-5" />
-                  Deploy
-                </button>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <GameIcon src={icons.location} className="size-3.5 shrink-0" />
+                    <h3 className="truncate text-sm font-black tracking-tight">
+                      {selected.name}
+                    </h3>
+                    {selected.kind === 'range' && (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border-[2px] border-arena-ink bg-arena-ok/20 px-1 py-px text-[8px] font-extrabold text-arena-ok uppercase">
+                        <GameIcon src={icons.star} className="size-2.5" />
+                        Train
+                      </span>
+                    )}
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 sm:justify-center">
+                <GameIcon src={icons.compass} className="size-3.5 shrink-0 opacity-60" />
+                {SKYBOX_OPTIONS.map((id) => (
+                  <Chip
+                    key={id}
+                    active={skybox === id}
+                    className="h-7 px-2 text-[10px]"
+                    onClick={() => {
+                      gameAudio.uiClick()
+                      onSkyboxChange(id)
+                    }}
+                  >
+                    {SKYBOX_LABELS[id]}
+                  </Chip>
+                ))}
               </div>
+
+              <button
+                type="button"
+                onClick={handlePlay}
+                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:w-auto sm:px-5"
+              >
+                <GameIcon src={icons.rocket} className="size-5" />
+                Deploy
+              </button>
             </div>
           </HudPanel>
         </motion.div>
@@ -741,8 +948,8 @@ export function MapPicker({
         <motion.aside
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.08, duration: 0.28 }}
-          className="flex min-h-0 flex-col gap-2.5 overflow-hidden max-lg:min-h-[22rem] lg:col-start-3 lg:row-span-2 lg:row-start-1"
+          transition={{ delay: 0.1, duration: 0.28 }}
+          className="flex min-h-0 flex-col gap-2.5 overflow-hidden max-lg:min-h-[22rem] lg:col-start-4 lg:row-span-2 lg:row-start-1"
         >
           <HudPanel
             className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5 sm:p-3"
@@ -811,6 +1018,7 @@ export function MapPicker({
                 </span>
               </div>
               <CharacterPreview
+                appearance={characterAppearance}
                 animation="walk"
                 spin={false}
                 className="absolute inset-0 h-full w-full"
@@ -819,6 +1027,23 @@ export function MapPicker({
                 className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-arena-panel to-transparent"
                 aria-hidden
               />
+              <button
+                type="button"
+                title="Customize character"
+                aria-label="Customize character colors"
+                onClick={() => {
+                  gameAudio.uiClick()
+                  setSettingsSection('character')
+                  setSettingsOpen(true)
+                }}
+                className={cn(
+                  'absolute bottom-2.5 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-3 py-1.5 text-[11px] font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all',
+                  'hover:-translate-y-0.5 hover:bg-arena-hover active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]',
+                )}
+              >
+                <GameIcon src={icons.brush} className="size-3.5" />
+                Customize
+              </button>
             </div>
           </HudPanel>
 
@@ -851,7 +1076,11 @@ export function MapPicker({
         </motion.aside>
       </main>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialSection={settingsSection}
+      />
     </div>
   )
 }

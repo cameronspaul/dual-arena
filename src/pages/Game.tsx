@@ -125,7 +125,10 @@ export default function Game() {
   const [searchParams, setSearchParams] = useSearchParams()
   const serverUrl = useAppStore((s) => s.serverUrl)
   const matchIdStore = useAppStore((s) => s.matchId)
+  const setMatchIdStore = useAppStore((s) => s.setMatchId)
   const username = useAppStore((s) => s.username)
+  const wagerAmount = useAppStore((s) => s.wagerAmount)
+  const characterAppearance = useAppStore((s) => s.characterAppearance)
 
   const [phase, setPhase] = useState<'pick' | 'play'>(() =>
     searchParams.get('map') && isMapId(searchParams.get('map')!)
@@ -204,6 +207,12 @@ export default function Game() {
     engine.setGameplayEnabled(!settingsOpen)
   }, [engine, settingsOpen, vmEdit])
 
+  // Live character colors from settings → third-person body
+  useEffect(() => {
+    if (!engine) return
+    engine.applyPlayerAppearance(characterAppearance)
+  }, [engine, characterAppearance])
+
   // Admin tools: L toggles the bottom-left strip (localhost + play only).
   useEffect(() => {
     if (!isLocalhost || phase !== 'play') return
@@ -275,14 +284,52 @@ export default function Game() {
     [setSearchParams],
   )
 
-  const startOnline = useCallback(() => {
+  /** Host: mint a fresh room code and open a joinable lobby. */
+  const startHostOnline = useCallback(() => {
+    const code = `duel-${Math.random().toString(36).slice(2, 8)}`
+    setMatchIdStore(code)
     const session: OnlineSessionOpts = {
       serverUrl: serverUrl.trim() || 'ws://localhost:2567',
-      matchId: matchIdStore.trim() || 'duel-1',
+      matchId: code,
       token: username.trim() || undefined,
+      hostName: username.trim() || 'Host',
+      wager: wagerAmount,
     }
     startPlay(mapId, skyboxPref, session)
-  }, [serverUrl, matchIdStore, username, mapId, skyboxPref, startPlay])
+  }, [
+    serverUrl,
+    username,
+    wagerAmount,
+    mapId,
+    skyboxPref,
+    startPlay,
+    setMatchIdStore,
+  ])
+
+  /** Join: use listed lobby (or manual code) — map comes from host when known. */
+  const startJoinOnline = useCallback(
+    (lobby: { matchId: string; mapId?: MapId }) => {
+      const mid = lobby.matchId.trim() || matchIdStore.trim() || 'duel-1'
+      setMatchIdStore(mid)
+      const playMap =
+        lobby.mapId && isMapId(lobby.mapId) ? lobby.mapId : mapId
+      const session: OnlineSessionOpts = {
+        serverUrl: serverUrl.trim() || 'ws://localhost:2567',
+        matchId: mid,
+        token: username.trim() || undefined,
+      }
+      startPlay(playMap, skyboxPref, session)
+    },
+    [
+      serverUrl,
+      matchIdStore,
+      username,
+      mapId,
+      skyboxPref,
+      startPlay,
+      setMatchIdStore,
+    ],
+  )
 
   const backToPicker = useCallback(() => {
     gameAudio.uiClick()
@@ -337,7 +384,8 @@ export default function Game() {
         skybox={skyboxPref}
         onSkyboxChange={setSkyboxPref}
         onPlay={() => startPlay(mapId, skyboxPref)}
-        onPlayOnline={startOnline}
+        onHostOnline={startHostOnline}
+        onJoinOnline={startJoinOnline}
       />
     )
   }
