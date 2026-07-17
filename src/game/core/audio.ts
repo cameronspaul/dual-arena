@@ -86,7 +86,7 @@ const CLIPS: Record<SfxId, ClipDef> = {
   },
   footstep: {
     src: '/sounds/footstep_0.mp3',
-    volume: 0.5,
+    volume: 0.9,
     variants: [
       '/sounds/footstep_0.mp3',
       '/sounds/footstep_1.mp3',

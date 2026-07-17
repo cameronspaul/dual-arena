@@ -1,7 +1,7 @@
 /**
  * Tracer streaks + impact decal pool + kill ghost silhouettes.
  *
- * Normal shots: brief pale dual-layer streak that fades out.
+ * Normal shots: thin needle core + tight soft halo that fades out fast.
  * Killing shots: red streak + frozen red player silhouette that stay in the world.
  */
 import * as THREE from 'three'
@@ -9,20 +9,29 @@ import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
 
 const MUZZLE_SKIP = 0.4
 /** How long a non-kill tracer stays visible (seconds). */
-const TRANSIENT_LIFE = 0.18
+const TRANSIENT_LIFE = 0.14
 const TRANSIENT_POOL = 10
 /** Max kill markers kept in the environment (oldest recycled). */
 const KILL_POOL = 40
 /** Max red kill silhouettes kept in the environment (oldest recycled). */
 const GHOST_POOL = 24
 /** Brief settle time before a kill tracer freezes as a permanent mark. */
-const KILL_SETTLE = 0.22
+const KILL_SETTLE = 0.2
 
-const NORMAL_CORE = 0xfff4cc
-const NORMAL_GLOW = 0xffd978
-const KILL_CORE = 0xff2030
-const KILL_GLOW = 0xff4060
-const KILL_FLASH = 0xffe8ee
+/** Hairline radii (world units) — core is a needle, glow a thin bloom. */
+const NORMAL_CORE_R = 0.0038
+const NORMAL_GLOW_R = 0.011
+const KILL_CORE_R = 0.0055
+const KILL_GLOW_R = 0.016
+/** Permanent kill marks stay readable but still thin. */
+const KILL_SETTLED_CORE_R = 0.0042
+const KILL_SETTLED_GLOW_R = 0.012
+
+const NORMAL_CORE = 0xfff8e8
+const NORMAL_GLOW = 0xffc45a
+const KILL_CORE = 0xff2840
+const KILL_GLOW = 0xff5a70
+const KILL_FLASH = 0xfff0f4
 const GHOST_COLOR = 0xff1a2e
 const GHOST_OPACITY = 0.38
 
@@ -37,6 +46,8 @@ type TracerVisual = {
   maxLife: number
   isKill: boolean
   active: boolean
+  /** World length used when re-scaling on settle. */
+  length: number
 }
 
 type GhostSlot = {
@@ -63,11 +74,19 @@ export class CombatFx {
 
   build(scene: THREE.Scene) {
     this.scene = scene
-    const geo = new THREE.SphereGeometry(0.06, 6, 6)
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffee88 })
+    // Tiny additive pin — impact pops, doesn't blob over the scene.
+    const geo = new THREE.SphereGeometry(0.028, 8, 8)
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffeeaa,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
     for (let i = 0; i < 12; i++) {
       const m = new THREE.Mesh(geo, mat.clone())
       m.visible = false
+      m.renderOrder = 3
       scene.add(m)
       this.impactPool.push(m)
     }
@@ -88,14 +107,15 @@ export class CombatFx {
     group.visible = false
     group.renderOrder = 2
 
-    // Unit cylinder along +Y; scaled to length / radius per shot.
-    const coreGeo = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true)
-    const glowGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true)
+    // Needle taper: slightly fuller near muzzle (bottom / -Y when aligned),
+    // hairline tip toward the impact. Scaled to length / radius per shot.
+    const coreGeo = new THREE.CylinderGeometry(0.35, 1, 1, 6, 1, true)
+    const glowGeo = new THREE.CylinderGeometry(0.45, 1, 1, 8, 1, true)
 
     const coreMat = new THREE.MeshBasicMaterial({
       color: NORMAL_CORE,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.95,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -103,7 +123,7 @@ export class CombatFx {
     const glowMat = new THREE.MeshBasicMaterial({
       color: NORMAL_GLOW,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.18,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -126,6 +146,7 @@ export class CombatFx {
       maxLife: 0,
       isKill: false,
       active: false,
+      length: 0,
     }
   }
 
@@ -170,9 +191,10 @@ export class CombatFx {
     }
 
     slot.group.position.copy(this._mid)
+    slot.length = len
 
-    const coreR = killed ? 0.016 : 0.009
-    const glowR = killed ? 0.052 : 0.026
+    const coreR = killed ? KILL_CORE_R : NORMAL_CORE_R
+    const glowR = killed ? KILL_GLOW_R : NORMAL_GLOW_R
     slot.core.scale.set(coreR, len, coreR)
     slot.glow.scale.set(glowR, len, glowR)
 
@@ -181,21 +203,20 @@ export class CombatFx {
     slot.group.visible = true
 
     if (killed) {
-      // Flash bright, then settle into a solid red world mark.
+      // Hot white flash, then settle into a thin red world mark.
       slot.coreMat.color.setHex(KILL_FLASH)
       slot.glowMat.color.setHex(KILL_CORE)
       slot.coreMat.opacity = 1
-      slot.glowMat.opacity = 0.55
+      slot.glowMat.opacity = 0.32
       slot.life = KILL_SETTLE
       slot.maxLife = KILL_SETTLE
-      // Kill marks use normal blending once settled so they stay readable.
       slot.coreMat.blending = THREE.AdditiveBlending
       slot.glowMat.blending = THREE.AdditiveBlending
     } else {
       slot.coreMat.color.setHex(NORMAL_CORE)
       slot.glowMat.color.setHex(NORMAL_GLOW)
-      slot.coreMat.opacity = 0.85
-      slot.glowMat.opacity = 0.28
+      slot.coreMat.opacity = 0.95
+      slot.glowMat.opacity = 0.16
       slot.coreMat.blending = THREE.AdditiveBlending
       slot.glowMat.blending = THREE.AdditiveBlending
       slot.life = TRANSIENT_LIFE
@@ -313,18 +334,21 @@ export class CombatFx {
     m.position.set(p.x, p.y, p.z)
     m.visible = true
     const mat = m.material as THREE.MeshBasicMaterial
-    if (killed) mat.color.setHex(0xff3344)
-    else if (kind === 'head') mat.color.setHex(0xffee55)
-    else if (kind === 'body') mat.color.setHex(0xff8866)
-    else mat.color.setHex(0xffee88)
-    const s = killed ? 1.8 : kind === 'head' ? 1.45 : kind === 'body' ? 1.15 : 1
+    if (killed) mat.color.setHex(0xff4466)
+    else if (kind === 'head') mat.color.setHex(0xfff0a0)
+    else if (kind === 'body') mat.color.setHex(0xffaa88)
+    else mat.color.setHex(0xffe8a8)
+    mat.opacity = killed ? 1 : 0.9
+    // Small pin flash — head/kill slightly larger, world stays subtle.
+    const s = killed ? 1.55 : kind === 'head' ? 1.25 : kind === 'body' ? 1.05 : 0.85
     m.scale.setScalar(s)
     window.setTimeout(
       () => {
         m.visible = false
         m.scale.setScalar(1)
+        mat.opacity = 0.95
       },
-      killed ? 320 : 200,
+      killed ? 260 : 140,
     )
   }
 
@@ -337,34 +361,40 @@ export class CombatFx {
         t.group.visible = false
         continue
       }
-      // Ease-out fade: bright at spawn, soft tail.
+      // Snap-bright then crisp ease-out; glow dies slightly faster than core.
       const k = t.life / t.maxLife
       const a = k * k
-      t.coreMat.opacity = 0.9 * a
-      t.glowMat.opacity = 0.3 * a
+      t.coreMat.opacity = 0.95 * a
+      t.glowMat.opacity = 0.16 * a * a
     }
 
     for (const t of this.kills) {
       if (!t.active || t.life === Infinity) continue
       t.life -= dt
       if (t.life <= 0) {
-        // Freeze as a permanent red mark in the environment.
+        // Freeze as a permanent thin red mark in the environment.
         t.life = Infinity
         t.coreMat.color.setHex(KILL_CORE)
         t.glowMat.color.setHex(KILL_GLOW)
-        t.coreMat.opacity = 0.72
-        t.glowMat.opacity = 0.22
+        t.coreMat.opacity = 0.62
+        t.glowMat.opacity = 0.14
+        t.core.scale.set(KILL_SETTLED_CORE_R, t.length, KILL_SETTLED_CORE_R)
+        t.glow.scale.set(KILL_SETTLED_GLOW_R, t.length, KILL_SETTLED_GLOW_R)
         // Readable at range without additive blowout.
         t.coreMat.blending = THREE.NormalBlending
         t.glowMat.blending = THREE.NormalBlending
         continue
       }
-      // Lerp flash → kill red while settling.
+      // Lerp flash → kill red while settling; slim slightly as it freezes.
       const k = 1 - t.life / t.maxLife
       t.coreMat.color.copy(this._cA.setHex(KILL_FLASH)).lerp(this._cB.setHex(KILL_CORE), k)
       t.glowMat.color.copy(this._cA.setHex(KILL_CORE)).lerp(this._cB.setHex(KILL_GLOW), k)
-      t.coreMat.opacity = 1 - 0.2 * k
-      t.glowMat.opacity = 0.55 - 0.25 * k
+      t.coreMat.opacity = 1 - 0.28 * k
+      t.glowMat.opacity = 0.32 - 0.14 * k
+      const coreR = KILL_CORE_R + (KILL_SETTLED_CORE_R - KILL_CORE_R) * k
+      const glowR = KILL_GLOW_R + (KILL_SETTLED_GLOW_R - KILL_GLOW_R) * k
+      t.core.scale.set(coreR, t.length, coreR)
+      t.glow.scale.set(glowR, t.length, glowR)
     }
   }
 }
