@@ -127,6 +127,7 @@ export class GameAudio {
   private lastFootstep = 0
   private lastDry = 0
   private reloadTimers: number[] = []
+  private slideAudio: HTMLAudioElement | null = null
 
   constructor() {
     for (const id of Object.keys(CLIPS) as SfxId[]) {
@@ -306,6 +307,26 @@ export class GameAudio {
     const volume =
       Math.min(0.55, 0.28 + speed * 0.035) * (sprint ? 0.95 : 0.8)
     this.play('footstep', { volume, rate })
+  }
+
+  playSlide() {
+    if (this.muted) return
+    this.unlock()
+    if (!this.slideAudio) {
+      this.slideAudio = new Audio('/sounds/slide.ogg')
+      this.slideAudio.preload = 'auto'
+      this.slideAudio.loop = true
+    }
+    this.slideAudio.volume = this.scaleVolume(CLIPS.slide.volume)
+    this.slideAudio.currentTime = 0
+    void this.slideAudio.play().catch(() => {})
+  }
+
+  stopSlide() {
+    if (this.slideAudio) {
+      this.slideAudio.pause()
+      this.slideAudio.currentTime = 0
+    }
   }
 
   uiClick() {

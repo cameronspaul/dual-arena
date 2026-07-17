@@ -75,8 +75,10 @@ function stepReloadJiggle(s: SniperState, dt: number) {
 }
 
 export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
-  // Stay ADS through the whole reload — scope glass stays up.
-  s.ads = input.ads
+  // Fire + bolt always leave ADS so the cock animation plays at hip.
+  // Reload may stay scoped (glass up). Holding ADS re-enters once ready.
+  const cocking = s.phase === 'firing' || s.phase === 'bolt'
+  s.ads = input.ads && !cocking
   const target = s.ads ? 1 : 0
   const k = 1 - Math.exp(-10 * dt)
   s.adsBlend = lerp(s.adsBlend, target, k)
@@ -153,6 +155,8 @@ export function tryFire(s: SniperState, input: PlayerInput): FireResult {
   } else {
     s.phase = 'firing'
     s.phaseTimer = SNIPER.fireAnimTime
+    // Leave ADS this frame so the cock cycle is visible at hip.
+    s.ads = false
   }
   // Recoil is applied after the shot so the bullet still goes where the
   // crosshair was aiming this frame (kick affects subsequent frames).

@@ -76,9 +76,9 @@ export const SNIPER = {
   /** Mag + chamber frames 49–148 @30fps (~3.3s raw); sped up for game feel. */
   reloadTime: 2.1,
   maxRange: 400,
+  /** Camera pitch punch (rad) at full recoil — aim kick, not gun mesh */
   recoilKick: 0.045,
   recoilDecay: 8,
-  viewmodelRecoil: 0.05,
 
   /**
    * COD-style accuracy cone (half-angle, radians).
@@ -243,6 +243,68 @@ export const VIEW_BOB = {
   airRiseAdsMul: 0.12,
   /** Ease hip → run pose (higher = snappier raise/lower) */
   runPoseLerp: 9,
+} as const
+
+/**
+ * Shot feel — viewmodel kick + camera screen-shake (visual only).
+ * Timed envelopes are independent of combat `sniper.recoil` so the gun can
+ * settle slowly without stretching aim-spread bloom.
+ * Amplitudes are peak values at hip (adsBlend=0) right after the shot.
+ */
+export const VIEW_RECOIL = {
+  /**
+   * How long the gun takes to fully settle (seconds).
+   * Longer = weightier; combat recoil can still be snappy.
+   */
+  duration: 0.72,
+  /**
+   * Ease-out power on the main kick envelope: higher = hangs near peak
+   * then drops (massy), lower = more linear return.
+   */
+  kickEase: 2.6,
+  /** Shake envelope power — usually dies a bit sooner than the main kick */
+  shakeEase: 2.0,
+
+  /** Primary kick — muzzle climb + shoulder push-back */
+  pitch: 0.17,
+  yaw: 0.04,
+  roll: 0.08,
+  posX: 0.014,
+  posY: 0.022,
+  /** Kick toward camera (local +Z) */
+  posZ: 0.06,
+  /**
+   * Residual rattle while settling — multi-axis mass, not high-freq buzz.
+   * Frequencies are rad/s (lower = weightier).
+   */
+  shakePos: 0.01,
+  shakePitch: 0.032,
+  shakeYaw: 0.024,
+  shakeRoll: 0.04,
+  shakeFreq: 13,
+  thumpFreq: 5.5,
+  thumpPos: 0.012,
+  thumpPitch: 0.028,
+  /** ADS multiplies viewmodel kick (mesh nearly gone under scope) */
+  adsMul: 0.12,
+
+  /**
+   * Camera screen-shake (does not affect hitscan / aim).
+   * Modest — enough to sell the blast without making aim feel broken.
+   */
+  screenDuration: 0.48,
+  screenEase: 2.2,
+  screenPosX: 0.007,
+  screenPosY: 0.009,
+  screenPosZ: 0.0035,
+  screenPitch: 0.012,
+  screenYaw: 0.008,
+  /** Camera bank on fire — primary “weight” of the screen shake */
+  screenRoll: 0.042,
+  screenFreq: 15,
+  screenThumpFreq: 6.5,
+  /** ADS still gets some camera shake (scope kick) */
+  screenAdsMul: 0.55,
 } as const
 
 /**

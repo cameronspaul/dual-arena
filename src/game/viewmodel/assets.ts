@@ -95,13 +95,22 @@ export function styleViewmodelLowPoly(root: THREE.Object3D) {
       if (mat.roughnessMap == null) mat.roughness = 0.55
 
       const name = o.name.toLowerCase()
+      // Optic glass only (not the metal scope housing).
       if (name.includes('glass') || name.includes('lens')) {
+        if (mat.map) {
+          // Shared atlas may still be used by other meshes; do not dispose.
+          mat.map = null
+        }
+        mat.color.set(0xc8e4f5) // whitey sky blue
         mat.transparent = true
-        mat.opacity = Math.min(mat.opacity, 0.5)
+        mat.opacity = 0.32
         mat.side = THREE.DoubleSide
         mat.depthWrite = false
-        mat.metalness = 0
-        mat.roughness = 0.35
+        mat.metalness = 0.05
+        mat.roughness = 0.18
+        mat.emissive.set(0x6a9ec4)
+        mat.emissiveIntensity = 0.22
+        mat.envMapIntensity = 1.2
       }
 
       mat.needsUpdate = true

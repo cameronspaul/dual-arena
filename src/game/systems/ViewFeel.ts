@@ -7,9 +7,9 @@ import {
   GUN_SWAY,
   LOOK,
   SLIDE_GUN,
-  SNIPER,
   THIRD_PERSON,
   VIEW_BOB,
+  VIEW_RECOIL,
 } from '../core/config'
 import { clamp, lookDirection } from '../core/math'
 import type { PlayerBody, SniperState } from '../core/types'
@@ -37,6 +37,28 @@ export class ViewFeel {
   private prevAdsScoped = false
   private footstepBobSign = 0
 
+  /** Seconds since last shot punch (viewmodel envelope) */
+  private gunRecoilAge = 99
+  /** Seconds since last shot punch (camera screen-shake) */
+  private screenShakeAge = 99
+  /** ADS blend captured at punch so the envelope stays consistent mid-shot */
+  private gunRecoilAds = 0
+  private screenShakeAds = 0
+  /** Phase clock for recoil shake (resets on punch for a clean first kick) */
+  private recoilShakePhase = 0
+
+  /**
+   * Fire impulse — starts a long viewmodel settle + short screen-shake.
+   * Visual only; combat recoil/spread still uses sniper.recoil.
+   */
+  punchShot(adsBlend: number) {
+    this.gunRecoilAge = 0
+    this.screenShakeAge = 0
+    this.gunRecoilAds = clamp(adsBlend, 0, 1)
+    this.screenShakeAds = clamp(adsBlend, 0, 1)
+    this.recoilShakePhase = 0
+  }
+
   /**
    * Sample fall speed before collision (call before stepPlayer).
    */
@@ -62,7 +84,9 @@ export class ViewFeel {
       gameAudio.play('jump', { volume: 0.5 })
     }
     if (player.state === 'slide' && prevMoveState !== 'slide') {
-      gameAudio.play('slide', { volume: 0.6 })
+      gameAudio.playSlide()
+    } else if (player.state !== 'slide' && prevMoveState === 'slide') {
+      gameAudio.stopSlide()
     }
 
     if (grounded && !this.wasGrounded) {
@@ -306,31 +330,119 @@ export class ViewFeel {
       this.runPoseBlend += (runTarget - this.runPoseBlend) * runK
     }
 
+    // Advance shot envelopes (independent of combat sniper.recoil decay)
+    if (!vm.freezeBob) {
+      this.gunRecoilAge += dt
+      this.screenShakeAge += dt
+      if (this.gunRecoilAge < VIEW_RECOIL.duration) {
+        this.recoilShakePhase += dt
+      }
+    }
+
     const eye = eyePosition(p)
     const look = effectiveLook(p, sniper)
-    camera.rotation.y = look.yaw
-    camera.rotation.x = look.pitch
+
+    // Screen-shake: visual only — does not feed hitscan / look input.
+    let shakePitch = 0
+    let shakeYaw = 0
+    let shakeRoll = 0
+    let shakeLocalX = 0
+    let shakeLocalY = 0
+    let shakeLocalZ = 0
+    if (!vm.freezeBob && this.screenShakeAge < VIEW_RECOIL.screenDuration) {
+      const u = clamp(
+        this.screenShakeAge / VIEW_RECOIL.screenDuration,
+        0,
+        1,
+      )
+      const env = Math.pow(1 - u, VIEW_RECOIL.screenEase)
+      const hip =
+        1 - this.screenShakeAds * (1 - VIEW_RECOIL.screenAdsMul)
+      const a = env * hip
+      const t = this.recoilShakePhase
+      const f = VIEW_RECOIL.screenFreq
+      const f2 = VIEW_RECOIL.screenThumpFreq
+      // Initial upward kick, then oscillating settle
+      const kickFade = Math.pow(1 - u, VIEW_RECOIL.screenEase + 0.4)
+      shakePitch =
+        a *
+        (VIEW_RECOIL.screenPitch * 0.55 * kickFade +
+          Math.sin(t * f) * VIEW_RECOIL.screenPitch * 0.7 +
+          Math.sin(t * f2) * VIEW_RECOIL.screenPitch * 0.35)
+      shakeYaw =
+        a *
+        (Math.sin(t * f * 0.85 + 0.7) * VIEW_RECOIL.screenYaw +
+          Math.sin(t * f2 * 1.1 + 1.2) * VIEW_RECOIL.screenYaw * 0.4)
+      // Roll leads the blast (directional bank), then oscillates as it settles
+      shakeRoll =
+        a *
+        (VIEW_RECOIL.screenRoll * 0.75 * kickFade +
+          Math.sin(t * f * 1.05 + 0.3) * VIEW_RECOIL.screenRoll * 0.85 +
+          Math.cos(t * f2 * 0.9) * VIEW_RECOIL.screenRoll * 0.45)
+      shakeLocalX =
+        a *
+        (Math.sin(t * f * 1.05) * VIEW_RECOIL.screenPosX +
+          Math.sin(t * f2 * 1.2) * VIEW_RECOIL.screenPosX * 0.45)
+      shakeLocalY =
+        a *
+        (VIEW_RECOIL.screenPosY * 0.5 * kickFade +
+          Math.cos(t * f * 0.95) * VIEW_RECOIL.screenPosY * 0.65 +
+          Math.cos(t * f2) * VIEW_RECOIL.screenPosY * 0.3)
+      shakeLocalZ =
+        a * Math.sin(t * f * 0.8 + 0.5) * VIEW_RECOIL.screenPosZ
+    }
+
+    camera.rotation.order = 'YXZ'
+    camera.rotation.y = look.yaw + shakeYaw
+    camera.rotation.x = look.pitch + shakePitch
+    camera.rotation.z = shakeRoll
+
+    // Camera-local shake → world offset (right / up / forward)
+    const sy = Math.sin(look.yaw)
+    const cy = Math.cos(look.yaw)
+    const sp = Math.sin(look.pitch)
+    const cp = Math.cos(look.pitch)
+    const rightX = cy
+    const rightZ = -sy
+    // up = right × forward for this look convention
+    const upX = sy * sp
+    const upY = cp
+    const upZ = cy * sp
+    const fwd = lookDirection(look.yaw, look.pitch)
+    const shakeWX =
+      rightX * shakeLocalX + upX * shakeLocalY + fwd.x * shakeLocalZ
+    const shakeWY = upY * shakeLocalY + fwd.y * shakeLocalZ
+    const shakeWZ =
+      rightZ * shakeLocalX + upZ * shakeLocalY + fwd.z * shakeLocalZ
 
     if (thirdPerson) {
       const dir = lookDirection(look.yaw, look.pitch)
-      const rightX = -Math.sin(look.yaw + Math.PI / 2)
-      const rightZ = -Math.cos(look.yaw + Math.PI / 2)
+      const rightX3 = -Math.sin(look.yaw + Math.PI / 2)
+      const rightZ3 = -Math.cos(look.yaw + Math.PI / 2)
       const pivotY =
         p.position.y + p.eyeHeight * THIRD_PERSON.pivotEyeFrac
       let camX =
         p.position.x -
         dir.x * THIRD_PERSON.distance +
-        rightX * THIRD_PERSON.shoulder
+        rightX3 * THIRD_PERSON.shoulder
       let camY = pivotY - dir.y * THIRD_PERSON.distance
       let camZ =
         p.position.z -
         dir.z * THIRD_PERSON.distance +
-        rightZ * THIRD_PERSON.shoulder
+        rightZ3 * THIRD_PERSON.shoulder
       const floorY = p.position.y + THIRD_PERSON.minHeight
       if (camY < floorY) camY = floorY
-      camera.position.set(camX, camY, camZ)
+      camera.position.set(
+        camX + shakeWX,
+        camY + shakeWY,
+        camZ + shakeWZ,
+      )
     } else {
-      camera.position.set(eye.x, eye.y, eye.z)
+      camera.position.set(
+        eye.x + shakeWX,
+        eye.y + shakeWY,
+        eye.z + shakeWZ,
+      )
     }
 
     const fov =
@@ -344,7 +456,7 @@ export class ViewFeel {
       camera.updateProjectionMatrix()
     }
 
-    this.poseViewmodel(vm, sniper, adsBlend, this.runPoseBlend, {
+    this.poseViewmodel(vm, adsBlend, this.runPoseBlend, {
       bobGunX,
       bobGunY,
       bobGunZ: bobGunZ + leanPosZ,
@@ -362,7 +474,6 @@ export class ViewFeel {
 
   private poseViewmodel(
     vm: ViewmodelSystem,
-    sniper: SniperState,
     ads: number,
     run: number,
     o: {
@@ -398,14 +509,56 @@ export class ViewFeel {
     const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
     const land = vm.freezeBob ? 0 : this.landOffset
     const air = vm.freezeBob ? 0 : this.airRise
+
+    // Timed gun punch + slow rattle (not combat recoilDecay)
+    let recPosX = 0
+    let recPosY = 0
+    let recPosZ = 0
+    let recPitch = 0
+    let recYaw = 0
+    let recRoll = 0
+    if (!vm.freezeBob && this.gunRecoilAge < VIEW_RECOIL.duration) {
+      const u = clamp(this.gunRecoilAge / VIEW_RECOIL.duration, 0, 1)
+      const kickEnv = Math.pow(1 - u, VIEW_RECOIL.kickEase)
+      const shakeEnv = Math.pow(1 - u, VIEW_RECOIL.shakeEase)
+      const hip =
+        1 - this.gunRecoilAds * (1 - VIEW_RECOIL.adsMul)
+      const k = kickEnv * hip
+      const s = shakeEnv * hip
+      const t = this.recoilShakePhase
+      const f = VIEW_RECOIL.shakeFreq
+      const f2 = VIEW_RECOIL.thumpFreq
+      // Primary kick settles on a long ease — no instant pop-back
+      recPitch = k * VIEW_RECOIL.pitch
+      recYaw = k * VIEW_RECOIL.yaw
+      recRoll = k * VIEW_RECOIL.roll
+      recPosX = k * VIEW_RECOIL.posX
+      recPosY = k * VIEW_RECOIL.posY
+      recPosZ = k * VIEW_RECOIL.posZ
+      // Weightier residual shake (lower freq, phase from shot)
+      recPosX +=
+        Math.sin(t * f) * VIEW_RECOIL.shakePos * s +
+        Math.sin(t * f2 * 1.3) * VIEW_RECOIL.thumpPos * s
+      recPosY +=
+        Math.cos(t * f * 1.15) * VIEW_RECOIL.shakePos * 0.85 * s +
+        Math.cos(t * f2) * VIEW_RECOIL.thumpPos * s
+      recPosZ +=
+        Math.sin(t * f * 0.9 + 0.4) * VIEW_RECOIL.shakePos * 0.7 * s
+      recPitch +=
+        Math.cos(t * f * 1.1) * VIEW_RECOIL.shakePitch * s +
+        Math.cos(t * f2 * 0.95) * VIEW_RECOIL.thumpPitch * s
+      recYaw += Math.sin(t * f * 0.85 + 1.1) * VIEW_RECOIL.shakeYaw * s
+      recRoll +=
+        Math.sin(t * f * 1.25) * VIEW_RECOIL.shakeRoll * s +
+        Math.sin(t * f2 * 1.1 + 0.6) * VIEW_RECOIL.thumpPitch * 0.6 * s
+    }
+
     vm.root.position.lerpVectors(basePos, scoped, ads)
-    vm.root.position.x += o.bobGunX + o.swayX + SLIDE_GUN.posX * o.slide
+    vm.root.position.x +=
+      o.bobGunX + o.swayX + SLIDE_GUN.posX * o.slide + recPosX
     vm.root.position.y +=
-      o.bobGunY + o.swayY - land + air + SLIDE_GUN.posY * o.slide
-    vm.root.position.z += o.bobGunZ + SLIDE_GUN.posZ * o.slide
-    const recoilKick = vm.freezeBob
-      ? 0
-      : sniper.recoil * SNIPER.viewmodelRecoil
+      o.bobGunY + o.swayY - land + air + SLIDE_GUN.posY * o.slide + recPosY
+    vm.root.position.z += o.bobGunZ + SLIDE_GUN.posZ * o.slide + recPosZ
     const landPitch = land * VIEW_BOB.landPitch
     const airPitch =
       VIEW_BOB.airRiseMax > 1e-6
@@ -417,7 +570,7 @@ export class ViewFeel {
     vm.root.rotation.set(
       baseRotX * (1 - ads) +
         adsRot.x * ads +
-        recoilKick +
+        recPitch +
         o.bobGunPitch +
         o.swayPitch +
         landPitch +
@@ -425,10 +578,12 @@ export class ViewFeel {
         SLIDE_GUN.pitch * o.slide,
       baseRotY * (1 - ads) +
         adsRot.y * ads +
+        recYaw +
         o.swayYaw +
         SLIDE_GUN.yaw * o.slide,
       baseRotZ * (1 - ads) +
         adsRot.z * ads +
+        recRoll +
         o.bobGunRoll +
         o.swayRoll +
         SLIDE_GUN.roll * o.slide,

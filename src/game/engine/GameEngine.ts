@@ -328,6 +328,7 @@ export class GameEngine {
       }
       this.kills += result.killsDelta
       applyRecoil(this.sniper)
+      this.viewFeel.punchShot(this.sniper.adsBlend)
     } else if (fireResult === 'dry') {
       gameAudio.playDryFire()
     }
