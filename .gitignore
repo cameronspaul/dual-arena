@@ -1,0 +1,141 @@
+
+
+
+
+
+# ------------------------------------------------------
+# Logs
+# ------------------------------------------------------
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ------------------------------------------------------
+# Dependencies
+# ------------------------------------------------------
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+
+# ------------------------------------------------------
+# Build output
+# ------------------------------------------------------
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.storybook-out/
+typedoc/
+temp/
+.tmp/
+.cache/
+.temp/
+
+# ------------------------------------------------------
+# Environment / Secrets - But keep any "example" ones
+# ------------------------------------------------------
+.env
+.env.*
+!*.env.example
+!*example.env
+!*.example.env
+
+# ------------------------------------------------------
+# Testing / Reports
+# ------------------------------------------------------
+coverage/
+jest-html-reporters-*.html
+cypress/screenshots/
+cypress/videos/
+playwright-report/
+test-results/
+
+# ------------------------------------------------------
+# Editors & IDEs
+# ------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+*.ntvs*
+*.njsproj
+*.suo
+*.sln
+*.sw?
+
+# ------------------------------------------------------
+# OS / System Files
+# ------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.Trash-*
+
+# ------------------------------------------------------
+# Framework / Tool Specific
+# ------------------------------------------------------
+# React Native / Expo
+.expo/
+web-build/
+
+# Electron
+electron-builder-output/
+release/
+app/dist/
+
+# Vue
+/dist/
+
+# Next.js
+.next/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# ------------------------------------------------------
+# Docker
+# ------------------------------------------------------
+docker-compose.override.yml
+.docker/
+*.pid
+
+# ------------------------------------------------------
+# Lint / Formatter Caches
+# ------------------------------------------------------
+.eslintcache
+.stylelintcache
+.prettier-cache
+
+# ------------------------------------------------------
+# Temporary / Misc
+# ------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.orig
+*.local
+*.lock
