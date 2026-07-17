@@ -39,8 +39,8 @@ export interface PlayerBody {
   slideSpeed: number
 }
 
-/** Damage region on a character mesh / bone cluster. */
-export type HitZone = 'head' | 'chest' | 'arm' | 'leg'
+/** Damage region on a character mesh. Chest includes torso + arms. */
+export type HitZone = 'head' | 'chest' | 'leg'
 
 export interface AABB {
   min: Vec3

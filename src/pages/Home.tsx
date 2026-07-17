@@ -109,7 +109,7 @@ function Home() {
         </motion.div>
 
         <p className="mt-10 text-xs text-muted-foreground/70">
-          Sniper model © Quaternius (CC0) · See public/models/CREDITS.md
+          Sniper viewmodel © DJMaesen (CC BY 4.0) · See public/models/CREDITS.md
         </p>
       </div>
     </div>

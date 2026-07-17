@@ -1,15 +1,20 @@
 # 3D model credits
 
-## sniper.glb
+## sniper_animated.glb (active viewmodel)
+
+- **Source:** [sniper animated — DJMaesen (bumstrum)](https://sketchfab.com/3d-models/sniper-animated-b48999a250b2433da59f705c371a49b2)
+- **License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **Author:** [DJMaesen](https://sketchfab.com/bumstrum)
+- FPS arms + sniper with packed fire / bolt / reload / ready animations.
+
+**Attribution required** under CC-BY.
+
+## sniper.glb (legacy / unused)
 
 - **Source:** [Quaternius — Sniper Rifle](https://poly.pizza/m/Nq5dnqeh0k) (Ultimate Guns Pack)
-- **License:** [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (public domain)
+- **License:** [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
 - **Author:** [Quaternius](https://quaternius.com/)
 
-Credit not required under CC0; kept here for project hygiene.
+## arms.glb (legacy / unused)
 
-## arms.glb
-
-- **Source:** FPS viewmodel arms (low poly, rigged) — `public/models/arms.glb`
-- **License:** Confirm with pack you installed (e.g. WRAD ARMS = CC0)
-- Used as first-person hands parented to the sniper viewmodel.
+- Separate arms experiment; replaced by `sniper_animated.glb`.

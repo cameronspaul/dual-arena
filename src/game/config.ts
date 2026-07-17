@@ -46,13 +46,15 @@ export const SNIPER = {
   reserve: 30,
   /** One-tap */
   headDamage: 100,
-  /** Torso / chest */
+  /** Torso + arms */
   chestDamage: 50,
-  /** Arms + legs */
-  limbDamage: 25,
-  boltTime: 0.7,
-  fireAnimTime: 0.08,
-  reloadTime: 2.0,
+  /** Legs / feet */
+  legDamage: 25,
+  /** Tuned near DJMaesen sniper_animated bolt segment (~1.6s raw). */
+  boltTime: 1.2,
+  fireAnimTime: 0.12,
+  /** Tuned near DJMaesen reload segment (~1.8s raw). */
+  reloadTime: 1.9,
   maxRange: 400,
   hipSwayAmp: 0.012,
   adsSwayAmp: 0.0025,
@@ -70,20 +72,22 @@ export const SNIPER = {
  * exported JSON back into this object (or hand the file to an agent).
  */
 export const VIEWMODEL = {
-  /** Target longest axis length after normalize (world units). */
-  scale: 0.48,
   /**
-   * Model-local basis correction applied before hip/ADS pose.
-   * Quaternius sniper is already barrel→-Z / scope→+Y — leave at identity.
-   * Only change if a different glTF needs a flip.
+   * Target longest axis after normalize (world units).
+   * sniper_animated.glb includes arms + gun as one FPS viewmodel.
    */
-  modelRot: { x: 0, y: 0, z: 0 },
-  /** Post-center local offset on the gun (toward grip). */
-  gunOffset: { x: 0, y: 0.0096, z: 0.0384 },
-  /** Bottom-right hip hold; muzzle tips left toward screen center. */
-  hipPos: { x: 0.22, y: -0.18, z: -0.42 },
-  hipRot: { x: 0.06, y: 0.22, z: 0.04 },
-  adsPos: { x: 0.0, y: -0.14, z: -0.28 },
+  scale: 0.95,
+  /**
+   * Model-local basis correction. Sketchfab/FBX often needs a yaw flip —
+   * tweak in the viewmodel editor if the muzzle points the wrong way.
+   */
+  modelRot: { x: 0, y: Math.PI, z: 0 },
+  /** Post-center local offset (nudge in camera space after normalize). */
+  gunOffset: { x: 0.08, y: -0.22, z: -0.12 },
+  /** Bottom-right hip hold. */
+  hipPos: { x: 0.05, y: -0.12, z: -0.28 },
+  hipRot: { x: 0.02, y: 0.04, z: 0.02 },
+  adsPos: { x: 0.0, y: -0.1, z: -0.22 },
   adsRot: { x: 0.0, y: 0.0, z: 0.0 },
   /** Hide mesh when ADS blend exceeds this (scope overlay takes over). */
   hideAds: 0.92,
@@ -213,7 +217,7 @@ export const DUMMY = {
 export const DEBUG = {
   /**
    * Hitscan uses the real character meshes. When true, zone wireframes draw on
-   * top of the skin: red head / cyan chest / orange arms / yellow legs.
+   * top of the skin: red head / cyan chest (incl. arms) / yellow legs.
    */
   showHitboxes: true,
 } as const

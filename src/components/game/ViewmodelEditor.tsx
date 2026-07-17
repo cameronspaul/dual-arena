@@ -290,12 +290,16 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
               label="Hip position"
               value={cfg.hipPos}
               step={0.005}
+              min={-2}
+              max={2}
               onChange={(hipPos) => patch((c) => { c.hipPos = hipPos })}
             />
             <Vec3Fields
               label="Hip rotation (deg)"
               value={toDegVec(cfg.hipRot)}
               step={0.5}
+              min={-180}
+              max={180}
               onChange={(d) => patch((c) => { c.hipRot = toRadVec(d) })}
             />
           </>
@@ -305,12 +309,16 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
               label="ADS position"
               value={cfg.adsPos}
               step={0.005}
+              min={-2}
+              max={2}
               onChange={(adsPos) => patch((c) => { c.adsPos = adsPos })}
             />
             <Vec3Fields
               label="ADS rotation (deg)"
               value={toDegVec(cfg.adsRot)}
               step={0.5}
+              min={-180}
+              max={180}
               onChange={(d) => patch((c) => { c.adsRot = toRadVec(d) })}
             />
             <NumField
@@ -329,19 +337,23 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
               value={cfg.scale}
               step={0.01}
               min={0.05}
-              max={2}
+              max={3}
               onChange={(scale) => patch((c) => { c.scale = scale })}
             />
             <Vec3Fields
               label="Gun offset"
               value={cfg.gunOffset}
               step={0.005}
+              min={-2}
+              max={2}
               onChange={(gunOffset) => patch((c) => { c.gunOffset = gunOffset })}
             />
             <Vec3Fields
               label="Gun model rot (deg)"
               value={toDegVec(cfg.modelRot)}
               step={1}
+              min={-180}
+              max={180}
               onChange={(d) => patch((c) => { c.modelRot = toRadVec(d) })}
             />
           </>
@@ -359,12 +371,16 @@ export function ViewmodelEditor({ engine, open, onClose }: Props) {
               label="Pair position"
               value={cfg.arms.pos}
               step={0.005}
+              min={-2}
+              max={2}
               onChange={(pos) => patch((c) => { c.arms.pos = pos })}
             />
             <Vec3Fields
               label="Pair rotation (deg)"
               value={toDegVec(cfg.arms.rot)}
               step={1}
+              min={-180}
+              max={180}
               onChange={(d) => patch((c) => { c.arms.rot = toRadVec(d) })}
             />
             <p className="mt-2 text-[10px] text-white/40">
@@ -528,6 +544,8 @@ function HandSidePanel({
             label={`${limb} rotation (deg)`}
             value={toDegVec(chain[limb].rot)}
             step={1}
+            min={-180}
+            max={180}
             onChange={(d) =>
               onLimbPose(limb, (jp) => {
                 jp.rot = toRadVec(d)
@@ -538,6 +556,8 @@ function HandSidePanel({
             label={`${limb} position`}
             value={chain[limb].pos}
             step={0.002}
+            min={-1}
+            max={1}
             onChange={(pos) =>
               onLimbPose(limb, (jp) => {
                 jp.pos = pos
@@ -656,6 +676,10 @@ function Btn({
   )
 }
 
+function clamp(n: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, n))
+}
+
 function NumField({
   label,
   value,
@@ -668,9 +692,11 @@ function NumField({
   value: number
   onChange: (n: number) => void
   step: number
-  min?: number
-  max?: number
+  /** Fixed slider bounds — must be stable (not derived from value). */
+  min: number
+  max: number
 }) {
+  const sliderVal = clamp(value, min, max)
   return (
     <div className="mb-2">
       <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-white/45">
@@ -680,10 +706,11 @@ function NumField({
         <input
           type="range"
           className="min-w-0 flex-1 accent-sky-500"
-          value={value}
+          value={sliderVal}
           step={step}
-          min={min ?? value - Math.abs(step) * 40}
-          max={max ?? value + Math.abs(step) * 40}
+          min={min}
+          max={max}
+          onInput={(e) => onChange(Number((e.target as HTMLInputElement).value))}
           onChange={(e) => onChange(Number(e.target.value))}
         />
         <input
@@ -691,9 +718,11 @@ function NumField({
           className="w-20 rounded border border-white/15 bg-black/50 px-1.5 py-1 text-right text-[11px] tabular-nums"
           value={fmt(value)}
           step={step}
+          min={min}
+          max={max}
           onChange={(e) => {
             const n = Number(e.target.value)
-            if (Number.isFinite(n)) onChange(n)
+            if (Number.isFinite(n)) onChange(clamp(n, min, max))
           }}
         />
       </div>
@@ -706,52 +735,75 @@ function Vec3Fields({
   value,
   onChange,
   step,
+  min,
+  max,
 }: {
   label: string
   value: VmVec3
   onChange: (v: VmVec3) => void
   step: number
+  /** Fixed slider bounds — must be stable (not derived from value). */
+  min: number
+  max: number
 }) {
-  const axis = (k: keyof VmVec3, color: string) => (
-    <div key={k} className="mb-1.5 flex items-center gap-2">
-      <span className={`w-3 text-[10px] font-bold ${color}`}>{k.toUpperCase()}</span>
-      <input
-        type="range"
-        className="min-w-0 flex-1 accent-sky-500"
-        value={value[k]}
-        step={step}
-        min={value[k] - Math.abs(step) * 50}
-        max={value[k] + Math.abs(step) * 50}
-        onChange={(e) => onChange({ ...value, [k]: Number(e.target.value) })}
-      />
-      <input
-        type="number"
-        className="w-[4.5rem] rounded border border-white/15 bg-black/50 px-1.5 py-1 text-right text-[11px] tabular-nums"
-        value={fmt(value[k])}
-        step={step}
-        onChange={(e) => {
-          const n = Number(e.target.value)
-          if (Number.isFinite(n)) onChange({ ...value, [k]: n })
-        }}
-      />
-      <div className="flex gap-0.5">
-        <button
-          type="button"
-          className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/20"
-          onClick={() => onChange({ ...value, [k]: value[k] - step })}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/20"
-          onClick={() => onChange({ ...value, [k]: value[k] + step })}
-        >
-          +
-        </button>
+  const axis = (k: keyof VmVec3, color: string) => {
+    const raw = value[k]
+    const sliderVal = clamp(raw, min, max)
+    return (
+      <div key={k} className="mb-1.5 flex items-center gap-2">
+        <span className={`w-3 text-[10px] font-bold ${color}`}>{k.toUpperCase()}</span>
+        <input
+          type="range"
+          className="min-w-0 flex-1 accent-sky-500"
+          value={sliderVal}
+          step={step}
+          min={min}
+          max={max}
+          onInput={(e) =>
+            onChange({
+              ...value,
+              [k]: Number((e.target as HTMLInputElement).value),
+            })
+          }
+          onChange={(e) =>
+            onChange({ ...value, [k]: Number(e.target.value) })
+          }
+        />
+        <input
+          type="number"
+          className="w-[4.5rem] rounded border border-white/15 bg-black/50 px-1.5 py-1 text-right text-[11px] tabular-nums"
+          value={fmt(raw)}
+          step={step}
+          min={min}
+          max={max}
+          onChange={(e) => {
+            const n = Number(e.target.value)
+            if (Number.isFinite(n)) onChange({ ...value, [k]: clamp(n, min, max) })
+          }}
+        />
+        <div className="flex gap-0.5">
+          <button
+            type="button"
+            className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/20"
+            onClick={() =>
+              onChange({ ...value, [k]: clamp(raw - step, min, max) })
+            }
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/20"
+            onClick={() =>
+              onChange({ ...value, [k]: clamp(raw + step, min, max) })
+            }
+          >
+            +
+          </button>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="mb-3">

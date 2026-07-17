@@ -29,12 +29,8 @@ import type {
 } from './types'
 import {
   cloneViewmodelConfig,
-  FINGER_IDS,
   normalizeViewmodelConfig,
-  type ArmChainPose,
-  type ArmJointPose,
   type FingerId,
-  type FingerPose,
   type ViewmodelConfig,
 } from './viewmodelConfig'
 import {
@@ -98,18 +94,14 @@ export class GameEngine {
   private lastTime = 0
   private container: HTMLElement
   private viewmodel: THREE.Group | null = null
-  /** Gun mesh/group after modelRot; scale + gunOffset applied live from vmConfig. */
+  /** Full FPS viewmodel (sniper_animated.glb — arms + gun). */
   private vmGun: THREE.Object3D | null = null
-  /** Arms scene root; scale + pos/rot applied live from vmConfig. */
-  private vmArms: THREE.Object3D | null = null
   private armBonesL: ArmSideBones = emptyArmSideBones()
   private armBonesR: ArmSideBones = emptyArmSideBones()
   /** Uniform scale that makes longest axis = 1 (before target scale). */
   private gunUnitScale = 1
-  private armsUnitScale = 1
   /** Center offset captured after unit normalize (position before gunOffset). */
   private gunCenter = new THREE.Vector3()
-  private armsCenter = new THREE.Vector3()
   private vmConfig: ViewmodelConfig = cloneViewmodelConfig(
     VIEWMODEL as unknown as ViewmodelConfig,
   )
@@ -121,8 +113,16 @@ export class GameEngine {
   private vmKeepVisible = false
   /** Editor-only: collapse the other arm while posing one side. */
   private vmArmSolo: 'both' | 'left' | 'right' = 'both'
-  private readonly _tmpEuler = new THREE.Euler()
-  private readonly _tmpQuat = new THREE.Quaternion()
+  /** Animation mixer for sniper_animated.glb */
+  private vmMixer: THREE.AnimationMixer | null = null
+  private vmActions: {
+    fire: THREE.AnimationAction | null
+    bolt: THREE.AnimationAction | null
+    reload: THREE.AnimationAction | null
+    ready: THREE.AnimationAction | null
+  } = { fire: null, bolt: null, reload: null, ready: null }
+  private vmAnimPhase: string | null = null
+  private vmCurrentAction: THREE.AnimationAction | null = null
   private bobPhase = 0
   private bobAmount = 0
   private landOffset = 0
@@ -147,8 +147,6 @@ export class GameEngine {
   private readonly _raycaster = new THREE.Raycaster()
   private readonly _rayOrigin = new THREE.Vector3()
   private readonly _rayDir = new THREE.Vector3()
-  private readonly _hitPoint = new THREE.Vector3()
-  private readonly _bonePos = new THREE.Vector3()
   private readonly _yAxis = new THREE.Vector3(0, 1, 0)
   private readonly _capDir = new THREE.Vector3()
   private static readonly MAX_CAPSULE_HELPERS = 4
@@ -457,118 +455,25 @@ export class GameEngine {
     return g
   }
 
-  /** Mesh name → default zone (arms share Suit_Body; refined by bones on hit). */
+  /** Mesh name → zone. Torso + arms = chest; legs separate. */
   private meshNameToZone(name: string): HitZone {
     if (/head/i.test(name)) return 'head'
-    if (/arm|hand|wrist/i.test(name)) return 'arm'
     if (/leg|feet|foot/i.test(name)) return 'leg'
+    // Body, arms, hands, etc. all count as chest
     return 'chest'
   }
 
-  /** Debug wireframe: head red · chest cyan · arms orange · legs yellow */
+  /** Debug wireframe: head red · chest cyan · legs yellow */
   private zoneWireColor(zone: HitZone): number {
     if (zone === 'head') return 0xff4466
-    if (zone === 'arm') return 0xff8844
     if (zone === 'leg') return 0xffee44
     return 0x44ccff
   }
 
   private damageForZone(zone: HitZone): number {
     if (zone === 'head') return SNIPER.headDamage
-    if (zone === 'arm' || zone === 'leg') return SNIPER.limbDamage
+    if (zone === 'leg') return SNIPER.legDamage
     return SNIPER.chestDamage
-  }
-
-  private findBoneNamed(
-    root: THREE.Object3D,
-    name: string,
-  ): THREE.Bone | null {
-    let found: THREE.Bone | null = null
-    root.traverse((o) => {
-      if (found) return
-      if ((o as THREE.Bone).isBone && o.name === name) found = o as THREE.Bone
-    })
-    return found
-  }
-
-  /**
-   * Bone markers for arm-vs-chest classification (arms are skinned into Suit_Body).
-   */
-  private registerZoneBones(root: THREE.Group) {
-    type Marker = { zone: HitZone; bone: THREE.Bone }
-    const markers: Marker[] = []
-    const add = (zone: HitZone, ...names: string[]) => {
-      for (const n of names) {
-        const b = this.findBoneNamed(root, n)
-        if (b) markers.push({ zone, bone: b })
-      }
-    }
-    add('head', 'Head')
-    add(
-      'chest',
-      'Hips',
-      'Abdomen',
-      'Torso',
-      'Chest',
-      'Body',
-      'Neck',
-    )
-    add(
-      'arm',
-      'ShoulderL',
-      'ShoulderR',
-      'UpperArmL',
-      'UpperArmR',
-      'LowerArmL',
-      'LowerArmR',
-      'WristL',
-      'WristR',
-    )
-    add(
-      'leg',
-      'UpperLegL',
-      'UpperLegR',
-      'LowerLegL',
-      'LowerLegR',
-      'FootL',
-      'FootR',
-    )
-    root.userData.zoneBones = markers
-  }
-
-  /**
-   * Prefer mesh name for head/legs/arms; for torso mesh, nearest bone decides
-   * chest vs arm (arms are skinned into Suit_Body).
-   */
-  private resolveHitZone(
-    root: THREE.Group,
-    mesh: THREE.Object3D,
-    point: THREE.Vector3,
-  ): HitZone {
-    const meshZone = (mesh.userData.hitZone as HitZone) ?? 'chest'
-    if (meshZone === 'head' || meshZone === 'leg' || meshZone === 'arm') {
-      return meshZone
-    }
-
-    const markers = root.userData.zoneBones as
-      | { zone: HitZone; bone: THREE.Bone }[]
-      | undefined
-    if (!markers?.length) return meshZone
-
-    let bestZone: HitZone = meshZone
-    let bestD = Infinity
-    for (const m of markers) {
-      m.bone.getWorldPosition(this._bonePos)
-      const d = this._bonePos.distanceToSquared(point)
-      if (d < bestD) {
-        bestD = d
-        bestZone = m.zone
-      }
-    }
-    // Head mesh already handled; if nearest bone is head while on chest mesh, treat as chest
-    // (avoids stealing torso shots into the neck/head bone).
-    if (bestZone === 'head') return 'chest'
-    return bestZone
   }
 
   /**
@@ -637,102 +542,6 @@ export class GameEngine {
 
     root.userData.hitMeshes = hitMeshes
     root.userData.hitWireOverlays = wireOverlays
-    this.registerZoneBones(root)
-    this.buildArmDebugCapsules(root)
-  }
-
-  /**
-   * Arms are skinned into Suit_Body (chest mesh), so they need their own
-   * orange bone-chain wireframes to read as a distinct debug zone.
-   */
-  private buildArmDebugCapsules(root: THREE.Group) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: this.zoneWireColor('arm'),
-      wireframe: true,
-      transparent: true,
-      opacity: 0.9,
-      depthTest: true,
-      depthWrite: false,
-    })
-    const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true)
-    const sphGeo = new THREE.SphereGeometry(1, 6, 5)
-
-    const group = new THREE.Group()
-    group.name = 'armDebugCaps'
-    group.userData.skipHitbox = true
-    group.renderOrder = 21
-
-    const caps: THREE.Group[] = []
-    // 2 arms × (upper + lower) segments
-    for (let i = 0; i < 4; i++) {
-      const cap = new THREE.Group()
-      cap.visible = false
-      const cyl = new THREE.Mesh(cylGeo, mat)
-      const sA = new THREE.Mesh(sphGeo, mat)
-      sA.position.y = -0.5
-      const sB = new THREE.Mesh(sphGeo, mat)
-      sB.position.y = 0.5
-      cap.add(cyl, sA, sB)
-      group.add(cap)
-      caps.push(cap)
-    }
-    root.add(group)
-
-    type Chain = [THREE.Bone | null, THREE.Bone | null, THREE.Bone | null]
-    const chains: Chain[] = [
-      [
-        this.findBoneNamed(root, 'UpperArmL'),
-        this.findBoneNamed(root, 'LowerArmL'),
-        this.findBoneNamed(root, 'WristL'),
-      ],
-      [
-        this.findBoneNamed(root, 'UpperArmR'),
-        this.findBoneNamed(root, 'LowerArmR'),
-        this.findBoneNamed(root, 'WristR'),
-      ],
-    ]
-    root.userData.armDebugCaps = caps
-    root.userData.armDebugChains = chains
-  }
-
-  private syncArmDebugCapsules(root: THREE.Group) {
-    const caps = root.userData.armDebugCaps as THREE.Group[] | undefined
-    const chains = root.userData.armDebugChains as
-      | [THREE.Bone | null, THREE.Bone | null, THREE.Bone | null][]
-      | undefined
-    if (!caps || !chains) return
-
-    if (!DEBUG.showHitboxes) {
-      for (const c of caps) c.visible = false
-      return
-    }
-
-    // Capsules live under root — convert bone world → root local
-    const aLocal = this._rayOrigin
-    const bLocal = this._bonePos
-    const radius = 0.055
-    let ci = 0
-    for (const chain of chains) {
-      for (let s = 0; s < 2; s++) {
-        const cap = caps[ci++]
-        const ba = chain[s]
-        const bb = chain[s + 1]
-        if (!cap || !ba || !bb) {
-          if (cap) cap.visible = false
-          continue
-        }
-        ba.getWorldPosition(aLocal)
-        bb.getWorldPosition(bLocal)
-        root.worldToLocal(aLocal)
-        root.worldToLocal(bLocal)
-        this.orientCapsuleHelper(
-          cap,
-          { x: aLocal.x, y: aLocal.y, z: aLocal.z },
-          { x: bLocal.x, y: bLocal.y, z: bLocal.z },
-          radius,
-        )
-      }
-    }
   }
 
   /**
@@ -773,7 +582,6 @@ export class GameEngine {
         w.visible = debug
       }
     }
-    this.syncArmDebugCapsules(root)
   }
 
   /**
@@ -938,11 +746,7 @@ export class GameEngine {
     const ownerId = obj.userData.ownerId as string
     if (!ownerId) return null
 
-    const root = this.dummyMeshes.get(ownerId)
-    this._hitPoint.copy(best.point)
-    const zone = root
-      ? this.resolveHitZone(root, obj, this._hitPoint)
-      : ((obj.userData.hitZone as HitZone) ?? 'chest')
+    const zone = (obj.userData.hitZone as HitZone) ?? 'chest'
 
     const n = best.normal ?? this._rayDir.clone().negate()
     const nl = Math.hypot(n.x, n.y, n.z) || 1
@@ -1219,148 +1023,11 @@ export class GameEngine {
     return { unitScale, center: storedCenter }
   }
 
-  private findBoneByName(
-    root: THREE.Object3D,
-    exact: string,
-  ): THREE.Object3D | null {
-    const want = exact.toLowerCase()
-    let found: THREE.Object3D | null = null
-    root.traverse((o) => {
-      if (found || !o.name) return
-      if (o.name.toLowerCase() === want) found = o
-    })
-    return found
-  }
-
-  private captureArmRest(node: THREE.Object3D | null): ArmBoneRest | null {
-    if (!node) return null
-    return {
-      bone: node,
-      pos: node.position.clone(),
-      quat: node.quaternion.clone(),
-      scale: node.scale.clone(),
-    }
-  }
-
-  private bindSideBones(root: THREE.Object3D, side: 'l' | 'r'): ArmSideBones {
-    const s = emptyArmSideBones()
-    const pick = (name: string) => this.captureArmRest(this.findBoneByName(root, name))
-
-    s.limb.shoulder = pick(`shoulder.${side}`)
-    s.limb.bicep = pick(`bicep.${side}`)
-    // Prefer forearm.l over forearm.Twist0.l — exact name match handles this
-    s.limb.forearm = pick(`forearm.${side}`)
-    s.limb.wrist = pick(`wrist.${side}`)
-
-    for (const finger of FINGER_IDS) {
-      s.fingers[finger] = [
-        pick(`finger_${finger}1.${side}`),
-        pick(`finger_${finger}2.${side}`),
-        pick(`finger_${finger}3.${side}`),
-      ]
-    }
-    return s
-  }
-
-  private bindArmBones(root: THREE.Object3D) {
-    this.armBonesL = this.bindSideBones(root, 'l')
-    this.armBonesR = this.bindSideBones(root, 'r')
-
-    if (!this.armBonesL.limb.shoulder && !this.armBonesR.limb.shoulder) {
-      console.warn(
-        'Arms skeleton: no shoulder.l/r bones found — per-arm editing disabled',
-      )
-    } else {
-      const fingers =
-        this.armBonesL.fingers.index[0] || this.armBonesR.fingers.index[0]
-      console.info(
-        'Arms bones bound',
-        {
-          leftWrist: !!this.armBonesL.limb.wrist,
-          rightWrist: !!this.armBonesR.limb.wrist,
-          fingers: !!fingers,
-        },
-      )
-    }
-  }
-
-  private applyJoint(
-    rest: ArmBoneRest | null,
-    pose: ArmJointPose,
-    soloScale: number,
-  ) {
-    if (!rest) return
-    const b = rest.bone
-    b.position.set(
-      rest.pos.x + pose.pos.x,
-      rest.pos.y + pose.pos.y,
-      rest.pos.z + pose.pos.z,
-    )
-    this._tmpEuler.set(pose.rot.x, pose.rot.y, pose.rot.z, 'XYZ')
-    this._tmpQuat.setFromEuler(this._tmpEuler)
-    b.quaternion.copy(rest.quat).multiply(this._tmpQuat)
-    b.scale.set(
-      rest.scale.x * soloScale,
-      rest.scale.y * soloScale,
-      rest.scale.z * soloScale,
-    )
-  }
-
-  /**
-   * Apply finger curl/spread across 3 segments.
-   * Curl → local X bend; spread → local Z on the base joint only.
-   * Thumb uses a slightly different spread axis (Y) for opposition.
-   */
-  private applyFinger(
-    segs: [ArmBoneRest | null, ArmBoneRest | null, ArmBoneRest | null],
-    pose: FingerPose,
-    finger: FingerId,
-  ) {
-    const weights = [1, 0.85, 0.7]
-    for (let i = 0; i < 3; i++) {
-      const rest = segs[i]
-      if (!rest) continue
-      const curl = pose.curl * weights[i]
-      const spread = i === 0 ? pose.spread : 0
-      let rx = curl
-      let ry = 0
-      let rz = spread
-      if (finger === 'thumb') {
-        // Thumb opposition: curl on Y, spread on X tends to look better on many rigs
-        rx = spread
-        ry = curl
-        rz = 0
-      }
-      this._tmpEuler.set(rx, ry, rz, 'XYZ')
-      this._tmpQuat.setFromEuler(this._tmpEuler)
-      rest.bone.position.copy(rest.pos)
-      rest.bone.quaternion.copy(rest.quat).multiply(this._tmpQuat)
-      rest.bone.scale.copy(rest.scale)
-    }
-  }
-
-  private applyArmChain(
-    bones: ArmSideBones,
-    chain: ArmChainPose,
-    visible: boolean,
-  ) {
-    // Collapse at shoulder so the whole limb disappears when soloing the other side.
-    const shoulderScale = visible ? 1 : 0.001
-    this.applyJoint(bones.limb.shoulder, chain.shoulder, shoulderScale)
-    this.applyJoint(bones.limb.bicep, chain.bicep, 1)
-    this.applyJoint(bones.limb.forearm, chain.forearm, 1)
-    this.applyJoint(bones.limb.wrist, chain.wrist, 1)
-    for (const finger of FINGER_IDS) {
-      this.applyFinger(bones.fingers[finger], chain.fingers[finger], finger)
-    }
-  }
-
-  /** Push current vmConfig onto gun / arms Object3Ds + per-arm bones. */
+  /** Push current vmConfig onto the viewmodel root mesh. */
   private applyViewmodelParts() {
     const c = this.vmConfig
     if (this.vmGun) {
       this.vmGun.scale.setScalar(this.gunUnitScale * c.scale)
-      // Center was computed at unit scale; re-center after scale change.
       this.vmGun.position.set(
         this.gunCenter.x * c.scale + c.gunOffset.x,
         this.gunCenter.y * c.scale + c.gunOffset.y,
@@ -1368,21 +1035,64 @@ export class GameEngine {
       )
       this.vmGun.rotation.set(c.modelRot.x, c.modelRot.y, c.modelRot.z)
     }
-    if (this.vmArms) {
-      const s = c.arms.scale
-      this.vmArms.scale.setScalar(this.armsUnitScale * s)
-      this.vmArms.position.set(
-        this.armsCenter.x * s + c.arms.pos.x,
-        this.armsCenter.y * s + c.arms.pos.y,
-        this.armsCenter.z * s + c.arms.pos.z,
-      )
-      this.vmArms.rotation.set(c.arms.rot.x, c.arms.rot.y, c.arms.rot.z)
+  }
 
-      const showL = this.vmArmSolo !== 'right'
-      const showR = this.vmArmSolo !== 'left'
-      this.applyArmChain(this.armBonesL, c.arms.left, showL)
-      this.applyArmChain(this.armBonesR, c.arms.right, showR)
-      this.vmArms.updateMatrixWorld(true)
+  /**
+   * DJMaesen sniper_animated "allanims" frame map (30 fps):
+   * 0–11 fire · 12–60 bolt · 61–115 reload · 116–127 hide · 127–142 ready
+   */
+  private buildViewmodelClips(master: THREE.AnimationClip) {
+    const FPS = 30
+    const sub = (name: string, start: number, end: number) =>
+      THREE.AnimationUtils.subclip(master, name, start, end, FPS)
+
+    return {
+      fire: sub('fire', 0, 12),
+      bolt: sub('bolt', 12, 61),
+      reload: sub('reload', 61, 116),
+      ready: sub('ready', 127, 143),
+    }
+  }
+
+  private playViewmodelAction(
+    next: THREE.AnimationAction | null,
+    matchDuration: number | null,
+  ) {
+    if (!next) return
+    if (this.vmCurrentAction === next && next.isRunning()) return
+
+    if (this.vmCurrentAction && this.vmCurrentAction !== next) {
+      this.vmCurrentAction.fadeOut(0.06)
+    }
+
+    next.reset()
+    next.setEffectiveWeight(1)
+    next.clampWhenFinished = true
+    next.setLoop(THREE.LoopOnce, 1)
+    if (matchDuration && next.getClip().duration > 0.001) {
+      next.timeScale = next.getClip().duration / matchDuration
+    } else {
+      next.timeScale = 1
+    }
+    next.fadeIn(0.05).play()
+    this.vmCurrentAction = next
+  }
+
+  /** Drive fire / bolt / reload / ready clips from sniper phase. */
+  private syncViewmodelAnim() {
+    const phase = this.sniper.phase
+    if (phase === this.vmAnimPhase) return
+    this.vmAnimPhase = phase
+
+    if (phase === 'firing') {
+      this.playViewmodelAction(this.vmActions.fire, SNIPER.fireAnimTime)
+    } else if (phase === 'bolt') {
+      this.playViewmodelAction(this.vmActions.bolt, SNIPER.boltTime)
+    } else if (phase === 'reloading') {
+      this.playViewmodelAction(this.vmActions.reload, SNIPER.reloadTime)
+    } else {
+      // ready — settle into hold pose
+      this.playViewmodelAction(this.vmActions.ready, null)
     }
   }
 
@@ -1393,24 +1103,51 @@ export class GameEngine {
       VIEWMODEL as unknown as ViewmodelConfig,
     )
 
-    // Gun + arms load independently so one failure still leaves a usable viewmodel.
-    const [gunResult, armsResult] = await Promise.allSettled([
-      loader.loadAsync('/models/sniper.glb'),
-      loader.loadAsync('/models/arms.glb'),
-    ])
-
-    if (gunResult.status === 'fulfilled') {
-      const model = gunResult.value.scene
+    try {
+      const gltf = await loader.loadAsync('/models/sniper_animated.glb')
+      const model = gltf.scene
       this.prepareViewmesh(model)
-      // Quaternius sniper: stock→barrel is already -Z, scope +Y (camera-forward).
-      model.rotation.set(0, 0, 0)
+
+      // Apply basis correction before measuring so center matches final pose
+      const { modelRot } = this.vmConfig
+      model.rotation.set(modelRot.x, modelRot.y, modelRot.z)
       const measured = this.measureUnitAsset(model)
       this.gunUnitScale = measured.unitScale
       this.gunCenter.copy(measured.center)
       this.vmGun = model
       root.add(model)
-    } else {
-      console.warn('Sniper viewmodel load failed, using placeholder', gunResult.reason)
+
+      // --- Animations (single packed clip → subclips) ---
+      const master = gltf.animations?.[0]
+      if (master) {
+        this.vmMixer = new THREE.AnimationMixer(model)
+        const clips = this.buildViewmodelClips(master)
+        const mk = (clip: THREE.AnimationClip) => {
+          const a = this.vmMixer!.clipAction(clip)
+          a.setLoop(THREE.LoopOnce, 1)
+          a.clampWhenFinished = true
+          return a
+        }
+        this.vmActions = {
+          fire: mk(clips.fire),
+          bolt: mk(clips.bolt),
+          reload: mk(clips.reload),
+          ready: mk(clips.ready),
+        }
+        // Idle hold on ready pose
+        this.playViewmodelAction(this.vmActions.ready, null)
+        this.vmAnimPhase = 'ready'
+        console.info('Viewmodel animations ready', {
+          fire: clips.fire.duration.toFixed(2),
+          bolt: clips.bolt.duration.toFixed(2),
+          reload: clips.reload.duration.toFixed(2),
+          ready: clips.ready.duration.toFixed(2),
+        })
+      } else {
+        console.warn('sniper_animated.glb has no animations')
+      }
+    } catch (e) {
+      console.warn('sniper_animated.glb load failed, using placeholder', e)
       const gun = new THREE.Mesh(
         new THREE.BoxGeometry(0.08, 0.08, 0.7),
         new THREE.MeshStandardMaterial({ color: 0x2a2a2a }),
@@ -1420,20 +1157,6 @@ export class GameEngine {
       this.gunCenter.copy(measured.center)
       this.vmGun = gun
       root.add(gun)
-    }
-
-    if (armsResult.status === 'fulfilled') {
-      const arms = armsResult.value.scene
-      this.prepareViewmesh(arms)
-      arms.rotation.set(0, 0, 0)
-      const measured = this.measureUnitAsset(arms)
-      this.armsUnitScale = measured.unitScale
-      this.armsCenter.copy(measured.center)
-      this.bindArmBones(arms)
-      this.vmArms = arms
-      root.add(arms)
-    } else {
-      console.warn('Arms viewmodel load failed', armsResult.reason)
     }
 
     this.applyViewmodelParts()
@@ -1474,6 +1197,8 @@ export class GameEngine {
     for (const mixer of this.dummyMixers.values()) {
       mixer.update(dt)
     }
+    this.syncViewmodelAnim()
+    this.vmMixer?.update(dt)
 
     if (tryFire(this.sniper, input)) {
       // Fire with current aim (sway / existing recoil), then kick for next frames.
