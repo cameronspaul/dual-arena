@@ -20,6 +20,9 @@ type SettingsState = UserSettings & {
   setMouseSensitivity: (v: number) => void
   setAdsSensitivity: (v: number) => void
   setInvertY: (v: boolean) => void
+  setToggleAds: (v: boolean) => void
+  setToggleCrouch: (v: boolean) => void
+  setToggleSprint: (v: boolean) => void
   /** Add a code to an action (multi-bind). Removes it from other actions. */
   addKeybind: (action: ActionId, code: string) => void
   /** Remove one code from an action (keeps at least one bind). */
@@ -37,6 +40,9 @@ function snapshot(get: () => SettingsState): UserSettings {
     mouseSensitivity: s.mouseSensitivity,
     adsSensitivity: s.adsSensitivity,
     invertY: s.invertY,
+    toggleAds: s.toggleAds,
+    toggleCrouch: s.toggleCrouch,
+    toggleSprint: s.toggleSprint,
     keybinds: cloneKeybinds(s.keybinds),
   }
 }
@@ -52,6 +58,24 @@ function pushRuntime(partial: Partial<UserSettings>, get: () => SettingsState) {
   }
   applyUserSettings(next)
   gameAudio.applyUserAudio(next)
+}
+
+function hydrateFromPartial(p: Partial<UserSettings>): UserSettings {
+  return {
+    masterVolume: p.masterVolume ?? DEFAULT_USER_SETTINGS.masterVolume,
+    sfxVolume: p.sfxVolume ?? DEFAULT_USER_SETTINGS.sfxVolume,
+    muted: p.muted ?? DEFAULT_USER_SETTINGS.muted,
+    mouseSensitivity:
+      p.mouseSensitivity ?? DEFAULT_USER_SETTINGS.mouseSensitivity,
+    adsSensitivity: p.adsSensitivity ?? DEFAULT_USER_SETTINGS.adsSensitivity,
+    invertY: p.invertY ?? DEFAULT_USER_SETTINGS.invertY,
+    toggleAds: p.toggleAds ?? DEFAULT_USER_SETTINGS.toggleAds,
+    toggleCrouch: p.toggleCrouch ?? DEFAULT_USER_SETTINGS.toggleCrouch,
+    toggleSprint: p.toggleSprint ?? DEFAULT_USER_SETTINGS.toggleSprint,
+    keybinds: normalizeKeybinds(
+      p.keybinds as Partial<Record<ActionId, string | string[]>> | undefined,
+    ),
+  }
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -83,6 +107,18 @@ export const useSettingsStore = create<SettingsState>()(
       setInvertY: (invertY) => {
         set({ invertY })
         pushRuntime({ invertY }, get)
+      },
+      setToggleAds: (toggleAds) => {
+        set({ toggleAds })
+        pushRuntime({ toggleAds }, get)
+      },
+      setToggleCrouch: (toggleCrouch) => {
+        set({ toggleCrouch })
+        pushRuntime({ toggleCrouch }, get)
+      },
+      setToggleSprint: (toggleSprint) => {
+        set({ toggleSprint })
+        pushRuntime({ toggleSprint }, get)
       },
       addKeybind: (action, code) => {
         const keybinds = cloneKeybinds(get().keybinds)
@@ -140,25 +176,10 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'dual-arena-settings',
-      version: 2,
-      migrate: (persisted, version) => {
+      version: 3,
+      migrate: (persisted) => {
         const p = (persisted ?? {}) as Partial<UserSettings>
-        return {
-          masterVolume: p.masterVolume ?? DEFAULT_USER_SETTINGS.masterVolume,
-          sfxVolume: p.sfxVolume ?? DEFAULT_USER_SETTINGS.sfxVolume,
-          muted: p.muted ?? DEFAULT_USER_SETTINGS.muted,
-          mouseSensitivity:
-            p.mouseSensitivity ?? DEFAULT_USER_SETTINGS.mouseSensitivity,
-          adsSensitivity:
-            p.adsSensitivity ?? DEFAULT_USER_SETTINGS.adsSensitivity,
-          invertY: p.invertY ?? DEFAULT_USER_SETTINGS.invertY,
-          // normalizeKeybinds accepts legacy string | string[]
-          keybinds: normalizeKeybinds(
-            p.keybinds as Partial<Record<ActionId, string | string[]>> | undefined,
-          ),
-          // version used only for migrate path bookkeeping
-          ...(version < 2 ? {} : {}),
-        }
+        return hydrateFromPartial(p)
       },
       partialize: (s) => ({
         masterVolume: s.masterVolume,
@@ -167,21 +188,16 @@ export const useSettingsStore = create<SettingsState>()(
         mouseSensitivity: s.mouseSensitivity,
         adsSensitivity: s.adsSensitivity,
         invertY: s.invertY,
+        toggleAds: s.toggleAds,
+        toggleCrouch: s.toggleCrouch,
+        toggleSprint: s.toggleSprint,
         keybinds: s.keybinds,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        const next: UserSettings = {
-          masterVolume: state.masterVolume,
-          sfxVolume: state.sfxVolume,
-          muted: state.muted,
-          mouseSensitivity: state.mouseSensitivity,
-          adsSensitivity: state.adsSensitivity,
-          invertY: state.invertY,
-          keybinds: normalizeKeybinds(state.keybinds),
-        }
-        // Ensure store itself has normalized arrays
-        useSettingsStore.setState({ keybinds: next.keybinds })
+        const next = hydrateFromPartial(state)
+        // Ensure store itself has normalized arrays + new defaults
+        useSettingsStore.setState(next)
         applyUserSettings(next)
         gameAudio.applyUserAudio(next)
       },
@@ -192,15 +208,7 @@ export const useSettingsStore = create<SettingsState>()(
 /** Call once at app boot so defaults hit the engine even before rehydrate. */
 export function bootstrapSettings() {
   const s = useSettingsStore.getState()
-  const next: UserSettings = {
-    masterVolume: s.masterVolume,
-    sfxVolume: s.sfxVolume,
-    muted: s.muted,
-    mouseSensitivity: s.mouseSensitivity,
-    adsSensitivity: s.adsSensitivity,
-    invertY: s.invertY,
-    keybinds: normalizeKeybinds(s.keybinds),
-  }
+  const next = hydrateFromPartial(s)
   applyUserSettings(next)
   gameAudio.applyUserAudio(next)
 }

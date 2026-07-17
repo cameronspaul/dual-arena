@@ -24,12 +24,27 @@ import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
+/** audio | mouse (controls) | keybinds */
 type Section = 'audio' | 'mouse' | 'keybinds'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
+
+/**
+ * Theme-aware sticker chrome — uses CSS variables so light / dark both work.
+ * (Hardcoded oklch ink shadows look fine in light and invisible in dark.)
+ */
+const inkBorder = 'border-foreground/80 dark:border-foreground/70'
+const inkShadow =
+  'shadow-[2px_3px_0_color-mix(in_oklab,var(--foreground)_40%,transparent)] dark:shadow-[2px_3px_0_color-mix(in_oklab,var(--background)_85%,black)]'
+const inkShadowSm =
+  'shadow-[1px_2px_0_color-mix(in_oklab,var(--foreground)_30%,transparent)] dark:shadow-[1px_2px_0_color-mix(in_oklab,var(--background)_80%,black)]'
+const inkShadowLg =
+  'shadow-[4px_6px_0_color-mix(in_oklab,var(--foreground)_35%,transparent)] dark:shadow-[4px_6px_0_color-mix(in_oklab,var(--background)_90%,black)]'
+const panelRing =
+  'ring-1 ring-black/5 dark:ring-white/10'
 
 function pct(n: number) {
   return Math.round(n * 100)
@@ -47,14 +62,14 @@ function GameIcon({ src, className }: { src: string; className?: string }) {
       aria-hidden
       draggable={false}
       className={cn(
-        'shrink-0 object-contain select-none drop-shadow-[0_2px_0_rgba(0,0,0,0.25)]',
+        'shrink-0 object-contain select-none drop-shadow-[0_1px_0_color-mix(in_oklab,var(--foreground)_25%,transparent)]',
         className,
       )}
     />
   )
 }
 
-/** Chunk sticker button — hard ink border + offset shadow. */
+/** Chunk sticker button — hard border + offset shadow (theme tokens). */
 function StickerBtn({
   children,
   onClick,
@@ -80,8 +95,10 @@ function StickerBtn({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-xl border-[2.5px] border-foreground/85 bg-card px-3 py-1.5 text-xs font-extrabold tracking-wide text-foreground shadow-[2px_3px_0_oklch(0.2_0.03_260/_0.45)] transition-all',
-        'hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5 active:shadow-[1px_1px_0_oklch(0.2_0.03_260/_0.45)]',
+        'inline-flex items-center justify-center gap-1.5 rounded-xl border-[2.5px] bg-card px-3 py-1.5 text-xs font-extrabold tracking-wide text-foreground transition-all',
+        inkBorder,
+        inkShadow,
+        'hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5 active:shadow-[1px_1px_0_color-mix(in_oklab,var(--foreground)_30%,transparent)]',
         'disabled:pointer-events-none disabled:opacity-40',
         className,
       )}
@@ -112,14 +129,20 @@ function StickerSwitch({
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
       className={cn(
-        'relative h-8 w-14 shrink-0 rounded-full border-[2.5px] border-foreground/85 shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.4)] transition-colors',
-        checked ? 'bg-primary' : 'bg-muted',
+        'relative h-8 w-14 shrink-0 rounded-full border-[2.5px] transition-colors',
+        inkBorder,
+        inkShadowSm,
+        checked
+          ? 'bg-primary'
+          : 'bg-muted dark:bg-input',
         disabled && 'pointer-events-none opacity-40',
       )}
     >
       <span
         className={cn(
-          'absolute top-0.5 left-0.5 size-6 rounded-full border-[2px] border-foreground/80 bg-card shadow-[1px_1px_0_oklch(0.2_0.03_260/_0.35)] transition-transform',
+          'absolute top-0.5 left-0.5 size-6 rounded-full border-[2px] bg-card transition-transform',
+          'border-foreground/70 dark:border-foreground/50',
+          inkShadowSm,
           checked && 'translate-x-6',
         )}
       />
@@ -156,7 +179,13 @@ function StickerSlider({
         disabled && 'pointer-events-none opacity-40',
       )}
     >
-      <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-full border-[2.5px] border-foreground/85 bg-muted shadow-[1px_2px_0_oklch(0.2_0.03_260/_0.3)]">
+      <div
+        className={cn(
+          'pointer-events-none absolute inset-0 overflow-hidden rounded-full border-[2.5px] bg-muted dark:bg-input',
+          inkBorder,
+          inkShadowSm,
+        )}
+      >
         <div
           className="h-full rounded-full bg-primary transition-[width] duration-75"
           style={{ width: `${pctFill}%` }}
@@ -178,9 +207,12 @@ function StickerSlider({
         }}
         className="absolute inset-0 z-10 h-full w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed"
       />
-      {/* Visible thumb (follows value; input is invisible hit target) */}
       <div
-        className="pointer-events-none absolute top-1/2 z-[5] size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2.5px] border-foreground/90 bg-card shadow-[1px_2px_0_oklch(0.2_0.03_260/_0.45)]"
+        className={cn(
+          'pointer-events-none absolute top-1/2 z-[5] size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2.5px] bg-card',
+          inkBorder,
+          inkShadowSm,
+        )}
         style={{ left: `${pctFill}%` }}
       />
     </div>
@@ -211,8 +243,15 @@ function SliderRow({
   return (
     <div className={cn('space-y-2.5', disabled && 'opacity-50')}>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-extrabold tracking-wide">{label}</span>
-        <span className="rounded-lg border-[2px] border-foreground/70 bg-muted/50 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-muted-foreground">
+        <span className="text-sm font-extrabold tracking-wide text-foreground">
+          {label}
+        </span>
+        <span
+          className={cn(
+            'rounded-lg border-[2px] bg-muted/70 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-muted-foreground dark:bg-muted/50',
+            'border-foreground/55 dark:border-foreground/40',
+          )}
+        >
           {valueLabel}
         </span>
       </div>
@@ -242,13 +281,21 @@ function SettingRow({
   return (
     <div className="flex items-center justify-between gap-4">
       <div className="min-w-0 space-y-0.5">
-        <div className="text-sm font-extrabold tracking-wide">{label}</div>
+        <div className="text-sm font-extrabold tracking-wide text-foreground">
+          {label}
+        </div>
         {description && (
           <p className="text-xs text-muted-foreground">{description}</p>
         )}
       </div>
       {children}
     </div>
+  )
+}
+
+function Divider() {
+  return (
+    <div className="h-[2.5px] rounded-full bg-border dark:bg-foreground/15" />
   )
 }
 
@@ -263,6 +310,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     mouseSensitivity,
     adsSensitivity,
     invertY,
+    toggleAds,
+    toggleCrouch,
+    toggleSprint,
     keybinds,
     setMasterVolume,
     setSfxVolume,
@@ -270,6 +320,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     setMouseSensitivity,
     setAdsSensitivity,
     setInvertY,
+    setToggleAds,
+    setToggleCrouch,
+    setToggleSprint,
     addKeybind,
     removeKeybind,
     resetKeybinds,
@@ -367,14 +420,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     },
     {
       id: 'mouse',
-      label: 'Mouse',
-      blurb: 'Sensitivity',
+      label: 'Controls',
+      blurb: 'Mouse & toggles',
       icon: Mouse,
     },
     {
       id: 'keybinds',
       label: 'Keybinds',
-      blurb: 'Controls',
+      blurb: 'Bindings',
       icon: Keyboard,
     },
   ]
@@ -387,8 +440,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
-          {/* Backdrop */}
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 text-foreground sm:p-6"
+          data-settings-dialog
+        >
+          {/* Backdrop — stronger in dark, softer wash in light */}
           <motion.button
             type="button"
             aria-label="Close settings"
@@ -396,7 +452,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
+            className="absolute inset-0 bg-foreground/35 backdrop-blur-[2px] dark:bg-black/65"
             onClick={() => {
               if (listening) return
               gameAudio.uiClick()
@@ -414,24 +470,40 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 6 }}
             transition={{ type: 'spring', stiffness: 420, damping: 28 }}
-            className="relative flex h-[min(90svh,560px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-[3px] border-foreground/85 bg-card text-card-foreground shadow-[4px_6px_0_oklch(0.15_0.03_260/_0.55)] sm:h-[min(86svh,580px)] sm:flex-row"
+            className={cn(
+              'relative flex h-[min(90svh,560px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-[3px] bg-card text-card-foreground sm:h-[min(86svh,580px)] sm:flex-row',
+              inkBorder,
+              inkShadowLg,
+              panelRing,
+            )}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Top sheen */}
-            <div className="pointer-events-none absolute inset-x-4 top-0 z-10 h-2 rounded-b-full bg-white/10 dark:bg-white/5" />
+            {/* Top sheen — subtle in both themes */}
+            <div className="pointer-events-none absolute inset-x-4 top-0 z-10 h-2 rounded-b-full bg-foreground/[0.04] dark:bg-white/10" />
 
             {/* ── Left rail ── */}
-            <aside className="flex shrink-0 flex-col border-b-[3px] border-foreground/75 bg-muted/35 sm:w-52 sm:border-r-[3px] sm:border-b-0 md:w-56">
+            <aside
+              className={cn(
+                'flex shrink-0 flex-col border-b-[3px] bg-muted/45 sm:w-52 sm:border-r-[3px] sm:border-b-0 md:w-56',
+                'border-border dark:border-foreground/25 dark:bg-muted/25',
+              )}
+            >
               <div className="relative shrink-0 px-4 py-4 sm:px-4 sm:pt-5 sm:pb-4">
                 <div className="absolute top-0 left-0 hidden h-full w-1 bg-primary sm:block" />
                 <div className="flex items-center gap-2.5 pr-10 sm:pr-0">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border-[2.5px] border-foreground/85 bg-primary shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.45)]">
+                  <div
+                    className={cn(
+                      'flex size-10 shrink-0 items-center justify-center rounded-xl border-[2.5px] bg-primary',
+                      inkBorder,
+                      inkShadowSm,
+                    )}
+                  >
                     <GameIcon src={icons.settings} className="size-6" />
                   </div>
                   <div className="min-w-0">
                     <h2
                       id={titleId}
-                      className="text-base font-black tracking-tight sm:text-lg"
+                      className="text-base font-black tracking-tight text-foreground sm:text-lg"
                     >
                       Settings
                     </h2>
@@ -443,7 +515,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     </p>
                   </div>
                 </div>
-                {/* Close on mobile (header); desktop uses right-pane close */}
                 <button
                   type="button"
                   aria-label="Close"
@@ -451,7 +522,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     gameAudio.uiClick()
                     close()
                   }}
-                  className="absolute top-3.5 right-3 inline-flex size-9 items-center justify-center rounded-xl border-[2.5px] border-foreground/80 bg-card text-foreground shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.35)] transition-all hover:-translate-y-0.5 hover:bg-muted sm:hidden"
+                  className={cn(
+                    'absolute top-3.5 right-3 inline-flex size-9 items-center justify-center rounded-xl border-[2.5px] bg-card text-foreground transition-all hover:-translate-y-0.5 hover:bg-muted sm:hidden',
+                    inkBorder,
+                    inkShadowSm,
+                  )}
                 >
                   <X className="size-4" strokeWidth={2.75} />
                 </button>
@@ -475,16 +550,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       className={cn(
                         'inline-flex shrink-0 items-center gap-2.5 rounded-xl border-[2.5px] px-3 py-2.5 text-left transition-all sm:w-full',
                         active
-                          ? 'border-foreground/90 bg-primary text-primary-foreground shadow-[2px_3px_0_oklch(0.2_0.03_260/_0.5)]'
-                          : 'border-transparent bg-transparent text-muted-foreground hover:border-border hover:bg-card hover:text-foreground',
+                          ? cn(
+                              'border-foreground/85 bg-primary text-primary-foreground dark:border-foreground/60',
+                              inkShadow,
+                            )
+                          : 'border-transparent bg-transparent text-muted-foreground hover:border-border hover:bg-card hover:text-foreground dark:hover:border-foreground/25 dark:hover:bg-card/80',
                       )}
                     >
                       <span
                         className={cn(
                           'flex size-8 shrink-0 items-center justify-center rounded-lg border-[2px]',
                           active
-                            ? 'border-primary-foreground/30 bg-primary-foreground/15'
-                            : 'border-foreground/20 bg-muted/60',
+                            ? 'border-primary-foreground/25 bg-primary-foreground/15'
+                            : 'border-border bg-muted/70 dark:border-foreground/20 dark:bg-muted/40',
                         )}
                       >
                         <Icon className="size-4" strokeWidth={2.5} />
@@ -497,7 +575,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           className={cn(
                             'hidden text-[10px] font-semibold sm:block',
                             active
-                              ? 'text-primary-foreground/75'
+                              ? 'text-primary-foreground/80'
                               : 'text-muted-foreground',
                           )}
                         >
@@ -509,9 +587,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 })}
               </nav>
 
-              <div className="mt-auto hidden border-t-[2.5px] border-foreground/20 p-3 sm:block">
+              <div className="mt-auto hidden border-t-[2.5px] border-border p-3 dark:border-foreground/15 sm:block">
                 <StickerBtn
-                  className="h-9 w-full border-dashed bg-transparent text-muted-foreground shadow-none hover:border-foreground/50 hover:text-foreground"
+                  className="h-9 w-full border-dashed bg-transparent text-muted-foreground shadow-none hover:border-foreground/45 hover:bg-muted/50 hover:text-foreground dark:hover:bg-muted/30"
                   onClick={() => {
                     resetAll()
                     cancelListen()
@@ -525,15 +603,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </aside>
 
             {/* ── Right content ── */}
-            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b-[2.5px] border-foreground/20 px-5 py-4 pr-14 sm:pr-14">
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-card">
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b-[2.5px] border-border px-5 py-4 pr-14 dark:border-foreground/15 sm:pr-14">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <ActiveIcon
                       className="size-4 text-primary"
                       strokeWidth={2.5}
                     />
-                    <h3 className="text-base font-black tracking-tight">
+                    <h3 className="text-base font-black tracking-tight text-foreground">
                       {activeNav.label}
                     </h3>
                   </div>
@@ -541,7 +619,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     {section === 'audio' &&
                       'Master & SFX levels — mute without losing values.'}
                     {section === 'mouse' &&
-                      'Hipfire / ADS sensitivity and look invert.'}
+                      'Sensitivity, invert Y, and hold vs toggle actions.'}
                     {section === 'keybinds' &&
                       'Multiple keys per action. Esc cancels capture.'}
                   </p>
@@ -553,7 +631,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     gameAudio.uiClick()
                     close()
                   }}
-                  className="absolute top-3.5 right-3.5 hidden size-9 items-center justify-center rounded-xl border-[2.5px] border-foreground/80 bg-muted/40 text-foreground shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.35)] transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5 active:shadow-[1px_1px_0_oklch(0.2_0.03_260/_0.35)] sm:inline-flex"
+                  className={cn(
+                    'absolute top-3.5 right-3.5 hidden size-9 items-center justify-center rounded-xl border-[2.5px] bg-muted/50 text-foreground transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5 sm:inline-flex',
+                    inkBorder,
+                    inkShadowSm,
+                    'dark:bg-muted/40',
+                  )}
                 >
                   <X className="size-4" strokeWidth={2.75} />
                 </button>
@@ -573,7 +656,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           <Volume2 className="size-4 text-muted-foreground" />
                         )}
                         <StickerSwitch
-                          checked={muted}
+                          checked={!!muted}
                           onCheckedChange={(v) => {
                             setMuted(v)
                             gameAudio.uiClick()
@@ -582,7 +665,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       </div>
                     </SettingRow>
 
-                    <div className="h-[2.5px] rounded-full bg-foreground/15" />
+                    <Divider />
 
                     <SliderRow
                       label="Master volume"
@@ -624,16 +707,79 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                       onChange={setAdsSensitivity}
                     />
 
-                    <div className="h-[2.5px] rounded-full bg-foreground/15" />
+                    <Divider />
 
                     <SettingRow
                       label="Invert Y-axis"
                       description="Mouse up looks down"
                     >
                       <StickerSwitch
-                        checked={invertY}
+                        checked={!!invertY}
                         onCheckedChange={(v) => {
                           setInvertY(v)
+                          gameAudio.uiClick()
+                        }}
+                      />
+                    </SettingRow>
+
+                    <Divider />
+
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-extrabold tracking-wide text-primary uppercase">
+                        Hold vs toggle
+                      </div>
+                      <p className="text-xs leading-relaxed font-semibold text-muted-foreground">
+                        Off = hold the key. On = press once to engage, press
+                        again to release.
+                      </p>
+                    </div>
+
+                    <SettingRow
+                      label="Toggle ADS"
+                      description={
+                        toggleAds
+                          ? 'Press aim to scope in/out'
+                          : 'Hold aim to stay scoped'
+                      }
+                    >
+                      <StickerSwitch
+                        checked={!!toggleAds}
+                        onCheckedChange={(v) => {
+                          setToggleAds(v)
+                          gameAudio.uiClick()
+                        }}
+                      />
+                    </SettingRow>
+
+                    <SettingRow
+                      label="Toggle crouch"
+                      description={
+                        toggleCrouch
+                          ? 'Press crouch to stay crouched'
+                          : 'Hold crouch to stay low'
+                      }
+                    >
+                      <StickerSwitch
+                        checked={!!toggleCrouch}
+                        onCheckedChange={(v) => {
+                          setToggleCrouch(v)
+                          gameAudio.uiClick()
+                        }}
+                      />
+                    </SettingRow>
+
+                    <SettingRow
+                      label="Toggle sprint"
+                      description={
+                        toggleSprint
+                          ? 'Press sprint to keep running'
+                          : 'Hold sprint to run'
+                      }
+                    >
+                      <StickerSwitch
+                        checked={!!toggleSprint}
+                        onCheckedChange={(v) => {
+                          setToggleSprint(v)
                           gameAudio.uiClick()
                         }}
                       />
@@ -674,17 +820,24 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                             className={cn(
                               'flex flex-col gap-2 rounded-xl border-[2.5px] border-transparent px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between',
                               active &&
-                                'border-primary/60 bg-primary/10 shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.2)]',
+                                cn(
+                                  'border-primary/55 bg-primary/10 dark:border-primary/45 dark:bg-primary/15',
+                                  inkShadowSm,
+                                ),
                             )}
                           >
-                            <span className="shrink-0 text-sm font-extrabold tracking-wide">
+                            <span className="shrink-0 text-sm font-extrabold tracking-wide text-foreground">
                               {ACTION_LABELS[action]}
                             </span>
                             <div className="flex flex-wrap items-center justify-end gap-1.5">
                               {codes.map((code) => (
                                 <span
                                   key={code}
-                                  className="inline-flex items-center gap-0.5 rounded-lg border-[2px] border-foreground/70 bg-muted/60 font-mono text-xs font-bold shadow-[1px_1px_0_oklch(0.2_0.03_260/_0.2)]"
+                                  className={cn(
+                                    'inline-flex items-center gap-0.5 rounded-lg border-[2px] bg-muted/70 font-mono text-xs font-bold text-foreground dark:bg-muted/50',
+                                    'border-foreground/55 dark:border-foreground/40',
+                                    inkShadowSm,
+                                  )}
                                 >
                                   <span className="px-2 py-1">
                                     {formatKeyCode(code)}
@@ -717,8 +870,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                                 className={cn(
                                   'inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border-[2px] px-2 text-xs font-extrabold transition-all',
                                   active
-                                    ? 'animate-pulse border-foreground/90 bg-primary text-primary-foreground shadow-[2px_2px_0_oklch(0.2_0.03_260/_0.4)]'
-                                    : 'border-dashed border-foreground/50 text-muted-foreground hover:border-foreground/80 hover:bg-muted hover:text-foreground disabled:opacity-40',
+                                    ? cn(
+                                        'animate-pulse border-foreground/85 bg-primary text-primary-foreground dark:border-foreground/60',
+                                        inkShadowSm,
+                                      )
+                                    : 'border-dashed border-foreground/40 text-muted-foreground hover:border-foreground/70 hover:bg-muted hover:text-foreground disabled:opacity-40 dark:border-foreground/30 dark:hover:border-foreground/50',
                                 )}
                               >
                                 {active ? (
@@ -743,9 +899,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               </div>
 
               {/* Mobile reset footer */}
-              <div className="shrink-0 border-t-[2.5px] border-foreground/20 p-3 sm:hidden">
+              <div className="shrink-0 border-t-[2.5px] border-border p-3 dark:border-foreground/15 sm:hidden">
                 <StickerBtn
-                  className="h-9 w-full border-dashed bg-transparent text-muted-foreground shadow-none"
+                  className="h-9 w-full border-dashed bg-transparent text-muted-foreground shadow-none hover:bg-muted/50"
                   onClick={() => {
                     resetAll()
                     cancelListen()

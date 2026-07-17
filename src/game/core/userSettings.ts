@@ -32,6 +32,21 @@ export interface UserSettings {
   /** Multiplier on LOOK.adsSensitivity */
   adsSensitivity: number
   invertY: boolean
+  /**
+   * When true, ADS press toggles aim on/off.
+   * When false (default), hold to aim.
+   */
+  toggleAds: boolean
+  /**
+   * When true, crouch press toggles crouch on/off.
+   * When false (default), hold to crouch.
+   */
+  toggleCrouch: boolean
+  /**
+   * When true, sprint press toggles sprint on/off.
+   * When false (default), hold to sprint.
+   */
+  toggleSprint: boolean
   keybinds: Keybinds
 }
 
@@ -92,6 +107,9 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   mouseSensitivity: 1,
   adsSensitivity: 1,
   invertY: false,
+  toggleAds: false,
+  toggleCrouch: false,
+  toggleSprint: false,
   keybinds: cloneKeybinds(DEFAULT_KEYBINDS),
 }
 
@@ -113,6 +131,9 @@ export function applyUserSettings(next: UserSettings) {
     mouseSensitivity: clamp(next.mouseSensitivity, 0.05, 5),
     adsSensitivity: clamp(next.adsSensitivity, 0.05, 5),
     invertY: Boolean(next.invertY),
+    toggleAds: Boolean(next.toggleAds),
+    toggleCrouch: Boolean(next.toggleCrouch),
+    toggleSprint: Boolean(next.toggleSprint),
     keybinds: normalizeKeybinds(next.keybinds),
   }
 }

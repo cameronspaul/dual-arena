@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -271,6 +271,8 @@ export function MapPicker({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(username)
+  /** Map carousel page — 2 maps visible at a time (1×2). */
+  const [mapPage, setMapPage] = useState(0)
 
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
   const displayName = username.trim() || 'Operator'
@@ -282,16 +284,35 @@ export function MapPicker({
     return withThumb?.thumbUrl ?? '/maps/thumbs/arena-v3.png'
   }, [selected.thumbUrl])
 
+  const mapsPerPage = 2
+  const mapPageCount = Math.max(1, Math.ceil(MAP_LIST.length / mapsPerPage))
+
+  const selectedIndex = useMemo(
+    () => MAP_LIST.findIndex((m) => m.id === selectedId),
+    [selectedId],
+  )
+
+  // When selection changes (e.g. URL / external), show that map's page
+  useEffect(() => {
+    if (selectedIndex < 0) return
+    setMapPage(Math.floor(selectedIndex / mapsPerPage))
+  }, [selectedIndex])
+
+  const visibleMaps = useMemo(() => {
+    const start = mapPage * mapsPerPage
+    return MAP_LIST.slice(start, start + mapsPerPage)
+  }, [mapPage])
+
   const commitName = () => {
     setUsername(nameDraft.trim())
     setEditingName(false)
     gameAudio.uiClick()
   }
 
-  const selectedIndex = useMemo(
-    () => MAP_LIST.findIndex((m) => m.id === selectedId),
-    [selectedId],
-  )
+  const shiftMapPage = (dir: -1 | 1) => {
+    gameAudio.uiClick()
+    setMapPage((p) => (p + dir + mapPageCount) % mapPageCount)
+  }
 
   const handlePlay = () => {
     gameAudio.uiConfirm()
@@ -302,6 +323,8 @@ export function MapPicker({
     gameAudio.uiConfirm()
     onPlayOnline?.()
   }
+
+  const balanceLabel = balance.toLocaleString()
 
   return (
     <div className="relative flex h-svh w-full flex-col overflow-hidden bg-arena-void text-white">
@@ -334,13 +357,6 @@ export function MapPicker({
           <GameIcon src={icons.bolt} className="size-3.5" />
           Practice
         </span>
-        <div
-          className="hidden items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-2.5 py-1.5 shadow-[2px_2px_0_var(--arena-ink)] sm:inline-flex"
-          title="Soft currency (coming with online stakes)"
-        >
-          <GameIcon src={icons.coins} className="size-4" />
-          <span className="text-xs font-extrabold tabular-nums">{balance}</span>
-        </div>
         <ChromeBtn
           onClick={() => {
             gameAudio.uiClick()
@@ -367,95 +383,219 @@ export function MapPicker({
 
       {/* ── Main: single viewport, no scroll ── */}
       <main className="relative z-10 mx-auto grid min-h-0 w-full max-w-7xl flex-1 grid-cols-1 gap-2.5 overflow-hidden p-2.5 sm:gap-3 sm:p-3 md:p-4 lg:grid-cols-[1fr_min(19.5rem,30%)] xl:grid-cols-[1fr_21rem]">
-        {/* LEFT — maps + deploy */}
+        {/* LEFT — balance + compact maps + deploy */}
         <motion.section
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28 }}
-          className="flex min-h-0 flex-col gap-2.5 lg:min-h-0"
+          className="flex min-h-0 flex-col gap-2.5"
         >
-          <HudPanel className="flex min-h-0 flex-1 flex-col p-2.5 sm:p-3 md:p-4" accent="heat">
-            <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+          {/* Balance wallet — roomy panel for soft currency / stakes */}
+          <HudPanel
+            className="flex min-h-0 flex-1 flex-col justify-center p-4 sm:p-5"
+            accent="heat"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex items-center gap-2">
-                <GameIcon src={icons.map} className="size-5" />
-                <h2 className="text-sm font-extrabold tracking-tight">
-                  Choose map
+                <GameIcon src={icons.coins} className="size-5" />
+                <h2 className="text-sm font-extrabold tracking-wide text-white/70 uppercase">
+                  Balance
                 </h2>
+              </div>
+              <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink bg-black/35 px-2 py-0.5 text-[9px] font-extrabold tracking-wide text-white/45 uppercase">
+                <GameIcon src={icons.locked} className="size-3 opacity-80" />
+                Soft currency
+              </span>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border-[3px] border-arena-ink bg-black/40 shadow-[2px_3px_0_var(--arena-ink)] sm:size-16">
+                  <GameIcon src={icons.coins4} className="size-10 sm:size-11" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-4xl font-black tabular-nums tracking-tight text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)] sm:text-5xl">
+                      {balanceLabel}
+                    </span>
+                    <span className="text-sm font-extrabold text-white/40">
+                      coins
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs font-semibold text-white/45">
+                    Use for wagers when online stakes go live.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => gameAudio.uiClick()}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3.5 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+                  title="Coming soon"
+                >
+                  <GameIcon src={icons.shop} className="size-4" />
+                  Get coins
+                </button>
+                <button
+                  type="button"
+                  onClick={() => gameAudio.uiClick()}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-black/40 px-3.5 text-xs font-extrabold tracking-wide text-white/80 uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+                  title="Coming soon"
+                >
+                  <GameIcon src={icons.charts} className="size-4" />
+                  History
+                </button>
+              </div>
+            </div>
+
+            {/* Stake chips preview — ties balance to duel stakes */}
+            <div className="mt-4 border-t-2 border-arena-ink/35 pt-3">
+              <SectionLabel iconSrc={icons.trade}>Preferred stake</SectionLabel>
+              <div className="flex flex-wrap gap-1.5">
+                {WAGER_OPTIONS.map((w, i) => (
+                  <Chip
+                    key={w}
+                    active={wagerAmount === w}
+                    className="h-9 min-w-[3.5rem] px-3"
+                    onClick={() => {
+                      gameAudio.uiClick()
+                      setWagerAmount(w)
+                    }}
+                  >
+                    <GameIcon
+                      src={WAGER_ICONS[i] ?? icons.coins}
+                      className="size-4"
+                    />
+                    ${w}
+                  </Chip>
+                ))}
+              </div>
+              <p className="mt-2 text-[10px] font-bold text-white/35">
+                Preferred stake for online 1v1 · not charged in practice.
+              </p>
+            </div>
+          </HudPanel>
+
+          {/* Compact map picker — 1×2 carousel */}
+          <HudPanel className="shrink-0 p-2.5 sm:p-3" accent="tech">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <GameIcon src={icons.map} className="size-4" />
+                <h2 className="text-sm font-extrabold tracking-tight">Map</h2>
                 <span className="rounded-md border-[2px] border-arena-ink/60 bg-black/40 px-1.5 py-0.5 text-[10px] font-extrabold text-white/50 tabular-nums">
                   {selectedIndex + 1}/{MAP_LIST.length}
                 </span>
               </div>
-              <p className="hidden items-center gap-1 text-[10px] font-extrabold tracking-wide text-white/40 uppercase sm:flex">
-                <GameIcon src={icons.aim} className="size-3.5 opacity-80" />
-                One shot · prove it
-              </p>
-            </div>
-
-            {/* Map grid fills available space — fixed 2 rows so it scales with height */}
-            <div className="grid min-h-0 flex-1 grid-cols-3 grid-rows-2 gap-1.5 sm:gap-2">
-              {MAP_LIST.map((map, i) => {
-                const active = map.id === selectedId
-                return (
-                  <motion.button
-                    key={map.id}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: mapPageCount }).map((_, i) => (
+                  <button
+                    key={i}
                     type="button"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.03 + i * 0.02 }}
+                    aria-label={`Map page ${i + 1}`}
                     onClick={() => {
                       gameAudio.uiClick()
-                      onSelect(map.id)
+                      setMapPage(i)
                     }}
                     className={cn(
-                      'group relative min-h-0 overflow-hidden rounded-xl border-[3px] border-arena-ink text-left transition-all',
-                      active
-                        ? 'shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/70'
-                        : 'shadow-[2px_2px_0_var(--arena-ink)] hover:-translate-y-0.5 hover:ring-2 hover:ring-arena-tech/40',
+                      'size-1.5 rounded-full border border-arena-ink transition-all',
+                      i === mapPage
+                        ? 'w-3 bg-arena-tech'
+                        : 'bg-white/25 hover:bg-white/45',
                     )}
-                  >
-                    <div className="absolute inset-0">
-                      <MapThumb
-                        mapId={map.id}
-                        thumbUrl={map.thumbUrl}
-                        name={map.name}
-                        active={active}
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
-                    </div>
-
-                    {active && (
-                      <div className="absolute top-1.5 right-1.5 flex size-7 items-center justify-center rounded-full border-[2.5px] border-arena-ink bg-arena-heat shadow-[2px_2px_0_var(--arena-ink)]">
-                        <GameIcon src={icons.check} className="size-3.5" />
-                      </div>
-                    )}
-
-                    <div className="absolute inset-x-0 bottom-0 p-2">
-                      <div
-                        className={cn(
-                          'truncate text-xs font-extrabold drop-shadow-[0_1px_0_rgba(0,0,0,0.8)] sm:text-sm',
-                          active ? 'text-arena-heat' : 'text-white',
-                        )}
-                      >
-                        {map.name}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap gap-1">
-                        {map.tags.slice(0, 2).map((tag) => (
-                          <span
-                            key={tag}
-                            className="rounded border border-white/15 bg-black/45 px-1 py-px text-[8px] font-bold tracking-wide text-white/65 uppercase"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.button>
-                )
-              })}
+                  />
+                ))}
+              </div>
             </div>
 
-            {/* Selected + CTA row */}
-            <div className="mt-3 flex shrink-0 flex-col gap-2.5 border-t-2 border-arena-ink/40 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-stretch gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => shiftMapPage(-1)}
+                aria-label="Previous maps"
+                className="inline-flex w-9 shrink-0 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-black/40 shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:w-10"
+              >
+                <GameIcon src={icons.leftArrow} className="size-5" />
+              </button>
+
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 sm:gap-2">
+                <AnimatePresence mode="wait" initial={false}>
+                  {visibleMaps.map((map) => {
+                    const active = map.id === selectedId
+                    return (
+                      <motion.button
+                        key={`${mapPage}-${map.id}`}
+                        type="button"
+                        initial={{ opacity: 0, x: 8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -8 }}
+                        transition={{ duration: 0.15 }}
+                        onClick={() => {
+                          gameAudio.uiClick()
+                          onSelect(map.id)
+                        }}
+                        className={cn(
+                          'group relative aspect-[16/9] min-h-0 overflow-hidden rounded-xl border-[3px] border-arena-ink text-left transition-all',
+                          active
+                            ? 'shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/70'
+                            : 'shadow-[2px_2px_0_var(--arena-ink)] hover:-translate-y-0.5 hover:ring-2 hover:ring-arena-tech/40',
+                        )}
+                      >
+                        <div className="absolute inset-0">
+                          <MapThumb
+                            mapId={map.id}
+                            thumbUrl={map.thumbUrl}
+                            name={map.name}
+                            active={active}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent" />
+                        </div>
+
+                        {active && (
+                          <div className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-full border-[2.5px] border-arena-ink bg-arena-heat shadow-[2px_2px_0_var(--arena-ink)]">
+                            <GameIcon src={icons.check} className="size-3" />
+                          </div>
+                        )}
+
+                        <div className="absolute inset-x-0 bottom-0 p-2">
+                          <div
+                            className={cn(
+                              'truncate text-xs font-extrabold drop-shadow-[0_1px_0_rgba(0,0,0,0.8)] sm:text-sm',
+                              active ? 'text-arena-heat' : 'text-white',
+                            )}
+                          >
+                            {map.name}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap gap-1">
+                            {map.tags.slice(0, 2).map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded border border-white/15 bg-black/45 px-1 py-px text-[8px] font-bold tracking-wide text-white/65 uppercase"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </motion.button>
+                    )
+                  })}
+                </AnimatePresence>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => shiftMapPage(1)}
+                aria-label="Next maps"
+                className="inline-flex w-9 shrink-0 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-black/40 shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-white/10 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:w-10"
+              >
+                <GameIcon src={icons.rightArrow} className="size-5" />
+              </button>
+            </div>
+
+            {/* Selected + deploy */}
+            <div className="mt-2.5 flex flex-col gap-2 border-t-2 border-arena-ink/35 pt-2.5 sm:flex-row sm:items-center sm:justify-between">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={selected.id}
@@ -467,7 +607,7 @@ export function MapPicker({
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <GameIcon src={icons.location} className="size-4" />
-                    <h3 className="text-base font-black tracking-tight sm:text-lg">
+                    <h3 className="truncate text-sm font-black tracking-tight sm:text-base">
                       {selected.name}
                     </h3>
                     {selected.kind === 'range' && (
@@ -477,7 +617,7 @@ export function MapPicker({
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 line-clamp-1 text-xs font-semibold text-white/50">
+                  <p className="mt-0.5 line-clamp-1 text-[11px] font-semibold text-white/45">
                     {selected.blurb}
                   </p>
                 </motion.div>
@@ -486,9 +626,9 @@ export function MapPicker({
               <button
                 type="button"
                 onClick={handlePlay}
-                className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-5 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-14 sm:px-7 sm:text-base"
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-5 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-12 sm:px-6"
               >
-                <GameIcon src={icons.rocket} className="size-6" />
+                <GameIcon src={icons.rocket} className="size-5" />
                 Deploy
               </button>
             </div>
@@ -637,26 +777,15 @@ export function MapPicker({
                 </div>
               </div>
 
-              <div className="shrink-0">
-                <SectionLabel iconSrc={icons.trade}>Stake</SectionLabel>
-                <div className="flex gap-1.5">
-                  {WAGER_OPTIONS.map((w, i) => (
-                    <Chip
-                      key={w}
-                      active={wagerAmount === w}
-                      className="flex-1 px-0"
-                      onClick={() => {
-                        gameAudio.uiClick()
-                        setWagerAmount(w)
-                      }}
-                    >
-                      <GameIcon
-                        src={WAGER_ICONS[i] ?? icons.coins}
-                        className="size-3.5"
-                      />
-                      ${w}
-                    </Chip>
-                  ))}
+              <div className="shrink-0 rounded-lg border-[2px] border-arena-ink/50 bg-black/25 px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2 text-[10px] font-extrabold uppercase">
+                  <span className="inline-flex items-center gap-1 text-white/40">
+                    <GameIcon src={icons.trade} className="size-3" />
+                    Stake
+                  </span>
+                  <span className="inline-flex items-center gap-1 tabular-nums text-arena-heat">
+                    <GameIcon src={icons.coins} className="size-3.5" />${wagerAmount}
+                  </span>
                 </div>
               </div>
 

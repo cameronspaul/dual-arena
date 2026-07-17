@@ -46,14 +46,19 @@ function getKeyboardLock(): KeyboardLockAPI | null {
 /**
  * Browser input: keyboard + pointer lock mouse.
  * Produces a fresh PlayerInput each frame via sample().
- * Sensitivity / multi-keybinds come from getUserSettings() (live).
+ * Sensitivity / multi-keybinds / hold-vs-toggle come from getUserSettings() (live).
  */
 export class InputManager {
   private keys = new Set<string>()
   private jumpPressed = false
   private reloadPressed = false
   private firePressed = false
-  private adsHeld = false
+  /** Mouse ADS hold only (keyboard uses `keys` for hold mode). */
+  private adsMouseHeld = false
+  /** Latched states when toggle* settings are on. */
+  private adsLatched = false
+  private crouchLatched = false
+  private sprintLatched = false
   private yaw = 0
   private pitch = 0
   private pointerLocked = false
@@ -62,6 +67,13 @@ export class InputManager {
   /** When false, gameplay keys/mouse are ignored (UI / settings / viewmodel editor). */
   private gameplayEnabled = true
   private keyboardLocked = false
+
+  private clearLatches() {
+    this.adsMouseHeld = false
+    this.adsLatched = false
+    this.crouchLatched = false
+    this.sprintLatched = false
+  }
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'Escape') return
@@ -89,7 +101,18 @@ export class InputManager {
     if (isBoundTo('jump', e.code)) this.jumpPressed = true
     if (isBoundTo('reload', e.code)) this.reloadPressed = true
     if (isBoundTo('fire', e.code)) this.firePressed = true
-    if (isBoundTo('ads', e.code)) this.adsHeld = true
+
+    const settings = getUserSettings()
+    // Toggle modes flip on press edge; hold modes use `keys` in sample().
+    if (isBoundTo('ads', e.code) && settings.toggleAds) {
+      this.adsLatched = !this.adsLatched
+    }
+    if (isBoundTo('crouch', e.code) && settings.toggleCrouch) {
+      this.crouchLatched = !this.crouchLatched
+    }
+    if (isBoundTo('sprint', e.code) && settings.toggleSprint) {
+      this.sprintLatched = !this.sprintLatched
+    }
   }
 
   private onKeyUp = (e: KeyboardEvent) => {
@@ -105,15 +128,27 @@ export class InputManager {
     const code = mouseButtonCode(e.button)
     if (!code) return
     if (isBoundTo('fire', code)) this.firePressed = true
-    if (isBoundTo('ads', code)) this.adsHeld = true
+    if (isBoundTo('ads', code)) {
+      if (getUserSettings().toggleAds) {
+        this.adsLatched = !this.adsLatched
+      } else {
+        this.adsMouseHeld = true
+      }
+    }
+    // Mouse crouch / sprint (rare but supported via keybinds)
+    if (isBoundTo('crouch', code) && getUserSettings().toggleCrouch) {
+      this.crouchLatched = !this.crouchLatched
+    }
+    if (isBoundTo('sprint', code) && getUserSettings().toggleSprint) {
+      this.sprintLatched = !this.sprintLatched
+    }
   }
 
   private onMouseUp = (e: MouseEvent) => {
     const code = mouseButtonCode(e.button)
     if (!code) return
-    if (isBoundTo('ads', code)) {
-      // Clear mouse ADS only if no other mouse ADS button is down (single button typical)
-      this.adsHeld = false
+    if (isBoundTo('ads', code) && !getUserSettings().toggleAds) {
+      this.adsMouseHeld = false
     }
   }
 
@@ -139,7 +174,7 @@ export class InputManager {
     if (this.pointerLocked) {
       void this.lockKeyboard()
     } else {
-      this.adsHeld = false
+      this.clearLatches()
       this.unlockKeyboard()
     }
   }
@@ -209,7 +244,7 @@ export class InputManager {
       this.jumpPressed = false
       this.reloadPressed = false
       this.firePressed = false
-      this.adsHeld = false
+      this.clearLatches()
       if (document.pointerLockElement === this.canvas) {
         document.exitPointerLock()
       }
@@ -234,21 +269,30 @@ export class InputManager {
   }
 
   sample(): PlayerInput {
+    const settings = getUserSettings()
     const held = (action: Parameters<typeof codesFor>[0]) =>
       codesFor(action).some((c) => this.keys.has(c))
 
-    // ADS: any keyboard ADS bind held, or mouse ADS hold flag
-    const adsKeyboard = held('ads')
-    const ads =
-      this.pointerLocked && (adsKeyboard || this.adsHeld)
+    // ADS: hold (keyboard keys + mouse flag) or latched toggle
+    const adsRaw = settings.toggleAds
+      ? this.adsLatched
+      : held('ads') || this.adsMouseHeld
+    const ads = this.pointerLocked && adsRaw
+
+    const crouch = settings.toggleCrouch
+      ? this.crouchLatched
+      : held('crouch')
+    const sprint = settings.toggleSprint
+      ? this.sprintLatched
+      : held('sprint')
 
     const input: PlayerInput = {
       forward: (held('forward') ? 1 : 0) - (held('back') ? 1 : 0),
       right: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
       jump: this.jumpPressed,
       jumpHeld: held('jump'),
-      crouch: held('crouch'),
-      sprint: held('sprint'),
+      crouch,
+      sprint,
       yaw: this.yaw,
       pitch: this.pitch,
       ads,
