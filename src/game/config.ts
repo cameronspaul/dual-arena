@@ -181,17 +181,39 @@ export const VIEW_BOB = {
   amountLerp: 7.5,
   /**
    * Landing kick — viewmodel only (camera stays on true eye).
-   * Values are camera-local units; keep near walk-bob scale so it settles
-   * instead of a big jolt + crawl-up.
+   * Spring-impulse (not an instant offset snap) so the gun dips and
+   * recovers without a hard jolt. landKick / landImpactScale are the
+   * desired peak dip in camera-local units; converted to velocity on impact.
    */
-  landKick: 0.012,
-  /** Extra dip from fall speed (× |vy| on impact) */
-  landImpactScale: 0.0025,
-  landMax: 0.028,
-  /** Exp decay rate — snappy return to rest */
-  landDecay: 16,
-  /** Pitch (rad) per unit of landOffset */
-  landPitch: 0.55,
+  landKick: 0.011,
+  /** Extra peak dip from fall speed (× |vy| on impact) */
+  landImpactScale: 0.0022,
+  landMax: 0.026,
+  /**
+   * Spring natural frequency (rad/s). Higher = snappier return.
+   * Slightly overdamped (landDamp > 1) avoids a bounce at rest.
+   */
+  landOmega: 13,
+  landDamp: 1.2,
+  /** Pitch (rad) per unit of landOffset — keep modest vs. position dip */
+  landPitch: 0.4,
+  /**
+   * Airborne float — gun lifts while falling (weightless arms).
+   * Scales with fall speed; eases out on land so the land kick can settle.
+   */
+  airRise: 0.02,
+  /** Extra lift × |vy| while falling (capped by airRiseMax) */
+  airRiseFallScale: 0.0018,
+  airRiseMax: 0.038,
+  /** |vy| (m/s) at which fall-speed term is fully blended in */
+  airRiseFallRef: 10,
+  /** Soft pitch (rad) at full rise — muzzle lifts slightly with the gun */
+  airRisePitch: -0.028,
+  /** Ease in while falling / out when grounded (higher = snappier settle) */
+  airRiseLerpIn: 5.5,
+  airRiseLerpOut: 11,
+  /** ADS almost freezes air float */
+  airRiseAdsMul: 0.12,
 } as const
 
 /**

@@ -147,7 +147,15 @@ export class GameEngine {
   private gunSwayTime = 0
   /** 0..1 smoothed Apex-style slide cant for the viewmodel */
   private slideGunBlend = 0
+  /** Viewmodel land dip (positive = down). Spring-integrated, never snapped. */
   private landOffset = 0
+  /** Rate of landOffset — impulse on impact, spring-damped toward rest. */
+  private landVel = 0
+  /**
+   * Viewmodel float while airborne (positive = up). Smoothed toward a
+   * fall-speed target so the gun lifts in freefall and eases down on land.
+   */
+  private airRise = 0
   private wasGrounded = true
   /** Fall speed sampled before collision zeros velocity.y on land. */
   private prevVelY = 0
@@ -1667,15 +1675,33 @@ export class GameEngine {
     const grounded = p.grounded
 
     // Landing kick is viewmodel-only (camera stays on true eye for aim parity).
+    // Impulse into a spring — offset ramps smoothly instead of snapping.
     if (grounded && !this.wasGrounded) {
       const impact = Math.max(0, -this.prevVelY)
-      this.landOffset = Math.min(
+      const peak = Math.min(
         VIEW_BOB.landMax,
         VIEW_BOB.landKick + impact * VIEW_BOB.landImpactScale,
       )
+      // Critically damped peak ≈ v0 / (ω e) with x0=0 → v0 = peak · ω · e
+      const w = VIEW_BOB.landOmega
+      this.landVel += peak * w * Math.E
     }
     this.wasGrounded = grounded
-    this.landOffset *= Math.exp(-VIEW_BOB.landDecay * dt)
+    {
+      const w = VIEW_BOB.landOmega
+      const damp = 2 * w * VIEW_BOB.landDamp
+      this.landVel += (-w * w * this.landOffset - damp * this.landVel) * dt
+      this.landOffset += this.landVel * dt
+      // Only dip down — no overshoot float above rest
+      if (this.landOffset < 0) {
+        this.landOffset = 0
+        if (this.landVel < 0) this.landVel = 0
+      }
+      if (this.landOffset > VIEW_BOB.landMax) {
+        this.landOffset = VIEW_BOB.landMax
+        if (this.landVel > 0) this.landVel = 0
+      }
+    }
 
     let bobTarget = 0
     if (grounded && speed > VIEW_BOB.minSpeed) {
@@ -1748,6 +1774,32 @@ export class GameEngine {
     const swayRoll =
       Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll * swayMul
 
+    // Freefall float: gun rises with fall speed (weightless arms), eases out on land.
+    {
+      let airTarget = 0
+      if (!grounded && !this.vmFreezeBob) {
+        const fall = Math.max(0, -p.velocity.y)
+        const fallT = Math.min(1, fall / VIEW_BOB.airRiseFallRef)
+        // Rise builds as you fall harder; small hold near apex so it doesn't pop.
+        airTarget = Math.min(
+          VIEW_BOB.airRiseMax,
+          VIEW_BOB.airRise * Math.max(fallT, 0.35) +
+            fall * VIEW_BOB.airRiseFallScale,
+        )
+        // Ascending jump: only a light float (not full freefall lift).
+        if (p.velocity.y > 0.5) {
+          airTarget = Math.min(airTarget, VIEW_BOB.airRise * 0.4)
+        }
+        airTarget *= 1 - adsBlend * (1 - VIEW_BOB.airRiseAdsMul)
+      }
+      const airRate =
+        airTarget > this.airRise
+          ? VIEW_BOB.airRiseLerpIn
+          : VIEW_BOB.airRiseLerpOut
+      const airK = 1 - Math.exp(-airRate * dt)
+      this.airRise += (airTarget - this.airRise) * airK
+    }
+
     // Apex-style left cant while sliding (viewmodel only; smooth in/out).
     const slideTarget =
       p.state === 'slide' && !this.vmFreezeBob
@@ -1782,15 +1834,21 @@ export class GameEngine {
       const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
       const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
       const land = this.vmFreezeBob ? 0 : this.landOffset
+      const air = this.vmFreezeBob ? 0 : this.airRise
       this.viewmodel.position.lerpVectors(hip, scoped, ads)
       this.viewmodel.position.x += bobGunX + swayX + SLIDE_GUN.posX * slide
       this.viewmodel.position.y +=
-        bobGunY + swayY - land + SLIDE_GUN.posY * slide
+        bobGunY + swayY - land + air + SLIDE_GUN.posY * slide
       this.viewmodel.position.z += bobGunZ + SLIDE_GUN.posZ * slide
       const recoilKick = this.vmFreezeBob
         ? 0
         : this.sniper.recoil * SNIPER.viewmodelRecoil
       const landPitch = land * VIEW_BOB.landPitch
+      // airRisePitch is negative → muzzle lifts as the gun floats up
+      const airPitch =
+        VIEW_BOB.airRiseMax > 1e-6
+          ? (air / VIEW_BOB.airRiseMax) * VIEW_BOB.airRisePitch
+          : 0
       this.viewmodel.rotation.set(
         hipRot.x * (1 - ads) +
           adsRot.x * ads +
@@ -1798,6 +1856,7 @@ export class GameEngine {
           bobGunPitch +
           swayPitch +
           landPitch +
+          airPitch +
           SLIDE_GUN.pitch * slide,
         hipRot.y * (1 - ads) +
           adsRot.y * ads +
