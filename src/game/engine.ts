@@ -1,16 +1,26 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
-import { DEBUG, DUMMY, LOOK, SNIPER, VIEW_BOB, VIEWMODEL } from './config'
+import {
+  DEBUG,
+  DUMMY,
+  GUN_SWAY,
+  LOOK,
+  SLIDE_GUN,
+  SNIPER,
+  VIEW_BOB,
+  VIEWMODEL,
+} from './config'
 import { castHitscan } from './hitscan'
 import { InputManager } from './input'
-import { lookDirection } from './math'
+import { spreadLookDirection } from './math'
 import {
   createPlayer,
   eyePosition,
   stepPlayer,
 } from './player'
 import {
+  aimSpread,
   applyRecoil,
   createSniper,
   effectiveLook,
@@ -36,11 +46,22 @@ import {
   createDummies,
   damageDummy,
   queueRespawn,
+  stepDummies,
   stepRespawns,
   type RespawnTimer,
 } from './world'
 
 type ArmLimbKey = 'shoulder' | 'bicep' | 'forearm' | 'wrist'
+
+type DummyActions = {
+  idle: THREE.AnimationAction
+  walk: THREE.AnimationAction | null
+  run: THREE.AnimationAction | null
+  slide: THREE.AnimationAction | null
+  hit: THREE.AnimationAction | null
+  hitAlt: THREE.AnimationAction | null
+  death: THREE.AnimationAction | null
+}
 
 type ArmBoneRest = {
   bone: THREE.Object3D
@@ -123,6 +144,9 @@ export class GameEngine {
   private vmCurrentAction: THREE.AnimationAction | null = null
   private bobPhase = 0
   private bobAmount = 0
+  private gunSwayTime = 0
+  /** 0..1 smoothed Apex-style slide cant for the viewmodel */
+  private slideGunBlend = 0
   private landOffset = 0
   private wasGrounded = true
   /** Fall speed sampled before collision zeros velocity.y on land. */
@@ -139,6 +163,9 @@ export class GameEngine {
   private playerHp = 100
   private clock = new THREE.Clock()
   private coverMeshes: THREE.Mesh[] = []
+  private floorMat: THREE.MeshStandardMaterial | null = null
+  private coverMat: THREE.MeshStandardMaterial | null = null
+  private envTextures: THREE.Texture[] = []
   /** Hitscan against the real skinned character meshes. */
   private readonly _raycaster = new THREE.Raycaster()
   private readonly _rayOrigin = new THREE.Vector3()
@@ -147,8 +174,9 @@ export class GameEngine {
   constructor(container: HTMLElement) {
     this.container = container
     this.scene = new THREE.Scene()
+    // Solid fallback until Kenney equirect sky loads
     this.scene.background = new THREE.Color(0x87a0b8)
-    this.scene.fog = new THREE.Fog(0x87a0b8, 40, 90)
+    this.scene.fog = new THREE.Fog(0xa8c4e0, 45, 100)
 
     const w = container.clientWidth || window.innerWidth
     const h = container.clientHeight || window.innerHeight
@@ -169,6 +197,7 @@ export class GameEngine {
 
     this.buildRange()
     this.buildImpacts()
+    void this.loadEnvironment()
     // Never draw pose hitboxes on the local FP player — they sit in camera
     // space and block the view. DEBUG.showHitboxes only applies to dummies.
     void this.loadViewmodel()
@@ -296,6 +325,8 @@ export class GameEngine {
     window.removeEventListener('resize', this.onResize)
     this.renderer.dispose()
     this.renderer.domElement.remove()
+    for (const t of this.envTextures) t.dispose()
+    this.envTextures = []
     this.scene.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose()
@@ -318,7 +349,7 @@ export class GameEngine {
     // lights
     const hemi = new THREE.HemisphereLight(0xb8d0e8, 0x3a3028, 0.85)
     this.scene.add(hemi)
-    const sun = new THREE.DirectionalLight(0xfff2dd, 1.1)
+    const sun = new THREE.DirectionalLight(0xfff2dd, 1.15)
     sun.position.set(20, 30, 10)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
@@ -330,26 +361,22 @@ export class GameEngine {
     sun.shadow.camera.bottom = -40
     this.scene.add(sun)
 
-    // floor
-    const floorGeo = new THREE.PlaneGeometry(80, 80)
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x5a6b4e,
-      roughness: 0.95,
+    // floor — prototype grid map applied in loadEnvironment()
+    this.floorMat = new THREE.MeshStandardMaterial({
+      color: 0x6a6a6a,
+      roughness: 0.92,
+      metalness: 0.05,
     })
-    const floor = new THREE.Mesh(floorGeo, floorMat)
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), this.floorMat)
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
     this.scene.add(floor)
 
-    // grid hint
-    const grid = new THREE.GridHelper(48, 24, 0x3d4a38, 0x4a5840)
-    grid.position.y = 0.01
-    this.scene.add(grid)
-
-    // cover boxes
-    const boxMat = new THREE.MeshStandardMaterial({
-      color: 0x8b7355,
-      roughness: 0.85,
+    // cover boxes — checker map applied in loadEnvironment()
+    this.coverMat = new THREE.MeshStandardMaterial({
+      color: 0x8a8a8a,
+      roughness: 0.88,
+      metalness: 0.05,
     })
     for (const b of [
       // mirror WORLD.coverBoxes dimensions via colliders already built
@@ -369,7 +396,7 @@ export class GameEngine {
     ]) {
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(b.w, b.h, b.d),
-        boxMat.clone(),
+        this.coverMat,
       )
       mesh.position.set(b.x, b.y, b.z)
       mesh.castShadow = true
@@ -381,7 +408,7 @@ export class GameEngine {
     // far backstop wall
     const wall = new THREE.Mesh(
       new THREE.BoxGeometry(30, 4, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x6a5a4a, roughness: 0.9 }),
+      this.coverMat,
     )
     wall.position.set(0, 2, -36)
     wall.castShadow = true
@@ -402,6 +429,65 @@ export class GameEngine {
     pad.position.set(0, 0.04, 8)
     pad.receiveShadow = true
     this.scene.add(pad)
+  }
+
+  /**
+   * Kenney CC0 sky (equirect) + prototype floor/cover textures.
+   * Falls back silently to solid materials if assets fail to load.
+   */
+  private async loadEnvironment() {
+    const loader = new THREE.TextureLoader()
+
+    const loadTex = (url: string) =>
+      new Promise<THREE.Texture>((resolve, reject) => {
+        loader.load(url, resolve, undefined, reject)
+      })
+
+    try {
+      const sky = await loadTex('/env/skyboxes/skybox-day.png')
+      sky.mapping = THREE.EquirectangularReflectionMapping
+      sky.colorSpace = THREE.SRGBColorSpace
+      this.scene.background = sky
+      this.envTextures.push(sky)
+    } catch {
+      // keep solid background
+    }
+
+    try {
+      const floorMap = await loadTex('/env/floor/grid.png')
+      floorMap.wrapS = THREE.RepeatWrapping
+      floorMap.wrapT = THREE.RepeatWrapping
+      floorMap.repeat.set(20, 20)
+      floorMap.anisotropy = Math.min(
+        8,
+        this.renderer.capabilities.getMaxAnisotropy(),
+      )
+      floorMap.colorSpace = THREE.SRGBColorSpace
+      if (this.floorMat) {
+        this.floorMat.map = floorMap
+        this.floorMat.color.set(0xffffff)
+        this.floorMat.needsUpdate = true
+      }
+      this.envTextures.push(floorMap)
+    } catch {
+      // keep solid floor
+    }
+
+    try {
+      const coverMap = await loadTex('/env/floor/check.png')
+      coverMap.wrapS = THREE.RepeatWrapping
+      coverMap.wrapT = THREE.RepeatWrapping
+      coverMap.repeat.set(2, 2)
+      coverMap.colorSpace = THREE.SRGBColorSpace
+      if (this.coverMat) {
+        this.coverMat.map = coverMap
+        this.coverMat.color.set(0xffffff)
+        this.coverMat.needsUpdate = true
+      }
+      this.envTextures.push(coverMap)
+    } catch {
+      // keep solid cover
+    }
   }
 
   /** Procedural fallback if man.glb fails to load. */
@@ -901,8 +987,9 @@ export class GameEngine {
   }
 
   /**
-   * Load public/models/man.glb once, clone per dummy (with skeleton), play Idle.
-   * Falls back to a low-poly placeholder if the asset is missing.
+   * Load public/models/man.glb once, clone per dummy (with skeleton).
+   * Clips: Idle / Walk / Run / Roll (slide) + hit / death.
+   * Crouch reuses Walk (no crouch clip in this asset).
    */
   private async loadDummies() {
     type DummyFactory = (id: string) => THREE.Group
@@ -917,9 +1004,21 @@ export class GameEngine {
 
       const idleClip =
         this.findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0]
+      const walkClip = this.findClip(clips, 'Walk')
+      const runClip = this.findClip(clips, 'Run')
+      // man.glb has no slide — Roll is the closest one-shot dive/dodge
+      const slideClip = this.findClip(clips, 'Roll')
       const hitClip = this.findClip(clips, 'HitRecieve')
       const hitClipAlt = this.findClip(clips, 'HitRecieve_2')
       const deathClip = this.findClip(clips, 'Death')
+
+      console.info('Dummy locomotion clips', {
+        idle: idleClip?.name,
+        walk: walkClip?.name,
+        run: runClip?.name,
+        slide: slideClip?.name,
+        available: clips.map((c) => c.name),
+      })
 
       const box = new THREE.Box3().setFromObject(source)
       const size = box.getSize(new THREE.Vector3())
@@ -935,6 +1034,8 @@ export class GameEngine {
         const model = cloneSkinned(source)
         model.scale.setScalar(scale)
         model.position.y = -footY * scale
+        root.userData.baseScale = scale
+        root.userData.model = model
 
         model.traverse((o) => {
           if (!(o instanceof THREE.Mesh)) return
@@ -949,54 +1050,66 @@ export class GameEngine {
 
         root.add(model)
         root.userData.animState = 'idle'
+        root.userData.locoState = 'idle'
         root.userData.wasAlive = true
         // Hitscan + debug wireframe sit on these exact meshes
         this.registerHitMeshes(root, id)
         // Suit_Body includes skinned arms — split faces onto arm/chest like legs
         this.splitChestMeshesByArmWeights(root, id)
+        this.attachDummyLabel(root)
 
         if (idleClip) {
           const mixer = new THREE.AnimationMixer(model)
           this.dummyMixers.set(id, mixer)
 
-          const idle = mixer.clipAction(idleClip)
-          idle.setLoop(THREE.LoopRepeat, Infinity)
-          idle.clampWhenFinished = false
-          // desync so they don't idle in perfect unison
+          const mkLoop = (clip: THREE.AnimationClip | undefined) => {
+            if (!clip) return null
+            const a = mixer.clipAction(clip)
+            a.setLoop(THREE.LoopRepeat, Infinity)
+            a.clampWhenFinished = false
+            return a
+          }
+          const mkOnce = (clip: THREE.AnimationClip | undefined) => {
+            if (!clip) return null
+            const a = mixer.clipAction(clip)
+            a.setLoop(THREE.LoopOnce, 1)
+            a.clampWhenFinished = true
+            return a
+          }
+
+          const idle = mkLoop(idleClip)!
           idle.time = Math.random() * idleClip.duration
           idle.play()
 
-          const hit =
-            hitClip != null ? mixer.clipAction(hitClip) : null
+          const walk = mkLoop(walkClip)
+          const run = mkLoop(runClip)
+          const slide = mkOnce(slideClip)
+          const hit = mkOnce(hitClip)
           const hitAlt =
             hitClipAlt != null && hitClipAlt !== hitClip
-              ? mixer.clipAction(hitClipAlt)
+              ? mkOnce(hitClipAlt)
               : null
-          const death =
-            deathClip != null ? mixer.clipAction(deathClip) : null
+          const death = mkOnce(deathClip)
 
-          if (hit) {
-            hit.setLoop(THREE.LoopOnce, 1)
-            hit.clampWhenFinished = true
+          root.userData.actions = {
+            idle,
+            walk,
+            run,
+            slide,
+            hit,
+            hitAlt,
+            death,
           }
-          if (hitAlt) {
-            hitAlt.setLoop(THREE.LoopOnce, 1)
-            hitAlt.clampWhenFinished = true
-          }
-          if (death) {
-            death.setLoop(THREE.LoopOnce, 1)
-            death.clampWhenFinished = true
-          }
-
-          root.userData.actions = { idle, hit, hitAlt, death }
 
           mixer.addEventListener('finished', (e) => {
             const action = e.action as THREE.AnimationAction
             const state = root.userData.animState as string
             if (state === 'hit' && (action === hit || action === hitAlt)) {
-              this.playDummyIdle(root)
+              // Resume whatever locomotion the sim is on
+              root.userData.locoState = null
+              this.syncDummyLocomotion(id)
             }
-            // death holds last frame until respawn
+            // slide/death hold last frame until state machine advances
           })
         }
 
@@ -1004,7 +1117,11 @@ export class GameEngine {
       }
     } catch (e) {
       console.warn('Dummy model load failed, using placeholder', e)
-      factory = (id: string) => this.makePlaceholderDummy(id)
+      factory = (id: string) => {
+        const g = this.makePlaceholderDummy(id)
+        this.attachDummyLabel(g)
+        return g
+      }
     }
 
     for (const d of this.dummies) {
@@ -1015,37 +1132,162 @@ export class GameEngine {
       this.dummyMeshes.set(d.id, g)
       g.updateWorldMatrix(true, true)
       this.paintDummyMeshes(g, d.hp / d.maxHp)
+      this.setDummyLabel(g, d.state)
     }
   }
 
-  private playDummyIdle(root: THREE.Group) {
-    const actions = root.userData.actions as
+  /** Floating state label for reviewing locomotion clips. */
+  private attachDummyLabel(root: THREE.Group) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 64
+    const ctx = canvas.getContext('2d')!
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    })
+    const sprite = new THREE.Sprite(mat)
+    sprite.scale.set(1.6, 0.4, 1)
+    sprite.position.y = DUMMY.labelY
+    sprite.renderOrder = 10
+    root.add(sprite)
+    root.userData.label = { sprite, canvas, ctx, tex, text: '' }
+  }
+
+  private setDummyLabel(root: THREE.Group, state: string) {
+    const label = root.userData.label as
       | {
-          idle: THREE.AnimationAction
-          hit: THREE.AnimationAction | null
-          hitAlt: THREE.AnimationAction | null
-          death: THREE.AnimationAction | null
+          sprite: THREE.Sprite
+          canvas: HTMLCanvasElement
+          ctx: CanvasRenderingContext2D
+          tex: THREE.CanvasTexture
+          text: string
         }
       | undefined
+    if (!label) return
+    const text = state.toUpperCase()
+    if (label.text === text) return
+    label.text = text
+    const { canvas, ctx, tex } = label
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16)
+    ctx.font = 'bold 28px system-ui,Segoe UI,sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = state === 'slide' ? '#ffd27a' : state === 'crouch' ? '#9ad0ff' : '#ffffff'
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2)
+    tex.needsUpdate = true
+  }
+
+  private getDummyActions(root: THREE.Group): DummyActions | undefined {
+    return root.userData.actions as DummyActions | undefined
+  }
+
+  private fadeDummyLoco(
+    actions: DummyActions,
+    next: THREE.AnimationAction | null,
+    fade = 0.18,
+  ) {
+    if (!next) return
+    const loops = [actions.idle, actions.walk, actions.run]
+    for (const a of loops) {
+      if (!a || a === next) continue
+      if (a.isRunning()) a.fadeOut(fade)
+    }
+    if (actions.slide && actions.slide !== next && actions.slide.isRunning()) {
+      actions.slide.fadeOut(fade * 0.5)
+    }
+    next.reset().setEffectiveWeight(1).fadeIn(fade).play()
+  }
+
+  /** Match sim move state → Walk / Run / Idle / Roll clips. */
+  private syncDummyLocomotion(id: string) {
+    const d = this.dummies.find((x) => x.id === id)
+    const root = this.dummyMeshes.get(id)
+    if (!d || !root || !d.alive) return
+    const actions = this.getDummyActions(root)
     if (!actions?.idle) return
-    root.userData.animState = 'idle'
+
+    // Don't interrupt hit / death
+    const anim = root.userData.animState as string
+    if (anim === 'hit' || anim === 'death') return
+
+    const want = d.state
+    if (root.userData.locoState === want && anim !== 'hit') {
+      this.applyDummyCrouchScale(root, want === 'crouch')
+      return
+    }
+    root.userData.locoState = want
+    root.userData.animState = want
+
+    // Stop one-shots when leaving them
     actions.hit?.stop()
     actions.hitAlt?.stop()
     actions.death?.stop()
+
+    if (want === 'slide') {
+      const slide = actions.slide
+      if (slide) {
+        const loops = [actions.idle, actions.walk, actions.run]
+        for (const a of loops) {
+          if (a?.isRunning()) a.fadeOut(0.08)
+        }
+        slide.reset().setEffectiveWeight(1).fadeIn(0.05).play()
+      } else {
+        // No Roll clip — fall back to run
+        this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+      }
+    } else if (want === 'run') {
+      this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+      if (actions.run) actions.run.setEffectiveTimeScale(1)
+    } else if (want === 'walk' || want === 'crouch') {
+      const walk = actions.walk ?? actions.idle
+      this.fadeDummyLoco(actions, walk)
+      // Crouch: slower walk cycle (no dedicated crouch clip in man.glb)
+      if (walk && walk !== actions.idle) {
+        walk.setEffectiveTimeScale(want === 'crouch' ? 0.55 : 1)
+      }
+    } else {
+      this.fadeDummyLoco(actions, actions.idle)
+    }
+
+    this.applyDummyCrouchScale(root, want === 'crouch')
+  }
+
+  /** Mild Y squash so crouch is readable without a crouch clip. */
+  private applyDummyCrouchScale(root: THREE.Group, crouch: boolean) {
+    const model = root.userData.model as THREE.Object3D | undefined
+    const base = (root.userData.baseScale as number | undefined) ?? 1
+    if (!model) return
+    const yMul = crouch ? DUMMY.crouchScaleY : 1
+    model.scale.set(base, base * yMul, base)
+  }
+
+  private playDummyIdle(root: THREE.Group) {
+    const actions = this.getDummyActions(root)
+    if (!actions?.idle) return
+    root.userData.animState = 'idle'
+    root.userData.locoState = 'idle'
+    actions.hit?.stop()
+    actions.hitAlt?.stop()
+    actions.death?.stop()
+    actions.slide?.stop()
+    actions.walk?.stop()
+    actions.run?.stop()
     actions.idle.reset().fadeIn(0.2).play()
+    this.applyDummyCrouchScale(root, false)
   }
 
   private playDummyHit(id: string) {
     const root = this.dummyMeshes.get(id)
-    const actions = root?.userData.actions as
-      | {
-          idle: THREE.AnimationAction
-          hit: THREE.AnimationAction | null
-          hitAlt: THREE.AnimationAction | null
-          death: THREE.AnimationAction | null
-        }
-      | undefined
-    if (!root || !actions) return
+    if (!root) return
+    const actions = this.getDummyActions(root)
+    if (!actions) return
     // don't interrupt death
     if (root.userData.animState === 'death') return
 
@@ -1058,8 +1300,10 @@ export class GameEngine {
     if (!pick) return
 
     root.userData.animState = 'hit'
-    actions.idle.fadeOut(0.08)
-    actions.death?.stop()
+    const loops = [actions.idle, actions.walk, actions.run, actions.slide]
+    for (const a of loops) {
+      if (a?.isRunning()) a.fadeOut(0.08)
+    }
     actions.hit?.stop()
     actions.hitAlt?.stop()
     pick.reset().setEffectiveWeight(1).fadeIn(0.05).play()
@@ -1067,23 +1311,22 @@ export class GameEngine {
 
   private playDummyDeath(id: string) {
     const root = this.dummyMeshes.get(id)
-    const actions = root?.userData.actions as
-      | {
-          idle: THREE.AnimationAction
-          hit: THREE.AnimationAction | null
-          hitAlt: THREE.AnimationAction | null
-          death: THREE.AnimationAction | null
-        }
-      | undefined
-    if (!root || !actions?.death) {
-      if (root) root.userData.animState = 'death'
+    if (!root) return
+    const actions = this.getDummyActions(root)
+    if (!actions?.death) {
+      root.userData.animState = 'death'
       return
     }
     root.userData.animState = 'death'
-    actions.idle.fadeOut(0.08)
+    root.userData.locoState = null
+    const loops = [actions.idle, actions.walk, actions.run, actions.slide]
+    for (const a of loops) {
+      if (a?.isRunning()) a.fadeOut(0.08)
+    }
     actions.hit?.stop()
     actions.hitAlt?.stop()
     actions.death.reset().setEffectiveWeight(1).fadeIn(0.05).play()
+    this.applyDummyCrouchScale(root, false)
   }
 
   private buildImpacts() {
@@ -1402,6 +1645,7 @@ export class GameEngine {
     this.prevVelY = this.player.velocity.y
     stepPlayer(this.player, input, dt, this.colliders)
     stepSniper(this.sniper, input, dt)
+    stepDummies(this.dummies, dt)
     stepRespawns(this.dummies, this.respawns, dt)
 
     // Animate before fire so skinned-mesh hitscan uses this frame's pose
@@ -1422,11 +1666,12 @@ export class GameEngine {
     const speed = Math.hypot(p.velocity.x, p.velocity.z)
     const grounded = p.grounded
 
+    // Landing kick is viewmodel-only (camera stays on true eye for aim parity).
     if (grounded && !this.wasGrounded) {
       const impact = Math.max(0, -this.prevVelY)
       this.landOffset = Math.min(
-        0.14,
-        VIEW_BOB.landKick + impact * 0.012,
+        VIEW_BOB.landMax,
+        VIEW_BOB.landKick + impact * VIEW_BOB.landImpactScale,
       )
     }
     this.wasGrounded = grounded
@@ -1450,37 +1695,81 @@ export class GameEngine {
     this.bobAmount += (bobTarget - this.bobAmount) * bobK
 
     if (grounded && speed > VIEW_BOB.minSpeed) {
-      this.bobPhase +=
-        VIEW_BOB.frequency * (speed / VIEW_BOB.freqSpeedRef) * dt
+      // Soft-cap phase rate so sprint stays deliberate, not a buzz.
+      const freqScale = Math.min(
+        speed / VIEW_BOB.freqSpeedRef,
+        VIEW_BOB.freqSpeedCap,
+      )
+      this.bobPhase += VIEW_BOB.frequency * freqScale * dt
     }
+
+    // Sprint weight: deeper vertical / pitch, not faster cycle.
+    const sprintT = Math.min(
+      1,
+      Math.max(
+        0,
+        (speed - VIEW_BOB.freqSpeedRef) /
+          Math.max(0.001, VIEW_BOB.fullSpeed - VIEW_BOB.freqSpeedRef),
+      ),
+    )
+    const heavy =
+      grounded && p.state !== 'crouch' && p.state !== 'slide'
+        ? 1 + sprintT * (VIEW_BOB.sprintHeavyMul - 1)
+        : 1
 
     const bobA = this.vmFreezeBob ? 0 : this.bobAmount
     const s1 = Math.sin(this.bobPhase)
     const s2 = Math.sin(this.bobPhase * 2)
     const c2 = Math.cos(this.bobPhase * 2)
-    const bobCamX = s1 * VIEW_BOB.camX * bobA
-    const bobCamY = s2 * VIEW_BOB.camY * bobA
+    // Camera stays locked to true eye — only the viewmodel bobs / sways.
+    // Lateral/roll stay lighter; Y + pitch carry the heavy sprint feel.
     const bobGunX = s1 * VIEW_BOB.gunX * bobA
-    const bobGunY = s2 * VIEW_BOB.gunY * bobA
-    const bobGunZ = c2 * VIEW_BOB.gunZ * bobA
-    const bobGunPitch = c2 * VIEW_BOB.gunPitch * bobA
+    const bobGunY = s2 * VIEW_BOB.gunY * bobA * heavy
+    const bobGunZ = c2 * VIEW_BOB.gunZ * bobA * heavy
+    const bobGunPitch = c2 * VIEW_BOB.gunPitch * bobA * heavy
     const bobGunRoll = s1 * VIEW_BOB.gunRoll * bobA
 
+    this.gunSwayTime += dt
+    const adsBlend =
+      this.vmForceAds != null ? this.vmForceAds : this.sniper.adsBlend
+    let swayMul = this.vmFreezeBob
+      ? 0
+      : 1 - adsBlend * (1 - GUN_SWAY.adsMul)
+    if (speed > 1) swayMul *= GUN_SWAY.moveMul
+    const st = this.gunSwayTime
+    const swayX =
+      Math.sin(st * GUN_SWAY.freqYaw) * GUN_SWAY.posX * swayMul
+    const swayY =
+      Math.cos(st * GUN_SWAY.freqPitch) * GUN_SWAY.posY * swayMul
+    const swayYaw =
+      Math.sin(st * GUN_SWAY.freqYaw * 0.85) * GUN_SWAY.yaw * swayMul
+    const swayPitch =
+      Math.cos(st * GUN_SWAY.freqPitch * 1.1) * GUN_SWAY.pitch * swayMul
+    const swayRoll =
+      Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll * swayMul
+
+    // Apex-style left cant while sliding (viewmodel only; smooth in/out).
+    const slideTarget =
+      p.state === 'slide' && !this.vmFreezeBob
+        ? 1 - adsBlend * (1 - SLIDE_GUN.adsMul)
+        : 0
+    const slideK = 1 - Math.exp(-SLIDE_GUN.lerp * dt)
+    this.slideGunBlend += (slideTarget - this.slideGunBlend) * slideK
+    const slide = this.slideGunBlend
+
     // Camera matches effective aim so crosshair, tracer, and hitscan agree.
+    // No landOffset on the camera — viewmodel is camera-local, so a camera dip
+    // was double-counted with the gun kick and felt like a jolt + crawl-up.
     const eye = eyePosition(this.player)
     const look = effectiveLook(this.player, this.sniper)
-    // Lateral bob along camera right; vertical bob + landing dip on eye height.
-    const rightX = Math.cos(look.yaw)
-    const rightZ = -Math.sin(look.yaw)
-    this.camera.position.set(
-      eye.x + rightX * bobCamX,
-      eye.y + bobCamY - this.landOffset,
-      eye.z + rightZ * bobCamX,
-    )
+    this.camera.position.set(eye.x, eye.y, eye.z)
     this.camera.rotation.y = look.yaw
     this.camera.rotation.x = look.pitch
 
-    const fov = LOOK.hipFov + (LOOK.adsFov - LOOK.hipFov) * this.sniper.adsBlend
+    const fov =
+      LOOK.hipFov +
+      (LOOK.adsFov - LOOK.hipFov) * this.sniper.adsBlend +
+      SLIDE_GUN.fovBoost * slide
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov
       this.camera.updateProjectionMatrix()
@@ -1488,23 +1777,37 @@ export class GameEngine {
 
     // viewmodel pose — hip sits lower-right; ADS pulls to center then hides for scope UI
     if (this.viewmodel) {
-      const ads =
-        this.vmForceAds != null ? this.vmForceAds : this.sniper.adsBlend
+      const ads = adsBlend
       const { hipPos, hipRot, adsPos, adsRot, hideAds } = this.vmConfig
       const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
       const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
+      const land = this.vmFreezeBob ? 0 : this.landOffset
       this.viewmodel.position.lerpVectors(hip, scoped, ads)
-      this.viewmodel.position.x += bobGunX
+      this.viewmodel.position.x += bobGunX + swayX + SLIDE_GUN.posX * slide
       this.viewmodel.position.y +=
-        bobGunY - this.landOffset * (this.vmFreezeBob ? 0 : VIEW_BOB.landGunMul)
-      this.viewmodel.position.z += bobGunZ
+        bobGunY + swayY - land + SLIDE_GUN.posY * slide
+      this.viewmodel.position.z += bobGunZ + SLIDE_GUN.posZ * slide
       const recoilKick = this.vmFreezeBob
         ? 0
         : this.sniper.recoil * SNIPER.viewmodelRecoil
+      const landPitch = land * VIEW_BOB.landPitch
       this.viewmodel.rotation.set(
-        hipRot.x * (1 - ads) + adsRot.x * ads + recoilKick + bobGunPitch,
-        hipRot.y * (1 - ads) + adsRot.y * ads,
-        hipRot.z * (1 - ads) + adsRot.z * ads + bobGunRoll,
+        hipRot.x * (1 - ads) +
+          adsRot.x * ads +
+          recoilKick +
+          bobGunPitch +
+          swayPitch +
+          landPitch +
+          SLIDE_GUN.pitch * slide,
+        hipRot.y * (1 - ads) +
+          adsRot.y * ads +
+          swayYaw +
+          SLIDE_GUN.yaw * slide,
+        hipRot.z * (1 - ads) +
+          adsRot.z * ads +
+          bobGunRoll +
+          swayRoll +
+          SLIDE_GUN.roll * slide,
       )
       this.viewmodel.visible = this.vmKeepVisible || ads < hideAds
     }
@@ -1516,7 +1819,9 @@ export class GameEngine {
 
       const wasAlive = mesh.userData.wasAlive !== false
       if (d.alive && !wasAlive) {
+        mesh.userData.locoState = null
         this.playDummyIdle(mesh)
+        this.syncDummyLocomotion(d.id)
       }
       mesh.userData.wasAlive = d.alive
 
@@ -1525,6 +1830,17 @@ export class GameEngine {
       mesh.visible = d.alive || dying
 
       if (!d.alive && !dying) continue
+
+      // Sync root pose to sim (dummies wander for locomotion review)
+      if (d.alive) {
+        mesh.position.set(d.position.x, d.position.y, d.position.z)
+        mesh.rotation.y = d.yaw
+        this.syncDummyLocomotion(d.id)
+        this.setDummyLabel(mesh, d.state)
+      } else {
+        this.setDummyLabel(mesh, 'dead')
+      }
+
       this.paintDummyMeshes(mesh, d.alive ? d.hp / d.maxHp : 0)
     }
 
@@ -1545,7 +1861,9 @@ export class GameEngine {
   private fireShot() {
     const look = effectiveLook(this.player, this.sniper)
     const origin = eyePosition(this.player)
-    const dir = lookDirection(look.yaw, look.pitch)
+    // Cone sample — hipfire is loose, ADS is near-laser (COD-style accuracy).
+    const spread = aimSpread(this.sniper, this.player)
+    const dir = spreadLookDirection(look.yaw, look.pitch, spread)
 
     // World cover blocks first (AABB), then ray vs real character meshes
     const worldHit = castHitscan(origin, dir, [], this.colliders)
@@ -1625,6 +1943,7 @@ export class GameEngine {
       phase: this.sniper.phase,
       ads: this.sniper.ads,
       adsBlend: this.sniper.adsBlend,
+      aimSpread: aimSpread(this.sniper, this.player),
       moveState: this.player.state,
       speed,
       pointerLocked: this.input.isPointerLocked(),

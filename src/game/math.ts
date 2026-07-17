@@ -71,6 +71,25 @@ export function lookDirection(yaw: number, pitch: number): Vec3 {
 }
 
 /**
+ * COD-style random deviation inside a cone of half-angle `halfAngleRad`.
+ * Samples uniformly in the angular disk (not a square), then offsets yaw/pitch.
+ */
+export function spreadLookDirection(
+  yaw: number,
+  pitch: number,
+  halfAngleRad: number,
+  rng: () => number = Math.random,
+): Vec3 {
+  if (halfAngleRad <= 1e-8) return lookDirection(yaw, pitch)
+  // Uniform disk: r = sqrt(u) * radius keeps density flat in polar space.
+  const r = Math.sqrt(rng()) * halfAngleRad
+  const phi = rng() * Math.PI * 2
+  const yawOff = r * Math.cos(phi)
+  const pitchOff = r * Math.sin(phi)
+  return lookDirection(yaw + yawOff, clamp(pitch + pitchOff, -1.5, 1.5))
+}
+
+/**
  * Camera-relative wish direction on XZ.
  * Must match lookDirection / Three.js camera basis or strafe/slide feel "sideways".
  * forward basis: (-sin(yaw), 0, -cos(yaw))

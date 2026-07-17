@@ -58,14 +58,27 @@ export const SNIPER = {
   /** Tuned near DJMaesen reload segment (~1.8s raw). */
   reloadTime: 1.9,
   maxRange: 400,
-  hipSwayAmp: 0.012,
-  adsSwayAmp: 0.0025,
-  moveSwayMul: 2.2,
-  airSwayMul: 3.5,
-  slideSwayMul: 4,
   recoilKick: 0.045,
   recoilDecay: 8,
   viewmodelRecoil: 0.05,
+
+  /**
+   * COD-style accuracy cone (half-angle, radians).
+   * Hipfire is intentionally loose on a sniper; ADS is near-laser.
+   */
+  hipSpread: 0.055,
+  adsSpread: 0.0012,
+  /** Multipliers stacked on top of the ADS-blended base. */
+  standSpreadMul: 1,
+  walkSpreadMul: 1.35,
+  moveSpreadMul: 1.75,
+  crouchSpreadMul: 0.72,
+  airSpreadMul: 2.1,
+  slideSpreadMul: 2.4,
+  /** Extra cone while recoil kick is active. */
+  recoilSpreadMul: 0.55,
+  /** Brief bloom after each shot (radians added, decays with recoil). */
+  fireBloom: 0.018,
 } as const
 
 /**
@@ -136,20 +149,27 @@ export const VIEWMODEL = {
   },
 } as const
 
-/** Walk cycle head + gun bob (visual only — hitscan stays on true eye). */
+/** Walk cycle gun bob (viewmodel only — camera stays on true eye). */
 export const VIEW_BOB = {
-  /** Cycle rate (rad/s) at walkSpeed */
-  frequency: 9.5,
+  /**
+   * Cycle rate (rad/s) at walk. Sprint does NOT fully scale this —
+   * frequency is soft-capped so the rifle stays heavy instead of buzzing.
+   */
+  frequency: 8.2,
   freqSpeedRef: 4.5,
-  /** Camera translation amplitude (world units) */
-  camY: 0.028,
-  camX: 0.014,
-  /** Viewmodel local amplitude */
-  gunY: 0.01,
-  gunX: 0.007,
-  gunZ: 0.004,
-  gunPitch: 0.01,
-  gunRoll: 0.014,
+  /** Max phase-rate multiplier vs walk (sprint was ~1.64× without a cap) */
+  freqSpeedCap: 1.12,
+  /**
+   * Amplitude scale as speed goes walk → run. Heavier = deeper dips,
+   * not faster chatter.
+   */
+  sprintHeavyMul: 1.4,
+  /** Viewmodel local amplitude (walk / hip) */
+  gunY: 0.012,
+  gunX: 0.0055,
+  gunZ: 0.0035,
+  gunPitch: 0.014,
+  gunRoll: 0.01,
   /** Multipliers by state (ADS blends toward adsMul) */
   adsMul: 0.06,
   crouchMul: 0.4,
@@ -157,11 +177,64 @@ export const VIEW_BOB = {
   airMul: 0.15,
   minSpeed: 0.35,
   fullSpeed: 7.4,
-  amountLerp: 10,
-  /** Landing dip */
-  landKick: 0.05,
-  landDecay: 9,
-  landGunMul: 0.55,
+  /** Slightly slower ease so the gun settles with weight */
+  amountLerp: 7.5,
+  /**
+   * Landing kick — viewmodel only (camera stays on true eye).
+   * Values are camera-local units; keep near walk-bob scale so it settles
+   * instead of a big jolt + crawl-up.
+   */
+  landKick: 0.012,
+  /** Extra dip from fall speed (× |vy| on impact) */
+  landImpactScale: 0.0025,
+  landMax: 0.028,
+  /** Exp decay rate — snappy return to rest */
+  landDecay: 16,
+  /** Pitch (rad) per unit of landOffset */
+  landPitch: 0.55,
+} as const
+
+/**
+ * Subtle continuous viewmodel sway (gun only — never the camera).
+ * Amplitudes are intentionally tiny so the rifle feels alive, not floaty.
+ */
+export const GUN_SWAY = {
+  /** Primary / secondary cycle rates (rad/s) */
+  freqYaw: 1.35,
+  freqPitch: 1.05,
+  freqRoll: 0.85,
+  /** Position (local units) */
+  posX: 0.0016,
+  posY: 0.0011,
+  /** Rotation (radians) */
+  yaw: 0.004,
+  pitch: 0.0032,
+  roll: 0.0025,
+  /** ADS almost freezes sway */
+  adsMul: 0.08,
+  /** Slight extra while moving */
+  moveMul: 1.35,
+} as const
+
+/**
+ * Apex-style slide cant — viewmodel only (camera stays level).
+ * Positive roll banks the rifle top-left in camera space (model-facing).
+ */
+export const SLIDE_GUN = {
+  /** Full-slide roll / yaw / pitch (radians) */
+  roll: 0.48,
+  yaw: -0.1,
+  pitch: 0.05,
+  /** Local position shift at full cant */
+  posX: 0.045,
+  posY: -0.018,
+  posZ: 0.02,
+  /** Blend speed into / out of slide */
+  lerp: 14,
+  /** ADS damps the cant (still a hint while sliding scoped) */
+  adsMul: 0.12,
+  /** Extra degrees of FOV at full hip slide (fades with ADS via slide blend) */
+  fovBoost: 6,
 } as const
 
 export const PLAYER = {
@@ -214,6 +287,45 @@ export const DUMMY = {
   headOffsetY: 1.44,
   bodyOffsetY: 1.0,
   respawnTime: 2.5,
+  /**
+   * Locomotion demo: dummies cycle walk / run / crouch / slide so we can
+   * judge man.glb clips in motion. man.glb has no crouch clip — crouch uses
+   * Walk at lower speed + slight squash. Slide uses Roll (one-shot).
+   */
+  moveEnabled: true,
+  /** Max distance from home while wandering */
+  wanderRadius: 7,
+  /** Keep dummies on the range floor (half floorSize with margin) */
+  bounds: 20,
+  /** Seconds spent in each state (min, max) before AI picks next */
+  stateDuration: {
+    idle: [1.2, 2.4],
+    walk: [2.8, 4.5],
+    run: [2.2, 3.6],
+    crouch: [2.4, 3.8],
+    slide: [0.55, 0.55],
+  } as const,
+  /** Ordered demo loop so every state shows up regularly */
+  stateCycle: [
+    'idle',
+    'walk',
+    'run',
+    'slide',
+    'run',
+    'crouch',
+    'walk',
+    'idle',
+    'run',
+    'slide',
+  ] as const,
+  /** Reach distance to pick a new wander point */
+  arriveDist: 0.55,
+  /** Yaw turn rate (rad/s) toward move direction */
+  turnSpeed: 10,
+  /** Visual squash for crouch (no crouch clip in man.glb) */
+  crouchScaleY: 0.78,
+  /** Label height above feet */
+  labelY: 2.05,
 } as const
 
 /** Dev / tuning overlays */

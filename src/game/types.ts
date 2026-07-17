@@ -80,14 +80,31 @@ export interface HitVolumes {
   bodySpheres?: { center: Vec3; radius: number }[]
 }
 
+/** Locomotion demo states for range dummies (mirrors player MoveState, no jump). */
+export type DummyMoveState = 'idle' | 'walk' | 'run' | 'crouch' | 'slide'
+
 export interface DummyTarget {
   id: string
   position: Vec3
+  /** Horizontal velocity (y unused; kept for parity) */
+  velocity: Vec3
   hp: number
   maxHp: number
   alive: boolean
   /** World yaw facing */
   yaw: number
+  /** Current locomotion for anim + AI */
+  state: DummyMoveState
+  /** Spawn / wander center */
+  home: Vec3
+  /** Seconds left in current AI state before next pick */
+  stateTimer: number
+  /** Active slide/roll duration remaining */
+  slideTimer: number
+  /** Wander destination on XZ plane (y ignored) */
+  target: Vec3
+  /** Index into DUMMY.stateCycle for demo sequencing */
+  cycleIdx: number
 }
 
 export type SniperPhase = 'ready' | 'firing' | 'bolt' | 'reloading'
@@ -102,7 +119,8 @@ export interface SniperState {
   adsBlend: number
   /** 0..1 recoil kick that decays */
   recoil: number
-  swayTime: number
+  /** Extra cone bloom after firing (radians), decays quickly */
+  fireBloom: number
 }
 
 export interface HitEvent {
@@ -129,6 +147,8 @@ export interface HudSnapshot {
   phase: SniperPhase
   ads: boolean
   adsBlend: number
+  /** Current aim cone half-angle (radians) — drives dynamic crosshair */
+  aimSpread: number
   moveState: MoveState
   speed: number
   pointerLocked: boolean

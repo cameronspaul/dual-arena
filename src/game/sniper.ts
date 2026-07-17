@@ -1,5 +1,5 @@
-import { SNIPER } from './config'
-import { clamp } from './math'
+import { MOVE, SNIPER } from './config'
+import { clamp, lerp } from './math'
 import type { PlayerBody, PlayerInput, SniperState } from './types'
 
 export function createSniper(): SniperState {
@@ -12,7 +12,7 @@ export function createSniper(): SniperState {
     ads: false,
     adsBlend: 0,
     recoil: 0,
-    swayTime: 0,
+    fireBloom: 0,
   }
 }
 
@@ -22,8 +22,8 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
   const k = 1 - Math.exp(-10 * dt)
   s.adsBlend = lerp(s.adsBlend, target, k)
 
-  s.swayTime += dt
   s.recoil = Math.max(0, s.recoil - SNIPER.recoilDecay * dt)
+  s.fireBloom = Math.max(0, s.fireBloom - SNIPER.recoilDecay * 1.2 * dt)
 
   if (s.phase !== 'ready') {
     s.phaseTimer -= dt
@@ -59,10 +59,6 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
   // auto reload on empty fire attempt handled by caller wanting fire
 }
 
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t
-}
-
 /** Returns true if a shot was consumed this frame. */
 export function tryFire(s: SniperState, input: PlayerInput): boolean {
   if (!input.fire) return false
@@ -85,27 +81,44 @@ export function tryFire(s: SniperState, input: PlayerInput): boolean {
 
 export function applyRecoil(s: SniperState) {
   s.recoil = Math.min(1, s.recoil + 1)
+  s.fireBloom = Math.min(0.08, s.fireBloom + SNIPER.fireBloom)
 }
 
-/** Sway angles (radians) added to pitch/yaw for aim. */
+/**
+ * Current hitscan cone half-angle (radians). COD logic:
+ * hip = wide, ADS = tight, movement/air/slide open the cone further.
+ */
+export function aimSpread(s: SniperState, body: PlayerBody): number {
+  const base = lerp(SNIPER.hipSpread, SNIPER.adsSpread, s.adsBlend)
+  const speed = Math.hypot(body.velocity.x, body.velocity.z)
+  let mul = SNIPER.standSpreadMul
+
+  if (!body.grounded) {
+    mul *= SNIPER.airSpreadMul
+  } else if (body.state === 'slide') {
+    mul *= SNIPER.slideSpreadMul
+  } else if (body.state === 'crouch') {
+    mul *= SNIPER.crouchSpreadMul
+  } else if (body.state === 'run' || speed > MOVE.walkSpeed * 0.95) {
+    mul *= SNIPER.moveSpreadMul
+  } else if (speed > 0.6) {
+    mul *= SNIPER.walkSpreadMul
+  }
+
+  mul *= 1 + s.recoil * SNIPER.recoilSpreadMul
+  // Fire bloom mostly affects hipfire; ADS recovers almost immediately.
+  return base * mul + s.fireBloom * (1 - s.adsBlend * 0.85)
+}
+
+/** Recoil kick only — no idle/move sway on the camera or hitscan. */
 export function aimSway(
   s: SniperState,
-  body: PlayerBody,
+  _body: PlayerBody,
 ): { yaw: number; pitch: number } {
-  const t = s.swayTime
-  const speed = Math.hypot(body.velocity.x, body.velocity.z)
-  let amp = s.ads ? SNIPER.adsSwayAmp : SNIPER.hipSwayAmp
-
-  if (!body.grounded) amp *= SNIPER.airSwayMul
-  else if (body.state === 'slide') amp *= SNIPER.slideSwayMul
-  else if (speed > 1) amp *= 1 + (speed / 8) * SNIPER.moveSwayMul * 0.15
-
-  const yaw = Math.sin(t * 1.7) * amp + Math.sin(t * 0.4) * amp * 0.5
-  const pitch =
-    Math.cos(t * 1.3) * amp * 0.8 +
-    s.recoil * SNIPER.recoilKick
-
-  return { yaw, pitch }
+  return {
+    yaw: 0,
+    pitch: s.recoil * SNIPER.recoilKick,
+  }
 }
 
 export function effectiveLook(

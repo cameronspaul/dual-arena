@@ -1,9 +1,16 @@
 import { Link } from 'react-router-dom'
 import type { HudSnapshot } from '@/game/types'
-import { Crosshair, Target } from 'lucide-react'
+import { Target } from 'lucide-react'
+import { ScopeOverlay } from './ScopeOverlay'
 
 interface GameHudProps {
   hud: HudSnapshot | null
+}
+
+/** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
+function spreadToGap(spreadRad: number): number {
+  // ~3.2° (0.055) hip → ~52px gap; ADS laser → ~4px rest gap
+  return Math.min(90, 4 + spreadRad * 880)
 }
 
 export function GameHud({ hud }: GameHudProps) {
@@ -19,12 +26,24 @@ export function GameHud({ hud }: GameHudProps) {
           : 'READY'
 
   const showHit = hud.lastHit && hud.lastHitAge < 1.2
-  const scoped = hud.adsBlend > 0.55
+  const fullyScoped = hud.adsBlend > 0.55
+  const gap = spreadToGap(hud.aimSpread)
+  // Arms lengthen slightly as the cone opens so the reticle still reads.
+  const arm = Math.min(14, 8 + gap * 0.06)
+  const thick = 2
+  // Dim chrome HUD while in the glass so the scope owns the frame.
+  const chromeOpacity = fullyScoped ? 0.35 : 1
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
+      {/* Sniper scope (blackout + housing + reticle) */}
+      <ScopeOverlay adsBlend={hud.adsBlend} />
+
       {/* Top bar */}
-      <div className="pointer-events-auto absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
+      <div
+        className="pointer-events-auto absolute top-3 left-3 right-3 flex items-start justify-between gap-3 transition-opacity duration-150"
+        style={{ opacity: chromeOpacity }}
+      >
         <div className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-sm">
           <div className="text-xs font-medium tracking-widest text-white/50 uppercase">
             Dual Arena — Range
@@ -53,32 +72,64 @@ export function GameHud({ hud }: GameHudProps) {
         </Link>
       </div>
 
-      {/* Scope vignette */}
-      {scoped && (
+      {/* Hipfire crosshair — fades out as scope takes over */}
+      {!fullyScoped && (
         <div
-          className="absolute inset-0"
-          style={{
-            background: `radial-gradient(circle at center, transparent 18%, rgba(0,0,0,${0.35 + hud.adsBlend * 0.55}) 42%, rgba(0,0,0,${0.75 + hud.adsBlend * 0.2}) 70%)`,
-          }}
-        />
-      )}
-
-      {/* Crosshair */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-        {scoped ? (
-          <div className="relative h-48 w-48">
-            <div className="absolute inset-0 rounded-full border border-white/25" />
-            <div className="absolute top-1/2 left-0 h-px w-full bg-white/30" />
-            <div className="absolute top-0 left-1/2 h-full w-px bg-white/30" />
-            <div className="absolute top-1/2 left-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500/90" />
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
+          style={{ opacity: Math.max(0, 1 - hud.adsBlend * 1.8) }}
+        >
+          <div
+            className="relative"
+            style={{ width: gap * 2 + arm * 2 + 8, height: gap * 2 + arm * 2 + 8 }}
+          >
+            {/* Center micro-dot */}
+            <div
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              style={{ width: 2, height: 2 }}
+            />
+            {/* Top arm */}
+            <div
+              className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              style={{
+                width: thick,
+                height: arm,
+                top: `calc(50% - ${gap}px - ${arm}px)`,
+                transition: 'top 60ms linear, height 60ms linear',
+              }}
+            />
+            {/* Bottom arm */}
+            <div
+              className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              style={{
+                width: thick,
+                height: arm,
+                top: `calc(50% + ${gap}px)`,
+                transition: 'top 60ms linear, height 60ms linear',
+              }}
+            />
+            {/* Left arm */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              style={{
+                height: thick,
+                width: arm,
+                left: `calc(50% - ${gap}px - ${arm}px)`,
+                transition: 'left 60ms linear, width 60ms linear',
+              }}
+            />
+            {/* Right arm */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
+              style={{
+                height: thick,
+                width: arm,
+                left: `calc(50% + ${gap}px)`,
+                transition: 'left 60ms linear, width 60ms linear',
+              }}
+            />
           </div>
-        ) : (
-          <Crosshair
-            className="h-6 w-6 text-white/70 drop-shadow"
-            strokeWidth={1.5}
-          />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Hit marker */}
       {showHit && hud.lastHit && (
@@ -110,7 +161,10 @@ export function GameHud({ hud }: GameHudProps) {
       )}
 
       {/* Bottom HUD */}
-      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between">
+      <div
+        className="absolute bottom-4 left-4 right-4 flex items-end justify-between transition-opacity duration-150"
+        style={{ opacity: chromeOpacity }}
+      >
         <div className="rounded-lg border border-white/10 bg-black/55 px-4 py-3 backdrop-blur-sm">
           <div className="text-[10px] tracking-widest text-white/40 uppercase">
             Health

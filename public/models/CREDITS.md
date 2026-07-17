@@ -1,5 +1,7 @@
 # 3D model credits
 
+Environment textures (sky, floor) live in `public/env/` — see `public/env/CREDITS.md`.
+
 ## sniper_animated.glb (active viewmodel)
 
 - **Source:** [sniper animated — DJMaesen (bumstrum)](https://sketchfab.com/3d-models/sniper-animated-b48999a250b2433da59f705c371a49b2)

@@ -12,6 +12,8 @@ function hudKey(s: HudSnapshot): string {
     s.phase,
     s.ads ? 1 : 0,
     Math.round(s.adsBlend * 10),
+    // Quantize so the dynamic reticle updates as the cone opens/closes
+    Math.round(s.aimSpread * 400),
     s.moveState,
     Math.round(s.speed * 2),
     s.pointerLocked ? 1 : 0,
