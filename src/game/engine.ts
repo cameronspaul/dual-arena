@@ -8,7 +8,6 @@ import { lookDirection } from './math'
 import {
   createPlayer,
   eyePosition,
-  playerVolumes,
   stepPlayer,
 } from './player'
 import {
@@ -21,7 +20,6 @@ import {
 import type {
   HitEvent,
   HitZone,
-  HitVolumes,
   HudSnapshot,
   PlayerBody,
   RayHit,
@@ -131,8 +129,6 @@ export class GameEngine {
   private prevVelY = 0
   private dummyMeshes = new Map<string, THREE.Group>()
   private dummyMixers = new Map<string, THREE.AnimationMixer>()
-  /** Local player pose volumes (no 3rd-person mesh yet). */
-  private playerHitboxHelper: THREE.Group | null = null
   private impactPool: THREE.Mesh[] = []
   private tracer: THREE.Line | null = null
   private tracerTimer = 0
@@ -147,10 +143,6 @@ export class GameEngine {
   private readonly _raycaster = new THREE.Raycaster()
   private readonly _rayOrigin = new THREE.Vector3()
   private readonly _rayDir = new THREE.Vector3()
-  private readonly _yAxis = new THREE.Vector3(0, 1, 0)
-  private readonly _capDir = new THREE.Vector3()
-  private static readonly MAX_CAPSULE_HELPERS = 4
-  private static readonly MAX_BODY_SPHERE_HELPERS = 0
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -177,10 +169,8 @@ export class GameEngine {
 
     this.buildRange()
     this.buildImpacts()
-    if (DEBUG.showHitboxes) {
-      this.playerHitboxHelper = this.makeHitboxHelper()
-      this.scene.add(this.playerHitboxHelper)
-    }
+    // Never draw pose hitboxes on the local FP player — they sit in camera
+    // space and block the view. DEBUG.showHitboxes only applies to dummies.
     void this.loadViewmodel()
     void this.loadDummies()
     this.input.attach(this.renderer.domElement)
@@ -837,125 +827,6 @@ export class GameEngine {
   }
 
   /**
-   * Single overlay style: wireframe only (no fill + outline double-draw).
-   * Head = red sphere; body = cyan capsules / shoulder spheres.
-   */
-  private makeHitboxHelper(): THREE.Group {
-    const g = new THREE.Group()
-    g.renderOrder = 20
-
-    const bodyMat = new THREE.MeshBasicMaterial({
-      color: 0x44ccff,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    })
-    const headMat = new THREE.MeshBasicMaterial({
-      color: 0xff4466,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-    })
-
-    const headGeo = new THREE.SphereGeometry(1, 12, 10)
-    const head = new THREE.Mesh(headGeo, headMat)
-    head.renderOrder = 20
-    head.name = 'head'
-    g.add(head)
-
-    const cylGeo = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true)
-    const sphGeo = new THREE.SphereGeometry(1, 8, 6)
-
-    for (let i = 0; i < GameEngine.MAX_CAPSULE_HELPERS; i++) {
-      const cap = new THREE.Group()
-      cap.name = `cap${i}`
-      cap.visible = false
-
-      const cyl = new THREE.Mesh(cylGeo, bodyMat.clone())
-      cyl.name = 'cyl'
-      const sA = new THREE.Mesh(sphGeo, bodyMat.clone())
-      sA.name = 'sA'
-      sA.position.y = -0.5
-      const sB = new THREE.Mesh(sphGeo, bodyMat.clone())
-      sB.name = 'sB'
-      sB.position.y = 0.5
-
-      cap.add(cyl, sA, sB)
-      g.add(cap)
-    }
-
-    for (let i = 0; i < GameEngine.MAX_BODY_SPHERE_HELPERS; i++) {
-      const s = new THREE.Mesh(sphGeo, bodyMat.clone())
-      s.name = `bs${i}`
-      s.visible = false
-      g.add(s)
-    }
-
-    return g
-  }
-
-  private orientCapsuleHelper(
-    cap: THREE.Object3D,
-    a: { x: number; y: number; z: number },
-    b: { x: number; y: number; z: number },
-    radius: number,
-  ) {
-    const dx = b.x - a.x
-    const dy = b.y - a.y
-    const dz = b.z - a.z
-    const len = Math.hypot(dx, dy, dz)
-    if (len < 1e-5 || radius < 1e-5) {
-      cap.visible = false
-      return
-    }
-    cap.visible = true
-    cap.position.set((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5)
-    cap.scale.set(radius, len, radius)
-    this._capDir.set(dx / len, dy / len, dz / len)
-    cap.quaternion.setFromUnitVectors(this._yAxis, this._capDir)
-  }
-
-  private syncHitboxHelper(g: THREE.Group, v: HitVolumes) {
-    const head = g.getObjectByName('head')
-    if (head) {
-      head.position.set(v.headCenter.x, v.headCenter.y, v.headCenter.z)
-      // Non-uniform scale → egg / ellipsoid
-      head.scale.set(
-        Math.max(0.01, v.headRadii.x),
-        Math.max(0.01, v.headRadii.y),
-        Math.max(0.01, v.headRadii.z),
-      )
-    }
-
-    for (let i = 0; i < GameEngine.MAX_CAPSULE_HELPERS; i++) {
-      const cap = g.getObjectByName(`cap${i}`)
-      if (!cap) continue
-      const c = v.capsules[i]
-      if (!c) {
-        cap.visible = false
-        continue
-      }
-      this.orientCapsuleHelper(cap, c.a, c.b, c.radius)
-    }
-
-    const spheres = v.bodySpheres ?? []
-    for (let i = 0; i < GameEngine.MAX_BODY_SPHERE_HELPERS; i++) {
-      const s = g.getObjectByName(`bs${i}`)
-      if (!s) continue
-      const src = spheres[i]
-      if (!src) {
-        s.visible = false
-        continue
-      }
-      s.visible = true
-      s.position.set(src.center.x, src.center.y, src.center.z)
-      s.scale.setScalar(Math.max(0.01, src.radius))
-    }
-  }
-
-  /**
    * Hitscan against the real character meshes (skinned pose included).
    * Head meshes win near-ties so hairline shots still count as headshots.
    */
@@ -1253,97 +1124,86 @@ export class GameEngine {
   }
 
   /**
-   * Restyle sniper_animated.glb to match man.glb's low-poly look:
-   * no PBR maps, flat shading, solid colors from the character palette.
+   * Restyle sniper_animated.glb toward man.glb's low-poly look while
+   * keeping albedo color: flat shading + baseColor map, drop detail maps.
    * Geometry + skins + animations are left intact.
    */
   private styleViewmodelLowPoly(root: THREE.Object3D) {
-    // man.glb material factors (Suit / Skin / Black) — keep palette consistent
-    const SKIN = 0x7e5531 // ~ man Skin baseColor
-    const SUIT = 0x030508 // ~ man Suit (near-black)
-    const GUN = 0x1a1c20 // slightly lifted metal so facets read
-    const POLYMER = 0x2a2218 // stock / cheekrest
-    const BRASS = 0xb8923a
-    const LENS = 0x0a1820
-
-    const seen = new Set<THREE.Material>()
-    const toDispose: THREE.Material[] = []
+    const seenMats = new Set<THREE.Material>()
+    const dropTex = new Set<THREE.Texture>()
+    const oldMats: THREE.Material[] = []
 
     root.traverse((o) => {
       if (!(o instanceof THREE.Mesh) && !(o instanceof THREE.SkinnedMesh)) {
         return
       }
-      const name = o.name.toLowerCase()
-      let color = GUN
-      let metalness = 0.35
-      let roughness = 0.45
-      let transparent = false
-      let opacity = 1
-      let side: THREE.Side = THREE.FrontSide
 
-      if (name.includes('arm')) {
-        color = SKIN
-        metalness = 0.15
-        roughness = 0.55
-      } else if (name.includes('glass') || name.includes('lens')) {
-        color = LENS
-        metalness = 0
-        roughness = 0.35
-        transparent = true
-        opacity = 0.45
-        side = THREE.DoubleSide
-      } else if (name.includes('bullet')) {
-        color = BRASS
-        metalness = 0.55
-        roughness = 0.35
-      } else if (name.includes('cheek') || name.includes('clip')) {
-        color = POLYMER
-        metalness = 0.1
-        roughness = 0.65
-      } else if (
-        name.includes('trigger') ||
-        name.includes('bolt') ||
-        name.includes('silencer') ||
-        name.includes('scope') ||
-        name.includes('base')
-      ) {
-        color = GUN
-        metalness = 0.4
-        roughness = 0.42
-      } else {
-        color = SUIT
-        metalness = 0.4
-        roughness = 0.42
-      }
-
-      const prev = Array.isArray(o.material) ? o.material : [o.material]
-      for (const m of prev) {
-        if (!seen.has(m)) {
-          seen.add(m)
-          toDispose.push(m)
+      const prevList = Array.isArray(o.material) ? o.material : [o.material]
+      const nextList = prevList.map((raw) => {
+        if (!seenMats.has(raw)) {
+          seenMats.add(raw)
+          oldMats.push(raw)
         }
-      }
 
-      o.material = new THREE.MeshStandardMaterial({
-        color,
-        metalness,
-        roughness,
-        flatShading: true,
-        transparent,
-        opacity,
-        side,
-        depthWrite: opacity >= 0.99,
+        const src = raw as THREE.MeshStandardMaterial
+        const mat = src.clone() as THREE.MeshStandardMaterial
+
+        // Keep albedo (map / color); strip detail PBR maps for a flatter look
+        for (const key of [
+          'normalMap',
+          'roughnessMap',
+          'metalnessMap',
+          'aoMap',
+          'emissiveMap',
+          'bumpMap',
+          'displacementMap',
+        ] as const) {
+          const tex = mat[key]
+          if (tex) {
+            dropTex.add(tex)
+            mat[key] = null
+          }
+        }
+
+        mat.flatShading = true
+        // Simple constants so shading reads like low-poly, not realistic metal
+        if (mat.metalnessMap == null) mat.metalness = 0.2
+        if (mat.roughnessMap == null) mat.roughness = 0.55
+
+        const name = o.name.toLowerCase()
+        if (name.includes('glass') || name.includes('lens')) {
+          mat.transparent = true
+          mat.opacity = Math.min(mat.opacity, 0.5)
+          mat.side = THREE.DoubleSide
+          mat.depthWrite = false
+          mat.metalness = 0
+          mat.roughness = 0.35
+        }
+
+        mat.needsUpdate = true
+        return mat
       })
+
+      o.material = Array.isArray(o.material) ? nextList : nextList[0]
     })
 
-    for (const m of toDispose) {
-      const std = m as THREE.MeshStandardMaterial
-      std.map?.dispose()
-      std.normalMap?.dispose()
-      std.roughnessMap?.dispose()
-      std.metalnessMap?.dispose()
-      std.aoMap?.dispose()
-      std.emissiveMap?.dispose()
+    // Free original materials + detail maps (keep albedo maps still in use)
+    const keepTex = new Set<THREE.Texture>()
+    root.traverse((o) => {
+      if (!(o instanceof THREE.Mesh) && !(o instanceof THREE.SkinnedMesh)) {
+        return
+      }
+      const list = Array.isArray(o.material) ? o.material : [o.material]
+      for (const m of list) {
+        const std = m as THREE.MeshStandardMaterial
+        if (std.map) keepTex.add(std.map)
+      }
+    })
+
+    for (const tex of dropTex) {
+      if (!keepTex.has(tex)) tex.dispose()
+    }
+    for (const m of oldMats) {
       m.dispose()
     }
   }
@@ -1666,11 +1526,6 @@ export class GameEngine {
 
       if (!d.alive && !dying) continue
       this.paintDummyMeshes(mesh, d.alive ? d.hp / d.maxHp : 0)
-    }
-
-    // Local player pose hitboxes (crouch / slide / jump) — debug + future 1v1
-    if (this.playerHitboxHelper) {
-      this.syncHitboxHelper(this.playerHitboxHelper, playerVolumes(this.player))
     }
 
     // tracer fade
