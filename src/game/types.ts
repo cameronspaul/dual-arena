@@ -121,6 +121,14 @@ export interface SniperState {
   recoil: number
   /** Extra cone bloom after firing (radians), decays quickly */
   fireBloom: number
+  /**
+   * R / empty-fire while bolting or firing is remembered so reload still
+   * starts once ready — including while holding ADS in the scope.
+   */
+  reloadQueued: boolean
+  /** Scoped reload reticle offset (~-1..1), visual only */
+  reloadJiggleX: number
+  reloadJiggleY: number
 }
 
 export interface HitEvent {
@@ -147,6 +155,9 @@ export interface HudSnapshot {
   phase: SniperPhase
   ads: boolean
   adsBlend: number
+  /** Scoped reload reticle offset (~-1..1) — jiggle while mag changing */
+  reloadJiggleX: number
+  reloadJiggleY: number
   /** Current aim cone half-angle (radians) — drives dynamic crosshair */
   aimSpread: number
   moveState: MoveState

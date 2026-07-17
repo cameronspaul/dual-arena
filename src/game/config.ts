@@ -41,6 +41,20 @@ export const LOOK = {
   adsBlendSpeed: 10,
 } as const
 
+/** Over-the-shoulder third-person camera (toggle in-game). */
+export const THIRD_PERSON = {
+  /** Distance behind the aim pivot */
+  distance: 3.4,
+  /** Aim pivot height as a fraction of live eye height */
+  pivotEyeFrac: 0.82,
+  /** Right-shoulder offset (world-horizontal, meters) */
+  shoulder: 0.48,
+  /** Keep the camera above the floor by this much */
+  minHeight: 0.35,
+  /** Slight FOV bump vs first-person hip FOV */
+  fovBoost: 4,
+} as const
+
 export const SNIPER = {
   magSize: 5,
   reserve: 30,
@@ -52,11 +66,11 @@ export const SNIPER = {
   armDamage: 25,
   /** Legs / feet */
   legDamage: 25,
-  /** Tuned near DJMaesen sniper_animated bolt segment (~1.6s raw). */
-  boltTime: 1.2,
+  /** Tuned near DJMaesen bolt segment frames 12–49 @30fps (~1.23s raw). */
+  boltTime: 1.15,
   fireAnimTime: 0.12,
-  /** Tuned near DJMaesen reload segment (~1.8s raw). */
-  reloadTime: 1.9,
+  /** Mag + chamber frames 49–148 @30fps (~3.3s raw); sped up for game feel. */
+  reloadTime: 2.1,
   maxRange: 400,
   recoilKick: 0.045,
   recoilDecay: 8,

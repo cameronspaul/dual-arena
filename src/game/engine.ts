@@ -6,14 +6,16 @@ import {
   DUMMY,
   GUN_SWAY,
   LOOK,
+  MOVE,
   SLIDE_GUN,
   SNIPER,
+  THIRD_PERSON,
   VIEW_BOB,
   VIEWMODEL,
 } from './config'
 import { castHitscan } from './hitscan'
 import { InputManager } from './input'
-import { spreadLookDirection } from './math'
+import { lookDirection, spreadLookDirection } from './math'
 import {
   createPlayer,
   eyePosition,
@@ -178,6 +180,18 @@ export class GameEngine {
   private readonly _raycaster = new THREE.Raycaster()
   private readonly _rayOrigin = new THREE.Vector3()
   private readonly _rayDir = new THREE.Vector3()
+  /** Over-the-shoulder third-person camera (viewmodel hidden). */
+  private thirdPerson = false
+  /** When true, dummy AI + locomotion animations freeze in place. */
+  private dummiesPaused = false
+  /**
+   * Local player third-person body (man.glb when loaded, capsule fallback).
+   * Not registered for hitscan — own shots still use eye origin.
+   */
+  private playerBody: THREE.Group | null = null
+  private playerMixer: THREE.AnimationMixer | null = null
+  /** True once man.glb replaced the capsule placeholder. */
+  private playerBodyIsMan = false
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -205,6 +219,7 @@ export class GameEngine {
 
     this.buildRange()
     this.buildImpacts()
+    this.buildPlayerBody()
     void this.loadEnvironment()
     // Never draw pose hitboxes on the local FP player — they sit in camera
     // space and block the view. DEBUG.showHitboxes only applies to dummies.
@@ -312,6 +327,27 @@ export class GameEngine {
 
   getViewmodelKeepVisible() {
     return this.vmKeepVisible
+  }
+
+  setThirdPerson(enabled: boolean) {
+    this.thirdPerson = enabled
+    if (this.playerBody) this.playerBody.visible = enabled
+    if (this.viewmodel && !enabled) {
+      // Restore FP visibility rules next tick; force on until then if needed
+      this.viewmodel.visible = true
+    }
+  }
+
+  isThirdPerson() {
+    return this.thirdPerson
+  }
+
+  setDummiesPaused(paused: boolean) {
+    this.dummiesPaused = paused
+  }
+
+  isDummiesPaused() {
+    return this.dummiesPaused
   }
 
   start() {
@@ -495,6 +531,199 @@ export class GameEngine {
       this.envTextures.push(coverMap)
     } catch {
       // keep solid cover
+    }
+  }
+
+  /**
+   * Capsule placeholder for third-person until man.glb loads.
+   * Not registered for hitscan (own shots still use eye origin).
+   */
+  private buildPlayerBody() {
+    const root = new THREE.Group()
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x3d6ea8,
+      roughness: 0.55,
+      metalness: 0.08,
+    })
+    const headMat = new THREE.MeshStandardMaterial({
+      color: 0xe8c4a0,
+      roughness: 0.65,
+    })
+
+    // Cylinder body (standing height / radius match MOVE)
+    const bodyH = MOVE.standingHeight * 0.62
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(MOVE.radius * 0.85, bodyH, 6, 12),
+      bodyMat,
+    )
+    body.position.y = MOVE.radius * 0.85 + bodyH * 0.5
+    body.castShadow = true
+    body.receiveShadow = true
+    body.name = 'tpBody'
+    root.add(body)
+
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 14, 12),
+      headMat,
+    )
+    head.position.y = MOVE.eyeStanding + 0.06
+    head.castShadow = true
+    head.name = 'tpHead'
+    root.add(head)
+
+    root.visible = false
+    root.userData.isMan = false
+    this.scene.add(root)
+    this.playerBody = root
+    this.playerBodyIsMan = false
+  }
+
+  /**
+   * Replace the capsule TP body with a man.glb clone (same scale/clips as dummies).
+   * Player faces -Z at yaw 0; man.glb faces +Z — apply Math.PI when posing.
+   */
+  private attachManPlayerBody(
+    source: THREE.Object3D,
+    clips: THREE.AnimationClip[],
+    scale: number,
+    footY: number,
+  ) {
+    const wasVisible = this.thirdPerson
+    if (this.playerBody) {
+      this.scene.remove(this.playerBody)
+      this.playerBody.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose()
+          const m = obj.material
+          if (Array.isArray(m)) m.forEach((x) => x.dispose())
+          else m.dispose()
+        }
+      })
+      this.playerBody = null
+    }
+    this.playerMixer = null
+
+    const root = new THREE.Group()
+    const model = cloneSkinned(source)
+    model.scale.setScalar(scale)
+    model.position.y = -footY * scale
+    root.userData.baseScale = scale
+    root.userData.model = model
+    root.userData.isMan = true
+    root.userData.animState = 'idle'
+    root.userData.locoState = 'idle'
+
+    model.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return
+      o.castShadow = true
+      o.receiveShadow = true
+      o.frustumCulled = false
+      const list = Array.isArray(o.material) ? o.material : [o.material]
+      const cloned = list.map((m) => m.clone())
+      o.material = Array.isArray(o.material) ? cloned : cloned[0]
+    })
+
+    root.add(model)
+
+    const idleClip =
+      this.findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0]
+    const walkClip = this.findClip(clips, 'Walk')
+    const runClip = this.findClip(clips, 'Run')
+    const slideClip = this.findClip(clips, 'Roll')
+
+    if (idleClip) {
+      const mixer = new THREE.AnimationMixer(model)
+      this.playerMixer = mixer
+
+      const mkLoop = (clip: THREE.AnimationClip | undefined) => {
+        if (!clip) return null
+        const a = mixer.clipAction(clip)
+        a.setLoop(THREE.LoopRepeat, Infinity)
+        a.clampWhenFinished = false
+        return a
+      }
+      const mkOnce = (clip: THREE.AnimationClip | undefined) => {
+        if (!clip) return null
+        const a = mixer.clipAction(clip)
+        a.setLoop(THREE.LoopOnce, 1)
+        a.clampWhenFinished = true
+        return a
+      }
+
+      const idle = mkLoop(idleClip)!
+      idle.play()
+
+      root.userData.actions = {
+        idle,
+        walk: mkLoop(walkClip),
+        run: mkLoop(runClip),
+        slide: mkOnce(slideClip),
+        hit: null,
+        hitAlt: null,
+        death: null,
+      } satisfies DummyActions
+    }
+
+    root.visible = wasVisible
+    this.scene.add(root)
+    this.playerBody = root
+    this.playerBodyIsMan = true
+  }
+
+  /** Match player move state → Idle / Walk / Run / Roll on the TP man body. */
+  private syncPlayerLocomotion() {
+    const root = this.playerBody
+    if (!root?.userData.isMan) return
+    const actions = this.getDummyActions(root)
+    if (!actions?.idle) return
+
+    let want = this.player.state as string
+    // Airborne: keep loco by horizontal speed (no jump clip in man.glb)
+    if (want === 'jump' || !this.player.grounded) {
+      const hsp = Math.hypot(this.player.velocity.x, this.player.velocity.z)
+      if (hsp > MOVE.runSpeed * 0.72) want = 'run'
+      else if (hsp > 0.4) want = 'walk'
+      else want = 'idle'
+    }
+
+    if (root.userData.locoState !== want) {
+      root.userData.locoState = want
+      root.userData.animState = want
+
+      if (want === 'slide') {
+        const slide = actions.slide
+        if (slide) {
+          const loops = [actions.idle, actions.walk, actions.run]
+          for (const a of loops) {
+            if (a) a.fadeOut(0.08)
+          }
+          this.playSlideRoll(slide)
+        } else {
+          this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+        }
+      } else if (want === 'run') {
+        this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+        if (actions.run) actions.run.setEffectiveTimeScale(1)
+      } else if (want === 'walk' || want === 'crouch') {
+        const walk = actions.walk ?? actions.idle
+        this.fadeDummyLoco(actions, walk)
+        // Crouch: slower walk cycle (no dedicated crouch clip in man.glb)
+        if (walk && walk !== actions.idle) {
+          walk.setEffectiveTimeScale(want === 'crouch' ? 0.55 : 1)
+        }
+      } else {
+        this.fadeDummyLoco(actions, actions.idle)
+      }
+
+      this.applyDummyCrouchScale(root, want === 'crouch')
+    }
+
+    // Keep Roll locked to remaining slide time (player timer)
+    if (this.player.state === 'slide' && actions.slide) {
+      this.scrubSlideRoll(
+        actions.slide,
+        1 - this.player.slideTimer / MOVE.slideDuration,
+      )
     }
   }
 
@@ -1036,6 +1265,9 @@ export class GameEngine {
       const scale = targetHeight / Math.max(size.y, 0.001)
       const footY = box.min.y
 
+      // Same man.glb on the local third-person player
+      this.attachManPlayerBody(source, clips, scale, footY)
+
       factory = (id: string) => {
         const root = new THREE.Group()
         // SkeletonUtils preserves skinned meshes / bone bindings for animation
@@ -1207,7 +1439,8 @@ export class GameEngine {
       if (!a || a === next) continue
       if (a.isRunning()) a.fadeOut(fade)
     }
-    if (actions.slide && actions.slide !== next && actions.slide.isRunning()) {
+    // Slide is scrubbed at timeScale 0 — isRunning() is false, so always fade it
+    if (actions.slide && actions.slide !== next) {
       actions.slide.fadeOut(fade * 0.5)
     }
     next.reset().setEffectiveWeight(1).fadeIn(fade).play()
@@ -1226,45 +1459,86 @@ export class GameEngine {
     if (anim === 'hit' || anim === 'death') return
 
     const want = d.state
-    if (root.userData.locoState === want && anim !== 'hit') {
-      this.applyDummyCrouchScale(root, want === 'crouch')
-      return
-    }
-    root.userData.locoState = want
-    root.userData.animState = want
+    if (root.userData.locoState !== want || anim === 'hit') {
+      root.userData.locoState = want
+      root.userData.animState = want
 
-    // Stop one-shots when leaving them
-    actions.hit?.stop()
-    actions.hitAlt?.stop()
-    actions.death?.stop()
+      // Stop one-shots when leaving them
+      actions.hit?.stop()
+      actions.hitAlt?.stop()
+      actions.death?.stop()
 
-    if (want === 'slide') {
-      const slide = actions.slide
-      if (slide) {
-        const loops = [actions.idle, actions.walk, actions.run]
-        for (const a of loops) {
-          if (a?.isRunning()) a.fadeOut(0.08)
+      if (want === 'slide') {
+        const slide = actions.slide
+        if (slide) {
+          const loops = [actions.idle, actions.walk, actions.run]
+          for (const a of loops) {
+            if (a) a.fadeOut(0.08)
+          }
+          this.playSlideRoll(slide)
+        } else {
+          // No Roll clip — fall back to run
+          this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
         }
-        slide.reset().setEffectiveWeight(1).fadeIn(0.05).play()
-      } else {
-        // No Roll clip — fall back to run
+      } else if (want === 'run') {
         this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
+        if (actions.run) actions.run.setEffectiveTimeScale(1)
+      } else if (want === 'walk' || want === 'crouch') {
+        const walk = actions.walk ?? actions.idle
+        this.fadeDummyLoco(actions, walk)
+        // Crouch: slower walk cycle (no dedicated crouch clip in man.glb)
+        if (walk && walk !== actions.idle) {
+          walk.setEffectiveTimeScale(want === 'crouch' ? 0.55 : 1)
+        }
+      } else {
+        this.fadeDummyLoco(actions, actions.idle)
       }
-    } else if (want === 'run') {
-      this.fadeDummyLoco(actions, actions.run ?? actions.walk ?? actions.idle)
-      if (actions.run) actions.run.setEffectiveTimeScale(1)
-    } else if (want === 'walk' || want === 'crouch') {
-      const walk = actions.walk ?? actions.idle
-      this.fadeDummyLoco(actions, walk)
-      // Crouch: slower walk cycle (no dedicated crouch clip in man.glb)
-      if (walk && walk !== actions.idle) {
-        walk.setEffectiveTimeScale(want === 'crouch' ? 0.55 : 1)
-      }
+
+      this.applyDummyCrouchScale(root, want === 'crouch')
     } else {
-      this.fadeDummyLoco(actions, actions.idle)
+      this.applyDummyCrouchScale(root, want === 'crouch')
     }
 
-    this.applyDummyCrouchScale(root, want === 'crouch')
+    // Keep Roll locked to remaining slide time
+    if (want === 'slide' && actions.slide) {
+      this.scrubSlideRoll(
+        actions.slide,
+        1 - d.slideTimer / MOVE.slideDuration,
+      )
+    }
+  }
+
+  /**
+   * Start man.glb Roll as a one-shot. Playback is driven by scrubSlideRoll
+   * so the full clip maps onto MOVE.slideDuration (raw Roll is ~1.33s).
+   */
+  private playSlideRoll(slide: THREE.AnimationAction) {
+    slide.enabled = true
+    slide.paused = false
+    slide.setLoop(THREE.LoopOnce, 1)
+    slide.clampWhenFinished = true
+    slide.reset()
+    // timeScale 0: pose is scrubbed from slide timer each frame
+    slide.timeScale = 0
+    slide.time = 0
+    slide.setEffectiveWeight(1)
+    slide.play()
+  }
+
+  /** 0 = slide start, 1 = slide end → corresponding Roll keyframe. */
+  private scrubSlideRoll(slide: THREE.AnimationAction, progress01: number) {
+    const dur = slide.getClip().duration
+    if (dur <= 0.001) return
+    const t = Math.min(1, Math.max(0, progress01)) * dur
+    slide.enabled = true
+    slide.paused = false
+    slide.timeScale = 0
+    slide.time = t
+    if (slide.weight < 1) slide.weight = 1
+    if (!slide.isRunning() && slide.getEffectiveWeight() <= 0) {
+      slide.setEffectiveWeight(1)
+      slide.play()
+    }
   }
 
   /** Mild Y squash so crouch is readable without a crouch clip. */
@@ -1499,8 +1773,15 @@ export class GameEngine {
   }
 
   /**
-   * DJMaesen sniper_animated "allanims" frame map (30 fps):
-   * 0–11 fire · 12–60 bolt · 61–115 reload · 116–127 hide · 127–142 ready
+   * DJMaesen sniper_animated "allanims" frame map (30 fps).
+   * Verified against track motion (bolt/boltrear/clip/L_arm):
+   *  0–12   fire     — trigger pull
+   * 12–49   bolt     — bolt cycle + eject only (L_arm still at rest)
+   * 49–148  reload   — mag grab/swap + chamber (clip moves ~62–81, rack ~118–137)
+   * 148–160 ready    — settled hold before hide
+   *
+   * Old bolt end at 61 included the mag reach (~f50+), so every shot
+   * looked like a reload mid-bolt.
    */
   private buildViewmodelClips(master: THREE.AnimationClip) {
     const FPS = 30
@@ -1509,9 +1790,9 @@ export class GameEngine {
 
     return {
       fire: sub('fire', 0, 12),
-      bolt: sub('bolt', 12, 61),
-      reload: sub('reload', 61, 116),
-      ready: sub('ready', 127, 143),
+      bolt: sub('bolt', 12, 49),
+      reload: sub('reload', 49, 148),
+      ready: sub('ready', 148, 160),
     }
   }
 
@@ -1653,12 +1934,24 @@ export class GameEngine {
     this.prevVelY = this.player.velocity.y
     stepPlayer(this.player, input, dt, this.colliders)
     stepSniper(this.sniper, input, dt)
-    stepDummies(this.dummies, dt)
-    stepRespawns(this.dummies, this.respawns, dt)
+    if (!this.dummiesPaused) {
+      stepDummies(this.dummies, dt)
+      stepRespawns(this.dummies, this.respawns, dt)
+    }
 
-    // Animate before fire so skinned-mesh hitscan uses this frame's pose
-    for (const mixer of this.dummyMixers.values()) {
-      mixer.update(dt)
+    // Loco sync (incl. slide scrub) before mixer so scrubbed Roll is sampled
+    if (!this.dummiesPaused) {
+      for (const d of this.dummies) {
+        if (d.alive) this.syncDummyLocomotion(d.id)
+      }
+      for (const mixer of this.dummyMixers.values()) {
+        mixer.update(dt)
+      }
+    }
+    // Local TP man body — always animate so clips stay current when toggling cam
+    if (this.playerBodyIsMan && this.playerBody) {
+      this.syncPlayerLocomotion()
+      this.playerMixer?.update(dt)
     }
     this.syncViewmodelAnim()
     this.vmMixer?.update(dt)
@@ -1814,61 +2107,113 @@ export class GameEngine {
     // was double-counted with the gun kick and felt like a jolt + crawl-up.
     const eye = eyePosition(this.player)
     const look = effectiveLook(this.player, this.sniper)
-    this.camera.position.set(eye.x, eye.y, eye.z)
     this.camera.rotation.y = look.yaw
     this.camera.rotation.x = look.pitch
+
+    if (this.thirdPerson) {
+      const dir = lookDirection(look.yaw, look.pitch)
+      // Horizontal right (YXZ camera): yaw+90° at pitch 0
+      const rightX = -Math.sin(look.yaw + Math.PI / 2)
+      const rightZ = -Math.cos(look.yaw + Math.PI / 2)
+      const pivotY =
+        this.player.position.y + this.player.eyeHeight * THIRD_PERSON.pivotEyeFrac
+      const pivotX = this.player.position.x
+      const pivotZ = this.player.position.z
+      let camX =
+        pivotX -
+        dir.x * THIRD_PERSON.distance +
+        rightX * THIRD_PERSON.shoulder
+      let camY = pivotY - dir.y * THIRD_PERSON.distance
+      let camZ =
+        pivotZ -
+        dir.z * THIRD_PERSON.distance +
+        rightZ * THIRD_PERSON.shoulder
+      const floorY = this.player.position.y + THIRD_PERSON.minHeight
+      if (camY < floorY) camY = floorY
+      this.camera.position.set(camX, camY, camZ)
+    } else {
+      this.camera.position.set(eye.x, eye.y, eye.z)
+    }
 
     const fov =
       LOOK.hipFov +
       (LOOK.adsFov - LOOK.hipFov) * this.sniper.adsBlend +
-      SLIDE_GUN.fovBoost * slide
+      SLIDE_GUN.fovBoost * slide +
+      (this.thirdPerson ? THIRD_PERSON.fovBoost * (1 - this.sniper.adsBlend) : 0)
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov
       this.camera.updateProjectionMatrix()
     }
 
+    // Third-person body follows player feet / yaw / crouch height
+    if (this.playerBody) {
+      this.playerBody.visible = this.thirdPerson
+      if (this.thirdPerson) {
+        this.playerBody.position.set(
+          this.player.position.x,
+          this.player.position.y,
+          this.player.position.z,
+        )
+        if (this.playerBodyIsMan) {
+          // Player faces -Z at yaw 0; man.glb faces +Z — flip half turn
+          this.playerBody.rotation.y = this.player.yaw + Math.PI
+          this.playerBody.scale.set(1, 1, 1)
+        } else {
+          // Capsule fallback: squash for crouch height
+          this.playerBody.rotation.y = this.player.yaw
+          const heightScale =
+            this.player.height / Math.max(MOVE.standingHeight, 0.01)
+          this.playerBody.scale.set(1, heightScale, 1)
+        }
+      }
+    }
+
     // viewmodel pose — hip sits lower-right; ADS pulls to center then hides for scope UI
     if (this.viewmodel) {
-      const ads = adsBlend
-      const { hipPos, hipRot, adsPos, adsRot, hideAds } = this.vmConfig
-      const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
-      const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
-      const land = this.vmFreezeBob ? 0 : this.landOffset
-      const air = this.vmFreezeBob ? 0 : this.airRise
-      this.viewmodel.position.lerpVectors(hip, scoped, ads)
-      this.viewmodel.position.x += bobGunX + swayX + SLIDE_GUN.posX * slide
-      this.viewmodel.position.y +=
-        bobGunY + swayY - land + air + SLIDE_GUN.posY * slide
-      this.viewmodel.position.z += bobGunZ + SLIDE_GUN.posZ * slide
-      const recoilKick = this.vmFreezeBob
-        ? 0
-        : this.sniper.recoil * SNIPER.viewmodelRecoil
-      const landPitch = land * VIEW_BOB.landPitch
-      // airRisePitch is negative → muzzle lifts as the gun floats up
-      const airPitch =
-        VIEW_BOB.airRiseMax > 1e-6
-          ? (air / VIEW_BOB.airRiseMax) * VIEW_BOB.airRisePitch
-          : 0
-      this.viewmodel.rotation.set(
-        hipRot.x * (1 - ads) +
-          adsRot.x * ads +
-          recoilKick +
-          bobGunPitch +
-          swayPitch +
-          landPitch +
-          airPitch +
-          SLIDE_GUN.pitch * slide,
-        hipRot.y * (1 - ads) +
-          adsRot.y * ads +
-          swayYaw +
-          SLIDE_GUN.yaw * slide,
-        hipRot.z * (1 - ads) +
-          adsRot.z * ads +
-          bobGunRoll +
-          swayRoll +
-          SLIDE_GUN.roll * slide,
-      )
-      this.viewmodel.visible = this.vmKeepVisible || ads < hideAds
+      if (this.thirdPerson) {
+        this.viewmodel.visible = false
+      } else {
+        const ads = adsBlend
+        const { hipPos, hipRot, adsPos, adsRot, hideAds } = this.vmConfig
+        const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
+        const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
+        const land = this.vmFreezeBob ? 0 : this.landOffset
+        const air = this.vmFreezeBob ? 0 : this.airRise
+        this.viewmodel.position.lerpVectors(hip, scoped, ads)
+        this.viewmodel.position.x += bobGunX + swayX + SLIDE_GUN.posX * slide
+        this.viewmodel.position.y +=
+          bobGunY + swayY - land + air + SLIDE_GUN.posY * slide
+        this.viewmodel.position.z += bobGunZ + SLIDE_GUN.posZ * slide
+        const recoilKick = this.vmFreezeBob
+          ? 0
+          : this.sniper.recoil * SNIPER.viewmodelRecoil
+        const landPitch = land * VIEW_BOB.landPitch
+        // airRisePitch is negative → muzzle lifts as the gun floats up
+        const airPitch =
+          VIEW_BOB.airRiseMax > 1e-6
+            ? (air / VIEW_BOB.airRiseMax) * VIEW_BOB.airRisePitch
+            : 0
+        this.viewmodel.rotation.set(
+          hipRot.x * (1 - ads) +
+            adsRot.x * ads +
+            recoilKick +
+            bobGunPitch +
+            swayPitch +
+            landPitch +
+            airPitch +
+            SLIDE_GUN.pitch * slide,
+          hipRot.y * (1 - ads) +
+            adsRot.y * ads +
+            swayYaw +
+            SLIDE_GUN.yaw * slide,
+          hipRot.z * (1 - ads) +
+            adsRot.z * ads +
+            bobGunRoll +
+            swayRoll +
+            SLIDE_GUN.roll * slide,
+        )
+        this.viewmodel.visible = this.vmKeepVisible || ads < hideAds
+      }
     }
 
     // dummy visuals — hit surfaces ARE the model meshes
@@ -2002,6 +2347,8 @@ export class GameEngine {
       phase: this.sniper.phase,
       ads: this.sniper.ads,
       adsBlend: this.sniper.adsBlend,
+      reloadJiggleX: this.sniper.reloadJiggleX,
+      reloadJiggleY: this.sniper.reloadJiggleY,
       aimSpread: aimSpread(this.sniper, this.player),
       moveState: this.player.state,
       speed,

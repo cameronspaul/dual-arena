@@ -1,11 +1,15 @@
 /**
  * Classic sniper ADS — soft vignette + duplex reticle.
  * Vignette clear radius matches the outer tips of the reticle lines.
+ * During scoped reload the glass stays up; reticle + hole jiggle for feedback.
  */
 
 interface ScopeOverlayProps {
   /** 0 = fully hip, 1 = fully scoped */
   adsBlend: number
+  /** ~-1..1 reload kick (visual only) */
+  reloadJiggleX?: number
+  reloadJiggleY?: number
 }
 
 /** Reticle box diameter — vignette clear hole = half of this. */
@@ -14,15 +18,27 @@ const RETICLE_MAX_VW = 48
 /** Half-size: where crosshair arms end / vignette darkening begins. */
 const CLEAR_VMIN = RETICLE_VMIN / 2
 const CLEAR_MAX_VW = RETICLE_MAX_VW / 2
+/** Max pixel drift of reticle / clear hole while reloading in scope. */
+const JIGGLE_PX = 26
 
-export function ScopeOverlay({ adsBlend }: ScopeOverlayProps) {
+export function ScopeOverlay({
+  adsBlend,
+  reloadJiggleX = 0,
+  reloadJiggleY = 0,
+}: ScopeOverlayProps) {
   if (adsBlend < 0.08) return null
 
   const t = Math.min(1, Math.max(0, (adsBlend - 0.08) / 0.72))
   const opacity = Math.min(1, t * 1.15)
 
+  const jx = reloadJiggleX * JIGGLE_PX * t
+  const jy = reloadJiggleY * JIGGLE_PX * t
+
   const reticleSize = `min(${RETICLE_VMIN}vmin, ${RETICLE_MAX_VW}vw)`
   // Clear out to the arm tips, then a long smooth falloff to full black.
+  // Offset the vignette center with the reticle so the glass hole tracks jiggle.
+  const cx = `calc(50% + ${jx.toFixed(2)}px)`
+  const cy = `calc(50% + ${jy.toFixed(2)}px)`
   const r0 = `min(${CLEAR_VMIN}vmin, ${CLEAR_MAX_VW}vw)`
   const r1 = `min(${CLEAR_VMIN + 4}vmin, ${CLEAR_MAX_VW + 5}vw)`
   const r2 = `min(${CLEAR_VMIN + 10}vmin, ${CLEAR_MAX_VW + 12}vw)`
@@ -31,7 +47,7 @@ export function ScopeOverlay({ adsBlend }: ScopeOverlayProps) {
   const r5 = `min(${CLEAR_VMIN + 40}vmin, ${CLEAR_MAX_VW + 48}vw)`
 
   const vignette = `radial-gradient(
-    circle at center,
+    circle at ${cx} ${cy},
     transparent 0,
     transparent ${r0},
     rgba(0,0,0,${0.12 + t * 0.08}) ${r1},
@@ -51,8 +67,12 @@ export function ScopeOverlay({ adsBlend }: ScopeOverlayProps) {
       <div className="absolute inset-0" style={{ background: vignette }} />
 
       <div
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-        style={{ width: reticleSize, height: reticleSize }}
+        className="absolute top-1/2 left-1/2"
+        style={{
+          width: reticleSize,
+          height: reticleSize,
+          transform: `translate(calc(-50% + ${jx.toFixed(2)}px), calc(-50% + ${jy.toFixed(2)}px))`,
+        }}
       >
         <ScopeReticle />
       </div>

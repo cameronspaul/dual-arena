@@ -12,6 +12,9 @@ function hudKey(s: HudSnapshot): string {
     s.phase,
     s.ads ? 1 : 0,
     Math.round(s.adsBlend * 10),
+    // Scoped reload reticle jiggle (~px-level updates while mag changing)
+    Math.round(s.reloadJiggleX * 40),
+    Math.round(s.reloadJiggleY * 40),
     // Quantize so the dynamic reticle updates as the cone opens/closes
     Math.round(s.aimSpread * 400),
     s.moveState,
@@ -23,6 +26,11 @@ function hudKey(s: HudSnapshot): string {
   ].join('|')
 }
 
+const devBtn =
+  'pointer-events-auto rounded-lg border border-white/15 bg-black/70 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur hover:bg-black/85 hover:text-white'
+const devBtnOn =
+  'pointer-events-auto rounded-lg border border-orange-400/50 bg-orange-500/25 px-3 py-1.5 text-xs font-medium text-orange-100 backdrop-blur hover:bg-orange-500/35'
+
 export default function Game() {
   const [hud, setHud] = useState<HudSnapshot | null>(null)
   const [engine, setEngine] = useState<GameEngine | null>(null)
@@ -30,6 +38,8 @@ export default function Game() {
     if (typeof window === 'undefined') return false
     return new URLSearchParams(window.location.search).has('vm-edit')
   })
+  const [thirdPerson, setThirdPerson] = useState(false)
+  const [dummiesPaused, setDummiesPaused] = useState(false)
   const lastKey = useRef('')
 
   const onHud = useCallback((snap: HudSnapshot) => {
@@ -39,9 +49,34 @@ export default function Game() {
     setHud(snap)
   }, [])
 
+  const onEngine = useCallback((eng: GameEngine | null) => {
+    setEngine(eng)
+    if (eng) {
+      setThirdPerson(eng.isThirdPerson())
+      setDummiesPaused(eng.isDummiesPaused())
+    } else {
+      setThirdPerson(false)
+      setDummiesPaused(false)
+    }
+  }, [])
+
+  const toggleThirdPerson = useCallback(() => {
+    if (!engine) return
+    const next = !engine.isThirdPerson()
+    engine.setThirdPerson(next)
+    setThirdPerson(next)
+  }, [engine])
+
+  const toggleDummiesPaused = useCallback(() => {
+    if (!engine) return
+    const next = !engine.isDummiesPaused()
+    engine.setDummiesPaused(next)
+    setDummiesPaused(next)
+  }, [engine])
+
   return (
     <div className="relative h-svh w-full overflow-hidden bg-black">
-      <GameCanvas onHud={onHud} onEngine={setEngine} />
+      <GameCanvas onHud={onHud} onEngine={onEngine} />
       {!vmEdit && <GameHud hud={hud} />}
 
       {vmEdit ? (
@@ -51,13 +86,27 @@ export default function Game() {
           onClose={() => setVmEdit(false)}
         />
       ) : (
-        <button
-          type="button"
-          onClick={() => setVmEdit(true)}
-          className="pointer-events-auto absolute bottom-3 left-3 z-40 rounded-lg border border-white/15 bg-black/70 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur hover:bg-black/85 hover:text-white"
-        >
-          Viewmodel editor
-        </button>
+        <div className="absolute bottom-3 left-3 z-40 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setVmEdit(true)} className={devBtn}>
+            Viewmodel editor
+          </button>
+          <button
+            type="button"
+            onClick={toggleThirdPerson}
+            className={thirdPerson ? devBtnOn : devBtn}
+            title="Toggle over-the-shoulder third-person camera"
+          >
+            {thirdPerson ? 'Third person: on' : 'Third person'}
+          </button>
+          <button
+            type="button"
+            onClick={toggleDummiesPaused}
+            className={dummiesPaused ? devBtnOn : devBtn}
+            title="Freeze dummy AI and locomotion animations"
+          >
+            {dummiesPaused ? 'Dummies: paused' : 'Pause dummies'}
+          </button>
+        </div>
       )}
     </div>
   )

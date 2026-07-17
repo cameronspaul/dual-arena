@@ -36,8 +36,12 @@ export function GameHud({ hud }: GameHudProps) {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
-      {/* Sniper scope (blackout + housing + reticle) */}
-      <ScopeOverlay adsBlend={hud.adsBlend} />
+      {/* Sniper scope (blackout + housing + reticle) — jiggles during scoped reload */}
+      <ScopeOverlay
+        adsBlend={hud.adsBlend}
+        reloadJiggleX={hud.reloadJiggleX}
+        reloadJiggleY={hud.reloadJiggleY}
+      />
 
       {/* Top bar */}
       <div

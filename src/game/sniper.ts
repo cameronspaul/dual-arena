@@ -13,10 +13,69 @@ export function createSniper(): SniperState {
     adsBlend: 0,
     recoil: 0,
     fireBloom: 0,
+    reloadQueued: false,
+    reloadJiggleX: 0,
+    reloadJiggleY: 0,
+  }
+}
+
+function canReload(s: SniperState): boolean {
+  return s.ammo < s.magSize && s.reserve > 0
+}
+
+/** Start mag reload if allowed. Works while ADS / in the scope. */
+function beginReload(s: SniperState): boolean {
+  if (!canReload(s)) {
+    s.reloadQueued = false
+    return false
+  }
+  s.phase = 'reloading'
+  s.phaseTimer = SNIPER.reloadTime
+  s.reloadQueued = false
+  return true
+}
+
+/**
+ * Scope reticle kick while reloading in ADS — stays glass-on, crosshair
+ * drifts and jitters so the mag change still reads.
+ * Biased toward top-left (negative X/Y) like the gun is being worked on.
+ */
+function stepReloadJiggle(s: SniperState, dt: number) {
+  if (s.phase === 'reloading') {
+    const elapsed = Math.max(0, SNIPER.reloadTime - s.phaseTimer)
+    // Strong throughout; slight peak mid-mag, still readable at ends.
+    const u = clamp(elapsed / SNIPER.reloadTime, 0, 1)
+    const envelope = 0.75 + Math.sin(u * Math.PI) * 0.45
+    const t = elapsed
+    // Base park: up and left of dead center, plus aggressive jiggle.
+    const baseX = -1.15
+    const baseY = -0.95
+    s.reloadJiggleX =
+      (baseX +
+        Math.sin(t * 19.5) * 0.72 +
+        Math.sin(t * 33.0) * 0.42 +
+        Math.sin(t * 7.1 + 1.2) * 0.48 +
+        Math.sin(t * 52) * 0.28 +
+        Math.sin(t * 11.4) * 0.22) *
+      envelope
+    s.reloadJiggleY =
+      (baseY +
+        Math.cos(t * 16.2) * 0.65 +
+        Math.sin(t * 27.4 + 0.7) * 0.4 +
+        Math.cos(t * 9.3) * 0.45 +
+        Math.sin(t * 44.5) * 0.26 +
+        Math.cos(t * 13.8 + 0.4) * 0.2) *
+      envelope
+  } else {
+    // Snap back clean when the chamber is ready.
+    const k = 1 - Math.exp(-16 * dt)
+    s.reloadJiggleX = lerp(s.reloadJiggleX, 0, k)
+    s.reloadJiggleY = lerp(s.reloadJiggleY, 0, k)
   }
 }
 
 export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
+  // Stay ADS through the whole reload — scope glass stays up.
   s.ads = input.ads
   const target = s.ads ? 1 : 0
   const k = 1 - Math.exp(-10 * dt)
@@ -25,12 +84,27 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
   s.recoil = Math.max(0, s.recoil - SNIPER.recoilDecay * dt)
   s.fireBloom = Math.max(0, s.fireBloom - SNIPER.recoilDecay * 1.2 * dt)
 
+  // R is edge-triggered — queue it if pressed during bolt/fire so a reload
+  // after the last scoped shot still lands once the gun is free.
+  if (input.reload && canReload(s)) {
+    if (s.phase === 'ready') {
+      beginReload(s)
+    } else if (s.phase !== 'reloading') {
+      s.reloadQueued = true
+    }
+  }
+
   if (s.phase !== 'ready') {
     s.phaseTimer -= dt
     if (s.phaseTimer <= 0) {
       if (s.phase === 'firing') {
-        s.phase = 'bolt'
-        s.phaseTimer = SNIPER.boltTime
+        // Empty chamber: skip bolt, reload right away if reserved.
+        if (s.ammo <= 0 && canReload(s)) {
+          beginReload(s)
+        } else {
+          s.phase = 'bolt'
+          s.phaseTimer = SNIPER.boltTime
+        }
       } else if (s.phase === 'bolt') {
         s.phase = 'ready'
         s.phaseTimer = 0
@@ -45,35 +119,39 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
     }
   }
 
-  // reload request
-  if (
-    input.reload &&
-    s.phase === 'ready' &&
-    s.ammo < s.magSize &&
-    s.reserve > 0
-  ) {
-    s.phase = 'reloading'
-    s.phaseTimer = SNIPER.reloadTime
+  // Drain queued reload / empty-fire once ready (incl. still holding ADS).
+  if (s.phase === 'ready' && s.reloadQueued) {
+    beginReload(s)
   }
 
-  // auto reload on empty fire attempt handled by caller wanting fire
+  stepReloadJiggle(s, dt)
 }
 
 /** Returns true if a shot was consumed this frame. */
 export function tryFire(s: SniperState, input: PlayerInput): boolean {
   if (!input.fire) return false
-  if (s.phase !== 'ready') return false
-  if (s.ammo <= 0) {
-    if (s.reserve > 0) {
-      s.phase = 'reloading'
-      s.phaseTimer = SNIPER.reloadTime
+  if (s.phase !== 'ready') {
+    // Empty click during bolt after the last round — still queue a reload
+    // so scoped dry-fires aren't lost.
+    if (s.ammo <= 0 && s.reserve > 0 && s.phase !== 'reloading') {
+      s.reloadQueued = true
     }
+    return false
+  }
+  if (s.ammo <= 0) {
+    // Dry-fire while ADS: start reload without leaving the ADS hold intent.
+    beginReload(s)
     return false
   }
 
   s.ammo -= 1
-  s.phase = 'firing'
-  s.phaseTimer = SNIPER.fireAnimTime
+  // Last round: skip fire→bolt and start reload immediately (scoped ok).
+  if (s.ammo <= 0 && canReload(s)) {
+    beginReload(s)
+  } else {
+    s.phase = 'firing'
+    s.phaseTimer = SNIPER.fireAnimTime
+  }
   // Recoil is applied after the shot so the bullet still goes where the
   // crosshair was aiming this frame (kick affects subsequent frames).
   return true
