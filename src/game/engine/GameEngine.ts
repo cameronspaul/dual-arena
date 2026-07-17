@@ -1594,7 +1594,7 @@ export class GameEngine {
 
     const prevGrounded = this.viewFeel.wasGrounded
     // Optimistic fire FX only — damage comes from server HitEvents.
-    // Online tracers are permanent until the next round.
+    // Non-kill tracers blink only; kills upgrade to permanent red + silhouette.
     const fireInput = fireAllowed ? input : { ...input, fire: false }
     const fireResult = tryFire(this.sniper, fireInput)
     if (fireResult === 'shot') {
@@ -1610,10 +1610,7 @@ export class GameEngine {
         y: origin.y + dir.y * SNIPER.maxRange,
         z: origin.z + dir.z * SNIPER.maxRange,
       }
-      this.combatFx.showTracer(origin, dir, end, {
-        killed: false,
-        permanent: true,
-      })
+      this.combatFx.showTracer(origin, dir, end, { killed: false })
       applyRecoil(this.sniper)
       // Full camera shake when fire kicks us out of ADS (bolt); soft only if still scoped (last-round reload).
       this.viewFeel.punchShot(
@@ -1692,7 +1689,7 @@ export class GameEngine {
     this.matchPhaseTimer = snap.phaseTimer ?? 0
     this.matchFirstTo = snap.firstTo ?? this.matchFirstTo
 
-    // Clear permanent tracers when a new round starts (countdown after reset / ready)
+    // Clear kill tracers + silhouettes when a new round starts
     if (
       snap.phase === 'countdown' &&
       (prevPhase === 'round_reset' || prevPhase === 'pregame')
@@ -1778,14 +1775,15 @@ export class GameEngine {
   }
 
   /**
-   * Authoritative shot for permanent tracers. Skip local shooter — already
-   * drew an optimistic permanent tracer on fire.
+   * Authoritative shot tracers for remotes. Non-kills blink; kills stay red
+   * until round reset. Skip local shooter — optimistic tracer already drawn.
    */
   private applyNetShotEvent(shot: NetShotEvent) {
     if (shot.shooterId === this.localPlayerId) return
+    const killed = shot.hit?.killed === true
     this.combatFx.showTracer(shot.origin, shot.dir, shot.end, {
-      killed: shot.hit?.killed === true,
-      permanent: true,
+      killed,
+      permanent: killed,
     })
   }
 
@@ -1813,7 +1811,7 @@ export class GameEngine {
       ev.killed,
     )
 
-    // Upgrade local optimistic tracer to kill style when we confirm a kill
+    // Our kill: permanent red tracer + silhouette until round reset
     if (
       ev.killed &&
       ev.shooterId === this.localPlayerId &&
@@ -1831,7 +1829,17 @@ export class GameEngine {
     if (ev.targetId !== this.localPlayerId) {
       const shotDir = this.estimateShotDir(ev)
       if (ev.killed) {
-        this.remotes.onDeath(ev.targetId, shotDir)
+        // Align live pose → freeze red silhouette (our kills only) → death anim.
+        // Align once before the ghost so the silhouette matches the fall direction.
+        if (shotDir) this.remotes.alignDeath(ev.targetId, shotDir)
+        if (ev.shooterId === this.localPlayerId) {
+          const victim = this.remotes.getRoot(ev.targetId)
+          if (victim) {
+            this.combatFx.spawnKillGhost(victim, { permanent: true })
+          }
+        }
+        // Already aligned above — don't knock again.
+        this.remotes.onDeath(ev.targetId)
       } else {
         this.remotes.onHit(ev.targetId)
       }

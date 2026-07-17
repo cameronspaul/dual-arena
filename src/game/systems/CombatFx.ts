@@ -1,28 +1,28 @@
 /**
  * Tracer streaks + impact decal pool + kill ghost silhouettes.
  *
- * Normal shots: thin needle core + tight soft halo.
- * Online match: tracers stay on the map until the next round (or clear).
- * Offline practice: short transient fade for non-kills.
- * Killing shots: red streak + optional silhouette.
+ * Non-kill shots: always a short blink along the path — never stay on the map.
+ * Kill shots: red streak. Online duels pass `permanent: true` so the tracer
+ * (and silhouette) stay until clearTracers() on round reset. Practice range /
+ * dummies omit permanent so both fade out.
  */
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
 
 const MUZZLE_SKIP = 0.4
-/** How long a non-kill tracer stays visible offline (seconds). */
+/** How long a non-kill tracer blinks along its path (seconds). */
 const TRANSIENT_LIFE = 0.14
 const TRANSIENT_POOL = 10
-/** Max concurrent permanent / kill tracers (oldest recycled). */
+/** Max concurrent permanent kill tracers (oldest recycled). */
 const PERM_POOL = 120
 /** Max red kill silhouettes (oldest recycled). */
 const GHOST_POOL = 24
 /**
- * Offline kill tracer lifetime (seconds). Online kill tracers are permanent
- * until clearTracers() (round reset).
+ * Practice / dummy kill tracer lifetime (seconds). Online kill tracers use
+ * permanent until clearTracers() (round reset).
  */
 const KILL_TRACER_LIFE = 0.85
-/** Kill silhouette fade duration (seconds). */
+/** Practice / dummy kill silhouette fade duration (seconds). */
 const GHOST_LIFE = 1.0
 
 /** Hairline radii (world units) — core is a needle, glow a thin bloom. */
@@ -62,6 +62,8 @@ type GhostSlot = {
   /** Remaining life (seconds); materials fade with life / maxLife. */
   life: number
   maxLife: number
+  /** When true, never auto-despawn (until clearTracers / clearGhosts). */
+  permanent: boolean
   /** Materials we created for opacity fades. */
   mats: THREE.MeshBasicMaterial[]
 }
@@ -110,7 +112,13 @@ export class CombatFx {
       this.permanent.push(this.makeTracer(scene))
     }
     for (let i = 0; i < GHOST_POOL; i++) {
-      this.ghosts.push({ root: null, life: 0, maxLife: GHOST_LIFE, mats: [] })
+      this.ghosts.push({
+        root: null,
+        life: 0,
+        maxLife: GHOST_LIFE,
+        permanent: false,
+        mats: [],
+      })
     }
   }
 
@@ -167,7 +175,8 @@ export class CombatFx {
   /**
    * Spawn a shot streak from eye/muzzle toward the hit (or max range).
    * Pass `killed: true` for a red kill streak.
-   * Pass `permanent: true` to keep the tracer until {@link clearTracers}.
+   * Pass `permanent: true` only for online kill markers that stay until
+   * {@link clearTracers}. Non-kills always blink and never persist.
    */
   showTracer(
     from: { x: number; y: number; z: number },
@@ -176,7 +185,8 @@ export class CombatFx {
     opts: { killed?: boolean; permanent?: boolean } = {},
   ) {
     const killed = opts.killed === true
-    const permanent = opts.permanent === true || killed
+    // Non-kills never stay on the map — permanent is kill-only.
+    const permanent = killed && opts.permanent === true
     const slot = permanent
       ? this.permanent[this.permCursor++ % this.permanent.length]!
       : (this.transient.find((t) => !t.active) ?? this.transient[0]!)
@@ -232,28 +242,22 @@ export class CombatFx {
         slot.life = Infinity
         slot.maxLife = 1
       } else {
+        // Practice / dummies: red blink then gone.
         slot.life = KILL_TRACER_LIFE
         slot.maxLife = KILL_TRACER_LIFE
       }
     } else {
+      // Path blink only — never permanent.
       slot.coreMat.color.setHex(NORMAL_CORE)
       slot.glowMat.color.setHex(NORMAL_GLOW)
       slot.coreMat.opacity = 0.95
       slot.glowMat.opacity = 0.16
-      if (permanent) {
-        // Settled permanent non-kill look
-        slot.coreMat.opacity = 0.72
-        slot.glowMat.opacity = 0.12
-        slot.life = Infinity
-        slot.maxLife = 1
-      } else {
-        slot.life = TRANSIENT_LIFE
-        slot.maxLife = TRANSIENT_LIFE
-      }
+      slot.life = TRANSIENT_LIFE
+      slot.maxLife = TRANSIENT_LIFE
     }
   }
 
-  /** Hide every tracer (call on round reset / match end). */
+  /** Hide every tracer and kill silhouette (call on round reset / match end). */
   clearTracers() {
     for (const t of this.transient) {
       t.active = false
@@ -265,15 +269,34 @@ export class CombatFx {
       t.permanent = false
       t.group.visible = false
     }
+    this.clearGhosts()
+  }
+
+  /** Remove all kill silhouettes. */
+  clearGhosts() {
+    for (const g of this.ghosts) {
+      if (g.root) {
+        this.disposeGhost(g.root)
+        g.root = null
+      }
+      g.life = 0
+      g.permanent = false
+      g.mats = []
+    }
   }
 
   /**
    * Freeze a red ghost silhouette of the victim at the moment of death.
-   * Fades out over {@link GHOST_LIFE} seconds, then is removed.
+   * Pass `permanent: true` (online kills) to hold until {@link clearTracers}.
+   * Practice / dummies omit it so the ghost fades over {@link GHOST_LIFE}.
    */
-  spawnKillGhost(dummyRoot: THREE.Object3D) {
+  spawnKillGhost(
+    dummyRoot: THREE.Object3D,
+    opts: { permanent?: boolean } = {},
+  ) {
     if (!this.scene) return
 
+    const permanent = opts.permanent === true
     dummyRoot.updateWorldMatrix(true, true)
 
     const model =
@@ -312,8 +335,14 @@ export class CombatFx {
       this.disposeGhost(slot.root)
     }
     slot.root = ghostRoot
-    slot.life = GHOST_LIFE
-    slot.maxLife = GHOST_LIFE
+    slot.permanent = permanent
+    if (permanent) {
+      slot.life = Infinity
+      slot.maxLife = 1
+    } else {
+      slot.life = GHOST_LIFE
+      slot.maxLife = GHOST_LIFE
+    }
     slot.mats = mats
     this.scene.add(ghostRoot)
 
@@ -404,61 +433,67 @@ export class CombatFx {
   update(dt: number) {
     for (const t of this.transient) {
       if (!t.active) continue
+      t.age += dt
       t.life -= dt
       if (t.life <= 0) {
         t.active = false
         t.group.visible = false
         continue
       }
-      // Snap-bright then crisp ease-out; glow dies slightly faster than core.
-      const k = t.life / t.maxLife
-      const a = k * k
-      t.coreMat.opacity = 0.95 * a
-      t.glowMat.opacity = 0.16 * a * a
+      if (t.isKill) {
+        // Practice kill: flash → red while fading out.
+        const age = 1 - t.life / t.maxLife
+        const settle = Math.min(1, age / 0.22)
+        t.coreMat.color
+          .copy(this._cA.setHex(KILL_FLASH))
+          .lerp(this._cB.setHex(KILL_CORE), settle)
+        t.glowMat.color
+          .copy(this._cA.setHex(KILL_CORE))
+          .lerp(this._cB.setHex(KILL_GLOW), settle)
+        const remain = t.life / t.maxLife
+        const fade = remain * remain
+        t.coreMat.opacity = (1 - 0.2 * settle) * fade
+        t.glowMat.opacity = (0.32 - 0.12 * settle) * fade * fade
+      } else {
+        // Snap-bright then crisp ease-out; glow dies slightly faster than core.
+        const k = t.life / t.maxLife
+        const a = k * k
+        t.coreMat.opacity = 0.95 * a
+        t.glowMat.opacity = 0.16 * a * a
+      }
     }
 
     for (const t of this.permanent) {
       if (!t.active) continue
       t.age += dt
-      if (t.permanent) {
-        if (t.isKill) {
-          // Settle flash to red once, then hold readable opacity forever.
-          const settle = Math.min(1, t.age / 0.22)
-          t.coreMat.color
-            .copy(this._cA.setHex(KILL_FLASH))
-            .lerp(this._cB.setHex(KILL_CORE), settle)
-          t.glowMat.color
-            .copy(this._cA.setHex(KILL_CORE))
-            .lerp(this._cB.setHex(KILL_GLOW), settle)
-          t.coreMat.opacity = 0.85 - 0.1 * settle
-          t.glowMat.opacity = 0.28 - 0.08 * settle
+      if (!t.permanent) {
+        // Should not happen — permanent pool is kill-only with permanent flag.
+        t.life -= dt
+        if (t.life <= 0) {
+          t.active = false
+          t.group.visible = false
         }
-        // Non-kill permanent: leave opacities as set on spawn.
         continue
       }
-      // Non-permanent kill in the perm pool (shouldn't happen often)
-      t.life -= dt
-      if (t.life <= 0) {
-        t.active = false
-        t.group.visible = false
-        continue
-      }
-      const age = 1 - t.life / t.maxLife
-      const settle = Math.min(1, age / 0.22)
+      // Settle flash to red once, then hold readable opacity until round reset.
+      const settle = Math.min(1, t.age / 0.22)
       t.coreMat.color
         .copy(this._cA.setHex(KILL_FLASH))
         .lerp(this._cB.setHex(KILL_CORE), settle)
       t.glowMat.color
         .copy(this._cA.setHex(KILL_CORE))
         .lerp(this._cB.setHex(KILL_GLOW), settle)
-      const remain = t.life / t.maxLife
-      const fade = remain * remain
-      t.coreMat.opacity = (1 - 0.2 * settle) * fade
-      t.glowMat.opacity = (0.32 - 0.12 * settle) * fade * fade
+      t.coreMat.opacity = 0.85 - 0.1 * settle
+      t.glowMat.opacity = 0.28 - 0.08 * settle
     }
 
     for (const g of this.ghosts) {
       if (!g.root) continue
+      if (g.permanent) {
+        // Hold full silhouette opacity until clearTracers (round reset).
+        for (const m of g.mats) m.opacity = GHOST_OPACITY
+        continue
+      }
       g.life -= dt
       if (g.life <= 0) {
         this.disposeGhost(g.root)
@@ -466,7 +501,7 @@ export class CombatFx {
         g.mats = []
         continue
       }
-      // Linear fade over GHOST_LIFE (1s) so the silhouette clears cleanly.
+      // Linear fade over GHOST_LIFE so practice silhouettes clear cleanly.
       const a = (g.life / g.maxLife) * GHOST_OPACITY
       for (const m of g.mats) m.opacity = a
     }

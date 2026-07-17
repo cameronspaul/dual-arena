@@ -160,7 +160,7 @@ export function fireShot(opts: {
     fx.showImpact(hit.point, 'world', false)
   }
 
-  // Tracer after damage so kills get a longer red fade + silhouette.
+  // Practice / dummies: path blink for misses; red fade for kills (no permanent).
   fx.showTracer(origin, dir, end, { killed })
 
   return { lastHit, killsDelta }

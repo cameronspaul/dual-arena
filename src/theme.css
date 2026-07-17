@@ -5,6 +5,10 @@
   Amber heat (stakes / fire) + cyan tech (readouts) on deep slate void.
 */
 
+body {
+  font-family: var(--font-sans);
+}
+
 :root {
   --background: oklch(0.985 0.004 80);
   --foreground: oklch(0.16 0.02 260);
@@ -38,7 +42,7 @@
   --sidebar-accent-foreground: oklch(0.22 0.04 220);
   --sidebar-border: oklch(0.88 0.015 250);
   --sidebar-ring: oklch(0.62 0.17 55);
-  --font-sans: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Dosis", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: "Cascadia Code", "Segoe UI Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius: 0.375rem;
@@ -104,7 +108,7 @@
   --sidebar-accent-foreground: oklch(0.9 0.04 200);
   --sidebar-border: oklch(0.3 0.03 260);
   --sidebar-ring: oklch(0.76 0.155 55);
-  --font-sans: "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Dosis", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: "Cascadia Code", "Segoe UI Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius: 0.375rem;
@@ -200,7 +204,7 @@
 /* Hitmarker: solid hold then fade — no scale/pulse. Duration matches HITMARKER_DURATION. */
 @keyframes hitmarker-life {
   0%,
-  72% {
+  85% {
     opacity: 1;
   }
   100% {
@@ -209,95 +213,153 @@
 }
 
 .hitmarker-life {
-  animation: hitmarker-life 0.55s linear forwards;
+  animation: hitmarker-life 1.05s linear forwards;
 }
 
 /*
- * Hit impact shake for hipfire crosshair + hitmarker.
- * Applied via remount key (lastHitId) so HUD frame ticks don't restart it.
+ * Reticle displacement only — single offset + rotation, then ease home.
+ * No multi-axis shake / rattle. Remount via key so HUD ticks don't restart.
  */
-@keyframes reticle-shake {
-  0% {
-    transform: translate(0, 0);
-  }
-  10% {
-    transform: translate(-2.4px, 1.6px);
-  }
-  22% {
-    transform: translate(2.6px, -2.1px);
-  }
-  34% {
-    transform: translate(-2.1px, -1.4px);
-  }
-  48% {
-    transform: translate(1.8px, 1.9px);
-  }
-  62% {
-    transform: translate(-1.1px, 0.9px);
-  }
-  78% {
-    transform: translate(0.7px, -0.5px);
-  }
-  100% {
-    transform: translate(0, 0);
-  }
-}
 
-@keyframes reticle-shake-hard {
+/* Body hit */
+@keyframes reticle-displace {
   0% {
-    transform: translate(0, 0);
-  }
-  8% {
-    transform: translate(-3.6px, 2.4px);
+    transform: translate(0, 0) rotate(0deg);
   }
   18% {
-    transform: translate(3.8px, -3.1px);
-  }
-  30% {
-    transform: translate(-3.2px, -2.2px);
-  }
-  44% {
-    transform: translate(2.6px, 2.8px);
-  }
-  58% {
-    transform: translate(-1.8px, 1.4px);
-  }
-  74% {
-    transform: translate(1.1px, -0.9px);
+    transform: translate(2.2px, -3.4px) rotate(5.5deg);
   }
   100% {
-    transform: translate(0, 0);
+    transform: translate(0, 0) rotate(0deg);
   }
 }
 
-.reticle-shake {
-  animation: reticle-shake 0.2s ease-out;
+/* Head / kill — farther offset + more roll */
+@keyframes reticle-displace-hard {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  16% {
+    transform: translate(3px, -5px) rotate(8deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
 }
 
-.reticle-shake-hard {
-  animation: reticle-shake-hard 0.26s ease-out;
+/* Fire — upward offset + roll (hits and misses) */
+@keyframes reticle-displace-fire {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  14% {
+    transform: translate(0.6px, -6px) rotate(-7deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
 }
 
-/* Damage float: rise + hold + fade once per hit (keep x-center in transform) */
-@keyframes hitmarker-dmg {
+/* Bolt — held offset + roll while cocking, then ease home */
+@keyframes reticle-displace-bolt {
+  0% {
+    transform: translate(0.6px, -5.5px) rotate(-5deg);
+  }
+  55% {
+    transform: translate(0.4px, -3.2px) rotate(-2.5deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+.reticle-displace {
+  animation: reticle-displace 0.32s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.reticle-displace-hard {
+  animation: reticle-displace-hard 0.38s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.reticle-displace-fire {
+  animation: reticle-displace-fire 0.34s cubic-bezier(0.18, 0.88, 0.24, 1) both;
+}
+
+.reticle-displace-bolt {
+  animation: reticle-displace-bolt 1.05s cubic-bezier(0.25, 0.8, 0.25, 1) both;
+}
+
+/*
+ * Hit confirm chip: punch out from reticle pivot, drift down-right, fade.
+ * Remount via React key only — HUD ticks must not restart this.
+ * Duration ≤ HITMARKER_DURATION (1.05s).
+ */
+@keyframes hit-confirm-chip {
   0% {
     opacity: 0;
-    transform: translate(-50%, 4px);
+    transform: translate(2px, 4px) scale(0.42);
   }
   10% {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translate(22px, 16px) scale(1.14);
   }
-  55% {
+  18% {
     opacity: 1;
-    transform: translate(-50%, -10px);
+    transform: translate(26px, 18px) scale(0.98);
+  }
+  28% {
+    opacity: 1;
+    transform: translate(28px, 18px) scale(1);
+  }
+  62% {
+    opacity: 1;
+    transform: translate(34px, 12px) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -22px);
+    transform: translate(44px, -4px) scale(0.9);
   }
 }
 
-.hitmarker-dmg {
-  animation: hitmarker-dmg 0.52s ease-out forwards;
+/* Head / kill — farther throw + harder punch */
+@keyframes hit-confirm-chip-hard {
+  0% {
+    opacity: 0;
+    transform: translate(2px, 4px) scale(0.35);
+  }
+  9% {
+    opacity: 1;
+    transform: translate(26px, 18px) scale(1.22);
+  }
+  17% {
+    opacity: 1;
+    transform: translate(30px, 20px) scale(0.97);
+  }
+  26% {
+    opacity: 1;
+    transform: translate(32px, 20px) scale(1);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(40px, 10px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(52px, -8px) scale(0.88);
+  }
 }
+
+.hit-confirm-chip {
+  animation: hit-confirm-chip 0.78s cubic-bezier(0.2, 0.85, 0.25, 1) forwards;
+  transform-origin: left center;
+  will-change: transform, opacity;
+}
+
+.hit-confirm-chip-hard {
+  animation: hit-confirm-chip-hard 0.88s cubic-bezier(0.18, 0.88, 0.22, 1)
+    forwards;
+  transform-origin: left center;
+  will-change: transform, opacity;
+}
+
+

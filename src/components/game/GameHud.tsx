@@ -26,19 +26,54 @@ function spreadToGap(spreadRad: number): number {
   return Math.min(190, 3 + spreadRad * 820)
 }
 
+/** White hit feedback; red only on headshot. */
 function hitmarkerColor(hit: HitEvent): string {
-  if (hit.killed) return '#ff3b3b'
-  if (hit.zone === 'head') return '#ffd45a'
-  // Classic clean white — matches CoD-style X hitmarker
+  if (hit.zone === 'head') return '#f83839'
   return '#f4f7fa'
 }
 
-function damageLabelColor(hit: HitEvent): string {
-  if (hit.killed) return 'text-arena-danger'
-  if (hit.zone === 'head') return 'text-arena-heat'
-  if (hit.zone === 'chest') return 'text-arena-tech'
-  if (hit.zone === 'arm') return 'text-orange-400'
-  return 'text-amber-200'
+/** Zone label for the hit-confirm float. */
+function hitZoneLabel(hit: HitEvent): string {
+  if (hit.zone === 'head') return 'HEADSHOT'
+  return hit.zone.toUpperCase()
+}
+
+/**
+ * Combat hit confirm — bare damage + zone text punches out from the reticle.
+ * White by default, red on headshot. No panel chrome / elim stamp.
+ * Lifecycle is CSS-class only (remount via key) so HUD ticks don't pulse it.
+ */
+function HitConfirm({ hit }: { hit: HitEvent }) {
+  const head = hit.zone === 'head'
+  const color = head ? 'text-[#f83839]' : 'text-white'
+
+  return (
+    <div
+      className={cn(
+        'hit-confirm-chip pointer-events-none absolute top-0 left-0 flex items-baseline gap-2',
+        head && 'hit-confirm-chip-hard',
+      )}
+      aria-live="polite"
+    >
+      <span
+        className={cn(
+          'font-mono font-bold tabular-nums leading-none tracking-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]',
+          color,
+          head ? 'text-xl' : 'text-lg',
+        )}
+      >
+        −{hit.damage}
+      </span>
+      <span
+        className={cn(
+          'text-[9px] font-semibold tracking-[0.18em] uppercase opacity-90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]',
+          color,
+        )}
+      >
+        {hitZoneLabel(hit)}
+      </span>
+    </div>
+  )
 }
 
 function fpsColor(fps: number): string {
@@ -208,7 +243,7 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
  * Pivot is 0×0 at screen center (shared with crosshair).
  */
 /** Visible lifetime of a hitmarker (must match showHit age gate + hudKey). */
-export const HITMARKER_DURATION = 0.55
+export const HITMARKER_DURATION = 1.05
 
 /** Native art size of hitmarker.svg */
 const HITMARKER_SIZE = 25
@@ -250,9 +285,6 @@ const HITMARKER_CORNERS: readonly {
   },
 ]
 
-/** Art red from hitmarker.svg — body/head still use hitmarkerColor() */
-const HITMARKER_ART_RED = 'rgb(248,56,57)'
-
 function HitMarkerX({
   color,
   kill,
@@ -274,8 +306,8 @@ function HitMarkerX({
   /** Fade first, then accelerate into place */
   const fadeEase = [0.2, 0.8, 0.3, 1] as const
   const shootEase = [0.55, 0.02, 0.35, 1] as const
-  // Prefer art red on kill; otherwise HUD color (white body / gold head)
-  const fill = kill ? HITMARKER_ART_RED : color
+  // White body / red head only (hitmarkerColor)
+  const fill = color
 
   return (
     // Center the 25×25 art on the shared reticle pivot
@@ -390,13 +422,29 @@ export function GameHud({
   const thick = gap > 100 ? 2.5 : 2
   const chromeOpacity = fullyScoped ? 0.32 : 1
   const hit = hud.lastHit
-  /** Body hits get a light punch; head/kill hit a harder reticle shake. */
-  const reticleShakeClass =
-    showHit && hit
-      ? hit.killed || hit.zone === 'head'
-        ? 'reticle-shake-hard'
-        : 'reticle-shake'
-      : undefined
+  /**
+   * Reticle displacement only (offset + rotate, then ease home — no shake):
+   * 1) Confirmed hit (farther on head/kill)
+   * 2) Fire even on misses
+   * 3) Held offset while bolting
+   */
+  const reticleDisplaceClass = showHit && hit
+    ? hit.killed || hit.zone === 'head'
+      ? 'reticle-displace-hard'
+      : 'reticle-displace'
+    : hud.phase === 'firing'
+      ? 'reticle-displace-fire'
+      : hud.phase === 'bolt'
+        ? 'reticle-displace-bolt'
+        : undefined
+  /** Remount key so displacement restarts on hit / shot / bolt, not every frame. */
+  const reticleKey = showHit
+    ? `hit-${hud.lastHitId}`
+    : hud.phase === 'firing'
+      ? `fire-${hud.ammo}`
+      : hud.phase === 'bolt'
+        ? `bolt-${hud.ammo}`
+        : 'reticle-idle'
   const lowAmmo = hud.ammo <= 1
   const emptyMag = hud.ammo === 0
   const online = hud.matchPhase != null
@@ -709,14 +757,11 @@ export function GameHud({
       */}
       <div className="pointer-events-none absolute top-1/2 left-1/2 z-20 h-0 w-0">
         {/*
-          Impact shake on the whole reticle group (crosshair + hitmarker).
-          key=lastHitId remounts so the CSS shake restarts only on a new hit —
-          not on every HUD frame. Damage float stays outside so numbers stay readable.
+          Displacement on the whole reticle group (crosshair + hitmarker):
+          fire / bolt / hit offset+rotate only. Remount key restarts CSS
+          without fighting per-frame HUD ticks. Hit confirm chip stays outside.
         */}
-        <div
-          key={showHit ? `reticle-${hud.lastHitId}` : 'reticle-idle'}
-          className={cn(reticleShakeClass)}
-        >
+        <div key={reticleKey} className={cn(reticleDisplaceClass)}>
           {/* Hipfire crosshair — box centered on the pivot */}
           {!fullyScoped && !hud.spectating && (
             <div
@@ -795,29 +840,12 @@ export function GameHud({
           )}
         </div>
 
-        {/* Damage float — same once-per-mount CSS lifecycle (no shake) */}
+        {/*
+          Hit confirm — combat chip arcs off the reticle (not a static caption).
+          Remount key restarts CSS lifecycle once per hit id.
+        */}
         {showHit && hit && (
-          <div
-            key={`dmg-${hud.lastHitId}`}
-            className="hitmarker-dmg absolute top-0 left-0 flex flex-col items-center"
-            style={{ marginTop: 22 }}
-          >
-            <div
-              className={cn(
-                'text-center font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]',
-                damageLabelColor(hit),
-                hit.zone === 'head' || hit.killed ? 'text-base' : 'text-sm',
-              )}
-            >
-              {hit.zone === 'head' ? 'HEADSHOT' : hit.zone.toUpperCase()}{' '}
-              <span className="tabular-nums">-{hit.damage}</span>
-            </div>
-            {hit.killed && (
-              <div className="mt-0.5 text-xs font-extrabold tracking-[0.28em] text-arena-danger drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
-                ELIMINATED
-              </div>
-            )}
-          </div>
+          <HitConfirm key={`confirm-${hud.lastHitId}`} hit={hit} />
         )}
       </div>
 

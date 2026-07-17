@@ -155,6 +155,26 @@ export class RemotePlayerSystem {
    * Play death reaction. Optional world-space shot direction aligns the fall
    * (same as DummySystem).
    */
+  /** World root for a remote (pose at kill for silhouettes). */
+  getRoot(id: string): THREE.Group | null {
+    return this.remotes.get(id)?.root ?? null
+  }
+
+  /**
+   * Face + nudge along the shot before freezing a kill ghost of the live pose.
+   */
+  alignDeath(
+    id: string,
+    shotDir: { x: number; y: number; z: number },
+  ) {
+    const entry = this.remotes.get(id)
+    if (!entry) return
+    alignDummyDeathToShot(entry.root, shotDir, {
+      alignYaw: DUMMY.deathAlignToShot,
+      knockback: DUMMY.deathKnockback,
+    })
+  }
+
   onDeath(
     id: string,
     shotDir?: { x: number; y: number; z: number },
