@@ -1,0 +1,115 @@
+import { SNIPER } from './config'
+import { clamp } from './math'
+import type { PlayerBody, PlayerInput, SniperState } from './types'
+
+export function createSniper(): SniperState {
+  return {
+    ammo: SNIPER.magSize,
+    magSize: SNIPER.magSize,
+    reserve: SNIPER.reserve,
+    phase: 'ready',
+    phaseTimer: 0,
+    ads: false,
+    adsBlend: 0,
+    recoil: 0,
+    swayTime: 0,
+  }
+}
+
+export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
+  s.ads = input.ads
+  const target = s.ads ? 1 : 0
+  const k = 1 - Math.exp(-10 * dt)
+  s.adsBlend = lerp(s.adsBlend, target, k)
+
+  s.swayTime += dt
+  s.recoil = Math.max(0, s.recoil - SNIPER.recoilDecay * dt)
+
+  if (s.phase !== 'ready') {
+    s.phaseTimer -= dt
+    if (s.phaseTimer <= 0) {
+      if (s.phase === 'firing') {
+        s.phase = 'bolt'
+        s.phaseTimer = SNIPER.boltTime
+      } else if (s.phase === 'bolt') {
+        s.phase = 'ready'
+        s.phaseTimer = 0
+      } else if (s.phase === 'reloading') {
+        const need = s.magSize - s.ammo
+        const take = Math.min(need, s.reserve)
+        s.ammo += take
+        s.reserve -= take
+        s.phase = 'ready'
+        s.phaseTimer = 0
+      }
+    }
+  }
+
+  // reload request
+  if (
+    input.reload &&
+    s.phase === 'ready' &&
+    s.ammo < s.magSize &&
+    s.reserve > 0
+  ) {
+    s.phase = 'reloading'
+    s.phaseTimer = SNIPER.reloadTime
+  }
+
+  // auto reload on empty fire attempt handled by caller wanting fire
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t
+}
+
+/** Returns true if a shot was consumed this frame. */
+export function tryFire(s: SniperState, input: PlayerInput): boolean {
+  if (!input.fire) return false
+  if (s.phase !== 'ready') return false
+  if (s.ammo <= 0) {
+    if (s.reserve > 0) {
+      s.phase = 'reloading'
+      s.phaseTimer = SNIPER.reloadTime
+    }
+    return false
+  }
+
+  s.ammo -= 1
+  s.phase = 'firing'
+  s.phaseTimer = SNIPER.fireAnimTime
+  s.recoil = Math.min(1, s.recoil + 1)
+  return true
+}
+
+/** Sway angles (radians) added to pitch/yaw for aim. */
+export function aimSway(
+  s: SniperState,
+  body: PlayerBody,
+): { yaw: number; pitch: number } {
+  const t = s.swayTime
+  const speed = Math.hypot(body.velocity.x, body.velocity.z)
+  let amp = s.ads ? SNIPER.adsSwayAmp : SNIPER.hipSwayAmp
+
+  if (!body.grounded) amp *= SNIPER.airSwayMul
+  else if (body.state === 'slide') amp *= SNIPER.slideSwayMul
+  else if (speed > 1) amp *= 1 + (speed / 8) * SNIPER.moveSwayMul * 0.15
+
+  const yaw = Math.sin(t * 1.7) * amp + Math.sin(t * 0.4) * amp * 0.5
+  const pitch =
+    Math.cos(t * 1.3) * amp * 0.8 +
+    s.recoil * SNIPER.recoilKick
+
+  return { yaw, pitch }
+}
+
+export function effectiveLook(
+  body: PlayerBody,
+  s: SniperState,
+): { yaw: number; pitch: number } {
+  const sway = aimSway(s, body)
+  return {
+    yaw: body.yaw + sway.yaw,
+    pitch: clamp(body.pitch + sway.pitch, -1.5, 1.5),
+  }
+}
