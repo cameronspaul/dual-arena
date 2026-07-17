@@ -1,67 +1,123 @@
-import type { CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
+import type { CSSProperties, ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
-import { Settings, Target } from 'lucide-react'
+import { Activity, Crosshair, Map as MapIcon, Settings, Zap } from 'lucide-react'
 import { ScopeOverlay } from './ScopeOverlay'
 import {
   formatKeyCode,
   getUserSettings,
 } from '@/game/core/userSettings'
 import { fmtNum } from '@/game/maps'
+import { cn } from '@/lib/utils'
 
 interface GameHudProps {
   hud: HudSnapshot | null
   onOpenSettings?: () => void
+  /** Return to map select (main page). */
+  onExit?: () => void
 }
 
 /** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
 function spreadToGap(spreadRad: number): number {
-  // Keep headroom past sprint so air/slide multipliers actually read on screen.
-  // hip stand ~0.055 → ~48px, sprint ~0.14 → ~118px, air ~0.19 → ~155px, slide ~0.21 → ~174px
   return Math.min(190, 3 + spreadRad * 820)
 }
 
 function hitmarkerColor(hit: HitEvent): string {
   if (hit.killed) return '#ff3b3b'
-  if (hit.zone === 'head') return '#ffe566'
-  return '#ffffff'
+  if (hit.zone === 'head') return '#ffd45a'
+  return '#e8f7ff'
 }
 
 function damageLabelColor(hit: HitEvent): string {
-  if (hit.killed) return 'text-red-400'
-  if (hit.zone === 'head') return 'text-yellow-300'
-  if (hit.zone === 'chest') return 'text-sky-300'
+  if (hit.killed) return 'text-arena-danger'
+  if (hit.zone === 'head') return 'text-arena-heat'
+  if (hit.zone === 'chest') return 'text-arena-tech'
   if (hit.zone === 'arm') return 'text-orange-400'
   return 'text-amber-200'
 }
 
-/** Green near high-refresh targets; amber mid; red when struggling. */
 function fpsColor(fps: number): string {
-  if (fps >= 140) return 'text-emerald-400'
+  if (fps >= 140) return 'text-arena-ok'
   if (fps >= 90) return 'text-lime-300'
-  if (fps >= 55) return 'text-amber-300'
+  if (fps >= 55) return 'text-arena-heat'
   if (fps >= 30) return 'text-orange-400'
-  return 'text-red-400'
+  return 'text-arena-danger'
 }
 
 function msColor(ms: number, budget: number): string {
-  if (ms <= budget * 0.55) return 'text-emerald-400'
-  if (ms <= budget * 0.85) return 'text-amber-300'
-  return 'text-red-400'
+  if (ms <= budget * 0.55) return 'text-arena-ok'
+  if (ms <= budget * 0.85) return 'text-arena-heat'
+  return 'text-arena-danger'
+}
+
+function pingColor(ping: number | null): string {
+  if (ping == null) return 'text-white/35'
+  if (ping < 50) return 'text-arena-ok'
+  if (ping < 100) return 'text-arena-heat'
+  return 'text-arena-danger'
+}
+
+function hpBarColor(hp: number): string {
+  if (hp > 60) return 'bg-arena-ok shadow-[0_0_12px_var(--arena-ok)]'
+  if (hp > 30) return 'bg-arena-heat shadow-[0_0_12px_var(--arena-heat)]'
+  return 'bg-arena-danger shadow-[0_0_12px_var(--arena-danger)]'
+}
+
+/** Shared tactical glass panel used across HUD chrome. */
+function HudPanel({
+  children,
+  className,
+  accent = 'heat',
+}: {
+  children: ReactNode
+  className?: string
+  accent?: 'heat' | 'tech' | 'danger' | 'none'
+}) {
+  return (
+    <div
+      className={cn(
+        'relative overflow-hidden rounded-md border border-arena-panel-border bg-arena-panel shadow-lg backdrop-blur-md',
+        className,
+      )}
+    >
+      {accent !== 'none' && (
+        <div
+          className={cn(
+            'absolute inset-y-0 left-0 w-0.5',
+            accent === 'heat' && 'bg-arena-heat',
+            accent === 'tech' && 'bg-arena-tech',
+            accent === 'danger' && 'bg-arena-danger',
+          )}
+        />
+      )}
+      {/* Corner ticks */}
+      <div className="pointer-events-none absolute top-0 left-0 h-2 w-2 border-t border-l border-white/25" />
+      <div className="pointer-events-none absolute top-0 right-0 h-2 w-2 border-t border-r border-white/25" />
+      <div className="pointer-events-none absolute bottom-0 left-0 h-2 w-2 border-b border-l border-white/25" />
+      <div className="pointer-events-none absolute bottom-0 right-0 h-2 w-2 border-b border-r border-white/25" />
+      {children}
+    </div>
+  )
+}
+
+function HudLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="text-[9px] font-semibold tracking-[0.22em] text-white/40 uppercase">
+      {children}
+    </div>
+  )
 }
 
 function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
   const map = perf.map
-  // 180 Hz frame budget
   const budget = 1000 / 180
   return (
-    <div className="mt-1.5 max-w-[22rem] space-y-1 border-t border-white/10 pt-1.5 text-[10px] leading-snug text-white/70">
+    <div className="mt-2 max-w-[22rem] space-y-1 border-t border-white/10 pt-2 text-[10px] leading-snug text-white/65">
       <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 tabular-nums">
         <span className={msColor(perf.frameMs, budget)}>
           {perf.frameMs.toFixed(1)}
-          <span className="text-white/35"> ms</span>
+          <span className="text-white/30"> ms</span>
         </span>
         <span className={msColor(perf.simMs, budget * 0.4)}>
           sim {perf.simMs.toFixed(1)}
@@ -69,9 +125,9 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
         <span className={msColor(perf.renderMs, budget * 0.6)}>
           ren {perf.renderMs.toFixed(1)}
         </span>
-        <span className="text-white/45">dpr {perf.pixelRatio.toFixed(2)}</span>
+        <span className="text-white/40">dpr {perf.pixelRatio.toFixed(2)}</span>
       </div>
-      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 tabular-nums text-white/55">
+      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 tabular-nums text-white/50">
         <span>
           draws <span className="text-white/85">{perf.draws}</span>
         </span>
@@ -86,7 +142,7 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
         </span>
       </div>
       {map && (
-        <div className="tabular-nums text-white/45">
+        <div className="tabular-nums text-white/40">
           map <span className="text-white/70">{map.id}</span>
           {' · '}
           {fmtNum(map.triangles)} tris · {map.meshes} mesh ·{' '}
@@ -94,14 +150,14 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
           {map.dedicatedCollision ? 'COL✓' : 'COL✗'}
         </div>
       )}
-      <div className="text-white/50">
-        <span className="text-white/35">limit </span>
-        <span className={fps >= 140 ? 'text-emerald-400/90' : 'text-amber-200/90'}>
+      <div className="text-white/45">
+        <span className="text-white/30">limit </span>
+        <span className={fps >= 140 ? 'text-arena-ok/90' : 'text-arena-heat/90'}>
           {perf.bottleneck}
         </span>
       </div>
       {map && map.notes[0] && (
-        <div className="text-white/40" title={map.notes.join('\n')}>
+        <div className="text-white/35" title={map.notes.join('\n')}>
           {map.notes[0]}
           {map.notes.length > 1 ? ` (+${map.notes.length - 1})` : ''}
         </div>
@@ -110,15 +166,7 @@ function PerfPanel({ perf, fps }: { perf: PerfHud; fps: number }) {
   )
 }
 
-/** Lower is better; muted when offline (no session RTT). */
-function pingColor(ping: number | null): string {
-  if (ping == null) return 'text-white/40'
-  if (ping < 50) return 'text-emerald-400'
-  if (ping < 100) return 'text-amber-300'
-  return 'text-red-400'
-}
-
-/** Classic FPS / Overwatch-style X hitmarker (four diagonal ticks). */
+/** Classic FPS X hitmarker (four diagonal ticks). */
 function HitMarkerX({
   color,
   kill,
@@ -128,7 +176,6 @@ function HitMarkerX({
   kill: boolean
   head: boolean
 }) {
-  // Arm geometry: length / thickness / gap from center
   const len = kill ? 14 : head ? 12 : 10
   const thick = kill ? 3 : 2.5
   const gap = kill ? 5 : 4
@@ -157,7 +204,28 @@ function HitMarkerX({
   )
 }
 
-export function GameHud({ hud, onOpenSettings }: GameHudProps) {
+function ChromeBtn({
+  children,
+  onClick,
+  title,
+}: {
+  children: ReactNode
+  onClick?: () => void
+  title?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-md border border-arena-panel-border bg-arena-panel px-3 py-2 text-xs font-medium tracking-wide text-white/75 shadow-md backdrop-blur-md transition-all hover:border-arena-heat/40 hover:bg-white/10 hover:text-white"
+      title={title}
+    >
+      {children}
+    </button>
+  )
+}
+
+export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
   if (!hud) return null
 
   const phaseLabel =
@@ -169,99 +237,111 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
           ? 'FIRE'
           : 'READY'
 
+  const phaseHot =
+    hud.phase === 'reloading' || hud.phase === 'bolt' || hud.phase === 'firing'
   const showHit = Boolean(hud.lastHit && hud.lastHitAge < 0.605)
   const fullyScoped = hud.adsBlend > 0.55
   const gap = spreadToGap(hud.aimSpread)
-  // Arms lengthen slightly as the cone opens so the reticle still reads.
   const arm = Math.min(18, 8 + gap * 0.05)
   const thick = gap > 100 ? 2.5 : 2
-  // Dim chrome HUD while in the glass so the scope owns the frame.
-  const chromeOpacity = fullyScoped ? 0.35 : 1
+  const chromeOpacity = fullyScoped ? 0.32 : 1
   const hit = hud.lastHit
+  const lowAmmo = hud.ammo <= 1
+  const emptyMag = hud.ammo === 0
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-white">
-      {/* Sniper scope (blackout + housing + reticle) — jiggles during scoped reload */}
       <ScopeOverlay
         adsBlend={hud.adsBlend}
         reloadJiggleX={hud.reloadJiggleX}
         reloadJiggleY={hud.reloadJiggleY}
       />
 
-      {/* Top bar */}
+      {/* Top chrome */}
       <div
         className="pointer-events-auto absolute top-3 left-3 right-3 flex items-start justify-between gap-3 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
-        <div className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-sm">
-          <div className="text-xs font-medium tracking-widest text-white/50 uppercase">
-            Dual Arena — Range
+        {/* Score / status */}
+        <HudPanel className="min-w-[11rem] px-3.5 py-2.5 pl-4" accent="heat">
+          <div className="flex items-center gap-2">
+            <Crosshair className="size-3 text-arena-heat" />
+            <HudLabel>Dual Arena</HudLabel>
           </div>
-          <div className="mt-1 flex items-center gap-3 text-sm">
-            <span className="inline-flex items-center gap-1.5">
-              <Target className="h-3.5 w-3.5 text-orange-400" />
-              <span className="font-semibold tabular-nums">{hud.kills}</span>
-              <span className="text-white/50">kills</span>
-            </span>
-            <span className="text-white/30">|</span>
-            <span className="font-mono text-xs text-white/60 uppercase">
-              {hud.moveState}
-            </span>
-            <span className="font-mono text-xs text-white/40 tabular-nums">
-              {hud.speed.toFixed(1)} m/s
-            </span>
+          <div className="mt-2 flex items-end gap-3">
+            <div>
+              <div className="font-mono text-3xl font-bold leading-none tracking-tight tabular-nums text-arena-heat drop-shadow-[0_0_12px_var(--arena-heat-dim)]">
+                {hud.kills}
+              </div>
+              <div className="mt-0.5 text-[10px] tracking-widest text-white/45 uppercase">
+                Elims
+              </div>
+            </div>
+            <div className="mb-0.5 h-8 w-px bg-white/10" />
+            <div className="min-w-0 pb-0.5">
+              <div className="flex items-center gap-1.5 font-mono text-[11px] tracking-wide text-white/70 uppercase">
+                <Zap className="size-3 text-arena-tech" />
+                {hud.moveState}
+              </div>
+              <div className="mt-0.5 font-mono text-[11px] tabular-nums text-white/40">
+                {hud.speed.toFixed(1)} m/s
+              </div>
+            </div>
           </div>
-        </div>
+        </HudPanel>
 
-        <div className="flex items-center gap-2">
-          {/* Perf / net — top-right chrome next to settings */}
-          <div
-            className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 font-mono text-xs backdrop-blur-sm"
-            title={
-              hud.ping == null
-                ? 'Ping: offline (local range)'
-                : `Ping: ${Math.round(hud.ping)} ms`
-            }
-          >
-            <div className="flex items-baseline gap-3 tabular-nums">
+        <div className="flex items-start gap-2">
+          <HudPanel className="px-3 py-2 font-mono text-xs" accent="tech">
+            <div
+              className="flex items-baseline gap-3 tabular-nums"
+              title={
+                hud.ping == null
+                  ? 'Ping: offline (local range)'
+                  : `Ping: ${Math.round(hud.ping)} ms`
+              }
+            >
               <span className={fpsColor(hud.fps)}>
-                <span className="font-semibold">{hud.fps}</span>
-                <span className="ml-1 text-white/40">FPS</span>
+                <span className="text-base font-semibold">{hud.fps}</span>
+                <span className="ml-1 text-[10px] text-white/35">FPS</span>
               </span>
-              <span className="text-white/20">|</span>
+              <span className="text-white/15">|</span>
               <span className={pingColor(hud.ping)}>
-                <span className="font-semibold">
+                <span className="text-base font-semibold">
                   {hud.ping == null ? '—' : Math.round(hud.ping)}
                 </span>
-                <span className="ml-1 text-white/40">ms</span>
+                <span className="ml-1 text-[10px] text-white/35">ms</span>
               </span>
             </div>
             {hud.perf && <PerfPanel perf={hud.perf} fps={hud.fps} />}
-          </div>
+          </HudPanel>
+
           {onOpenSettings && (
-            <button
-              type="button"
+            <ChromeBtn
               onClick={() => {
                 gameAudio.uiClick()
                 onOpenSettings()
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
             >
               <Settings className="size-3.5" />
               Settings
-            </button>
+            </ChromeBtn>
           )}
-          <Link
-            to="/"
-            onClick={() => gameAudio.uiClick()}
-            className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
-          >
-            Exit
-          </Link>
+          {onExit && (
+            <ChromeBtn
+              onClick={() => {
+                gameAudio.uiClick()
+                onExit()
+              }}
+              title="Return to map select"
+            >
+              <MapIcon className="size-3.5" />
+              Maps
+            </ChromeBtn>
+          )}
         </div>
       </div>
 
-      {/* Hipfire crosshair — fades out as scope takes over (hidden in death cam) */}
+      {/* Hipfire crosshair */}
       {!fullyScoped && !hud.spectating && (
         <div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-100"
@@ -275,12 +355,10 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
               transition: 'width 70ms linear, height 70ms linear',
             }}
           >
-            {/* Center micro-dot */}
             <div
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
               style={{ width: 2, height: 2 }}
             />
-            {/* Top arm */}
             <div
               className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
               style={{
@@ -290,7 +368,6 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
                 transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
               }}
             />
-            {/* Bottom arm */}
             <div
               className="absolute left-1/2 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
               style={{
@@ -300,7 +377,6 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
                 transition: 'top 70ms linear, height 70ms linear, width 70ms linear',
               }}
             />
-            {/* Left arm */}
             <div
               className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
               style={{
@@ -310,7 +386,6 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
                 transition: 'left 70ms linear, width 70ms linear, height 70ms linear',
               }}
             />
-            {/* Right arm */}
             <div
               className="absolute top-1/2 -translate-y-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.55)]"
               style={{
@@ -324,7 +399,7 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
         </div>
       )}
 
-      {/* Overwatch-style center hitmarker + floating damage */}
+      {/* Hitmarker + damage float */}
       <AnimatePresence>
         {showHit && hit && (
           <motion.div
@@ -340,12 +415,12 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
               kill={hit.killed}
               head={hit.zone === 'head'}
             />
-
-            {/* Damage / zone float */}
             <motion.div
-              className={`mt-3 text-center font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${damageLabelColor(hit)} ${
-                hit.zone === 'head' || hit.killed ? 'text-base' : 'text-sm'
-              }`}
+              className={cn(
+                'mt-3 text-center font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]',
+                damageLabelColor(hit),
+                hit.zone === 'head' || hit.killed ? 'text-base' : 'text-sm',
+              )}
               initial={{ y: 0, opacity: 1 }}
               animate={{ y: -18, opacity: 0 }}
               transition={{ duration: 0.53, ease: 'easeOut', delay: 0.05 }}
@@ -353,12 +428,15 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
               {hit.zone === 'head' ? 'HEADSHOT' : hit.zone.toUpperCase()}{' '}
               <span className="tabular-nums">-{hit.damage}</span>
             </motion.div>
-
             {hit.killed && (
               <motion.div
-                className="mt-0.5 text-xs font-extrabold tracking-[0.2em] text-red-400 drop-shadow-[0_0_8px_rgba(255,50,50,0.65)]"
+                className="mt-0.5 text-xs font-extrabold tracking-[0.28em] text-arena-danger drop-shadow-[0_0_10px_var(--arena-danger)]"
                 initial={{ opacity: 0, scale: 0.7, y: 4 }}
-                animate={{ opacity: [0, 1, 1, 0], scale: [0.7, 1.08, 1, 1], y: [4, -2, -6, -10] }}
+                animate={{
+                  opacity: [0, 1, 1, 0],
+                  scale: [0.7, 1.08, 1, 1],
+                  y: [4, -2, -6, -10],
+                }}
                 transition={{ duration: 0.605, times: [0, 0.15, 0.7, 1] }}
               >
                 ELIMINATED
@@ -368,83 +446,170 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
         )}
       </AnimatePresence>
 
-      {/* Bottom HUD */}
+      {/* Bottom chrome — vitals + ammo */}
       <div
-        className="absolute bottom-4 left-4 right-4 flex items-end justify-between transition-opacity duration-150"
+        className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
-        <div className="rounded-lg border border-white/10 bg-black/55 px-4 py-3 backdrop-blur-sm">
-          <div className="text-[10px] tracking-widest text-white/40 uppercase">
-            Health
+        {/* Health */}
+        <HudPanel className="min-w-[13rem] px-4 py-3 pl-4" accent="none">
+          <div className="flex items-center justify-between gap-3">
+            <HudLabel>Integrity</HudLabel>
+            <div className="flex items-center gap-1.5">
+              <Activity
+                className={cn(
+                  'size-3',
+                  hud.hp > 60
+                    ? 'text-arena-ok'
+                    : hud.hp > 30
+                      ? 'text-arena-heat'
+                      : 'text-arena-danger',
+                )}
+              />
+              <span className="font-mono text-lg font-semibold leading-none tabular-nums">
+                {hud.hp}
+              </span>
+            </div>
           </div>
-          <div className="mt-1 h-2 w-36 overflow-hidden rounded-full bg-white/10">
+          <div className="mt-2.5 h-2 w-44 overflow-hidden rounded-sm bg-black/50 ring-1 ring-white/10">
             <div
-              className="h-full rounded-full bg-emerald-500 transition-all"
-              style={{ width: `${hud.hp}%` }}
+              className={cn(
+                'h-full rounded-sm transition-all duration-200',
+                hpBarColor(hud.hp),
+              )}
+              style={{ width: `${Math.max(0, Math.min(100, hud.hp))}%` }}
             />
           </div>
-          <div className="mt-1 font-mono text-sm tabular-nums">{hud.hp}</div>
-        </div>
+          {/* Segment ticks */}
+          <div className="relative mt-1 flex w-44 justify-between px-px">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-1 w-px bg-white/20" />
+            ))}
+          </div>
+        </HudPanel>
 
-        <div className="rounded-lg border border-white/10 bg-black/55 px-5 py-3 text-right backdrop-blur-sm">
-          <div className="text-[10px] tracking-widest text-white/40 uppercase">
-            {phaseLabel}
+        {/* Weapon / ammo */}
+        <HudPanel
+          className={cn(
+            'min-w-[10.5rem] px-5 py-3 text-right',
+            emptyMag && 'border-arena-danger/40',
+          )}
+          accent={phaseHot || lowAmmo ? 'danger' : 'tech'}
+        >
+          <div className="flex items-center justify-end gap-2">
+            <HudLabel>
+              <span
+                className={cn(
+                  phaseHot && 'text-arena-danger',
+                  !phaseHot && 'text-arena-tech/80',
+                )}
+              >
+                {phaseLabel}
+              </span>
+            </HudLabel>
           </div>
-          <div className="font-mono text-3xl font-semibold leading-none tabular-nums">
+          <div
+            className={cn(
+              'mt-1 font-mono text-4xl font-bold leading-none tracking-tighter tabular-nums',
+              emptyMag
+                ? 'text-arena-danger'
+                : lowAmmo
+                  ? 'text-arena-heat'
+                  : 'text-white',
+            )}
+          >
             {hud.ammo}
-            <span className="text-lg text-white/40">/{hud.magSize}</span>
+            <span className="text-xl font-semibold text-white/35">
+              /{hud.magSize}
+            </span>
           </div>
-          <div className="mt-1 font-mono text-xs text-white/50 tabular-nums">
-            RES {hud.reserve}
+          <div className="mt-1.5 flex items-center justify-end gap-2 font-mono text-[11px] tabular-nums text-white/45">
+            <span className="tracking-widest uppercase">Res</span>
+            <span className="text-white/75">{hud.reserve}</span>
           </div>
-        </div>
+          {/* Mag segment bar */}
+          <div className="mt-2 flex justify-end gap-0.5">
+            {Array.from({ length: hud.magSize }).map((_, i) => {
+              const filled = i < hud.ammo
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    'h-1 w-2.5 rounded-[1px] transition-colors',
+                    filled
+                      ? lowAmmo
+                        ? 'bg-arena-heat'
+                        : 'bg-arena-tech'
+                      : 'bg-white/10',
+                  )}
+                />
+              )
+            })}
+          </div>
+        </HudPanel>
       </div>
 
-      {/* Death free-cam spectate → round restart countdown */}
+      {/* Death free-cam spectate */}
       {hud.spectating && !hud.alive && (
         <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center">
-          <div className="rounded-xl border border-red-500/40 bg-black/75 px-10 py-7 text-center shadow-[0_0_40px_rgba(255,40,40,0.2)] backdrop-blur-md">
-            <div className="text-xs font-semibold tracking-[0.35em] text-red-400/90 uppercase">
-              You died
+          <div className="relative overflow-hidden rounded-lg border border-arena-danger/45 bg-black/80 px-12 py-8 text-center shadow-[0_0_60px_rgba(255,40,40,0.18)] backdrop-blur-md">
+            <div className="pointer-events-none absolute top-0 left-0 h-3 w-3 border-t-2 border-l-2 border-arena-danger/70" />
+            <div className="pointer-events-none absolute top-0 right-0 h-3 w-3 border-t-2 border-r-2 border-arena-danger/70" />
+            <div className="pointer-events-none absolute bottom-0 left-0 h-3 w-3 border-b-2 border-l-2 border-arena-danger/70" />
+            <div className="pointer-events-none absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-arena-danger/70" />
+            <div className="text-[10px] font-bold tracking-[0.4em] text-arena-danger uppercase">
+              KIA
             </div>
             <div className="mt-2 text-2xl font-bold tracking-wide text-white">
               {hud.deathReason === 'fall'
                 ? 'Fell out of the world'
                 : 'Eliminated'}
             </div>
-            <div className="mt-4 font-mono text-sm text-white/70">
+            <div className="mt-5 font-mono text-sm text-white/65">
               Free cam · respawning in{' '}
-              <span className="tabular-nums text-white">
+              <span className="text-lg font-semibold tabular-nums text-arena-heat">
                 {Math.ceil(hud.respawnIn)}
               </span>
               s
             </div>
-            <p className="mt-2 text-[11px] text-white/45">
+            <p className="mt-3 text-[11px] text-white/40">
               WASD + mouse · Space / crouch to fly · Sprint to boost
             </p>
-            <p className="mt-1 text-[11px] text-white/35">
+            <p className="mt-1 text-[11px] text-white/30">
               Toggle Free cam off (bottom left) to respawn now
             </p>
           </div>
         </div>
       )}
 
-      {/* Voluntary free-cam hint (alive explore mode) */}
+      {/* Voluntary free-cam */}
       {hud.spectating && hud.alive && (
-        <div className="pointer-events-none absolute top-14 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-white/15 bg-black/60 px-4 py-2 text-center backdrop-blur-md">
-          <div className="text-xs font-medium text-white/85">Free cam</div>
-          <p className="mt-0.5 text-[11px] text-white/50">
-            WASD + mouse · Space / crouch fly · Sprint boost
-          </p>
+        <div className="pointer-events-none absolute top-16 left-1/2 z-20 -translate-x-1/2">
+          <HudPanel className="px-5 py-2.5 text-center" accent="tech">
+            <div className="text-[10px] font-semibold tracking-[0.25em] text-arena-tech uppercase">
+              Free cam
+            </div>
+            <p className="mt-1 text-[11px] text-white/50">
+              WASD + mouse · Space / crouch fly · Sprint boost
+            </p>
+          </HudPanel>
         </div>
       )}
 
-      {/* Click to play — keep available in free-cam so look can re-lock after UI clicks */}
+      {/* Click to play */}
       {!hud.pointerLocked && !(!hud.alive && hud.spectating) && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
-          <div className="rounded-xl border border-white/15 bg-black/70 px-8 py-6 text-center backdrop-blur-md">
-            <div className="text-lg font-semibold">
-              {hud.spectating ? 'Click to look' : 'Click to play'}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-[2px]">
+          <div className="relative overflow-hidden rounded-lg border border-arena-panel-border bg-arena-panel px-10 py-8 text-center shadow-2xl backdrop-blur-md">
+            <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-arena-heat/60 to-transparent" />
+            <div className="pointer-events-none absolute top-0 left-0 h-3 w-3 border-t-2 border-l-2 border-arena-heat/50" />
+            <div className="pointer-events-none absolute top-0 right-0 h-3 w-3 border-t-2 border-r-2 border-arena-heat/50" />
+            <div className="pointer-events-none absolute bottom-0 left-0 h-3 w-3 border-b-2 border-l-2 border-arena-heat/50" />
+            <div className="pointer-events-none absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-arena-heat/50" />
+            <div className="text-[10px] font-semibold tracking-[0.35em] text-arena-heat uppercase">
+              Ready
+            </div>
+            <div className="mt-2 text-2xl font-bold tracking-tight">
+              {hud.spectating ? 'Click to look' : 'Click to engage'}
             </div>
             <ControlsHint />
           </div>
@@ -456,52 +621,55 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
 
 function Kbd({ children }: { children: string }) {
   return (
-    <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
+    <kbd className="rounded-sm border border-white/15 bg-white/8 px-1.5 py-0.5 font-mono text-[11px] text-white/80 shadow-sm">
       {children}
     </kbd>
   )
 }
 
-/** Primary bind label (first code) for compact tips. */
 function primary(codes: string[]): string {
   return formatKeyCode(codes[0] ?? '?')
 }
 
-/** Reflect live keybinds so rebound players see the right tips. */
 function ControlsHint() {
   const k = getUserSettings().keybinds
   return (
-    <div className="mt-3 space-y-1 text-sm text-white/60">
-      <p className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1">
+    <div className="mt-5 space-y-2 text-sm text-white/55">
+      <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
         <span className="inline-flex gap-0.5">
           <Kbd>{primary(k.forward)}</Kbd>
           <Kbd>{primary(k.left)}</Kbd>
           <Kbd>{primary(k.back)}</Kbd>
           <Kbd>{primary(k.right)}</Kbd>
         </span>
-        <span>move ·</span>
+        <span className="text-white/35">move</span>
+        <span className="text-white/20">·</span>
         <Kbd>{primary(k.sprint)}</Kbd>
-        <span>sprint ·</span>
+        <span className="text-white/35">sprint</span>
+        <span className="text-white/20">·</span>
         <Kbd>{primary(k.crouch)}</Kbd>
         {k.crouch.length > 1 && (
           <>
-            <span>/</span>
+            <span className="text-white/20">/</span>
             <Kbd>{formatKeyCode(k.crouch[1])}</Kbd>
           </>
         )}
-        <span>crouch/slide</span>
+        <span className="text-white/35">crouch</span>
       </p>
-      <p className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1">
+      <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
         <Kbd>{primary(k.jump)}</Kbd>
-        <span>jump ·</span>
+        <span className="text-white/35">jump</span>
+        <span className="text-white/20">·</span>
         <Kbd>{primary(k.fire)}</Kbd>
-        <span>fire ·</span>
+        <span className="text-white/35">fire</span>
+        <span className="text-white/20">·</span>
         <Kbd>{primary(k.ads)}</Kbd>
-        <span>ADS ·</span>
+        <span className="text-white/35">ADS</span>
+        <span className="text-white/20">·</span>
         <Kbd>{primary(k.reload)}</Kbd>
-        <span>reload</span>
+        <span className="text-white/35">reload</span>
       </p>
-      <p className="text-white/40">
+      <p className="text-[11px] tracking-wide text-white/30">
         Sprint + crouch to slide · jump out of slide to hop
       </p>
     </div>

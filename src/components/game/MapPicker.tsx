@@ -1,7 +1,15 @@
-import { Link } from 'react-router-dom'
-import { ArrowLeft, Map as MapIcon, Target } from 'lucide-react'
+import { useState } from 'react'
+import {
+  Crosshair,
+  Map as MapIcon,
+  Moon,
+  Settings,
+  Sun,
+  Target,
+} from 'lucide-react'
 import { motion } from 'framer-motion'
 
+import { SettingsDialog } from '@/components/SettingsDialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { gameAudio } from '@/game/audio'
@@ -11,6 +19,7 @@ import {
   SKYBOX_LABELS,
   type SkyboxPreference,
 } from '@/game/scene/skyboxes'
+import { useAppStore } from '@/stores/useAppStore'
 
 const SKYBOX_OPTIONS: SkyboxPreference[] = [...SKYBOX_IDS, 'random']
 
@@ -31,41 +40,92 @@ export function MapPicker({
   onPlay,
 }: MapPickerProps) {
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
+  const { theme, toggleTheme } = useAppStore()
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
     <div className="relative flex min-h-svh flex-col overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_oklch(0.35_0.08_250/_0.35),_transparent_55%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_oklch(0.4_0.12_40/_0.2),_transparent_50%)]" />
+      {/* Atmosphere */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_20%_0%,_oklch(0.55_0.14_55/_0.18),_transparent_50%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_90%_80%,_oklch(0.5_0.1_200/_0.14),_transparent_45%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_120%,_oklch(0.2_0.04_260/_0.45),_transparent_55%)]" />
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.035] dark:opacity-[0.06]"
+        style={{
+          backgroundImage:
+            'linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)',
+          backgroundSize: '48px 48px',
+        }}
+      />
 
+      {/* Top bar — brand + utilities */}
       <header className="relative z-10 flex items-center justify-between gap-3 px-4 py-4 sm:px-6">
-        <Button variant="outline" size="sm" asChild className="gap-2">
-          <Link
-            to="/"
-            onClick={() => gameAudio.uiClick()}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Home
-          </Link>
-        </Button>
-        <div className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          <MapIcon className="h-3.5 w-3.5" />
-          Select map
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/15 text-primary shadow-[0_0_16px_oklch(0.7_0.15_55/_0.2)]">
+            <Crosshair className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold tracking-tight sm:text-base">
+              Dual Arena
+            </div>
+            <div className="hidden text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase sm:block">
+              Sniper 1v1 · Browser
+            </div>
+          </div>
         </div>
-        <div className="w-20" />
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              gameAudio.uiClick()
+              toggleTheme()
+            }}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-card/80 px-2.5 py-2 text-sm text-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-muted sm:px-3"
+            aria-label="Toggle theme"
+          >
+            {theme === 'light' ? (
+              <Moon className="size-4 text-primary" />
+            ) : (
+              <Sun className="size-4 text-primary" />
+            )}
+            <span className="hidden font-medium sm:inline">
+              {theme === 'light' ? 'Dark' : 'Light'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              gameAudio.uiClick()
+              setSettingsOpen(true)
+            }}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-card/80 px-2.5 py-2 text-sm text-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-muted sm:px-3"
+          >
+            <Settings className="size-4 text-primary" />
+            <span className="hidden font-medium sm:inline">Settings</span>
+          </button>
+        </div>
       </header>
 
       <main className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-10 sm:px-6">
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
+          transition={{ duration: 0.4 }}
           className="mb-8 text-center"
         >
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
-            Choose your map
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[10px] font-semibold tracking-[0.18em] text-primary uppercase">
+            <MapIcon className="size-3.5" />
+            Deploy
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight sm:text-5xl">
+            <span className="bg-gradient-to-br from-foreground via-foreground to-primary bg-clip-text text-transparent">
+              Choose your map
+            </span>
           </h1>
-          <p className="mt-2 text-muted-foreground">
-            Practice range or load a full arena. Maps use offline local play.
+          <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground sm:text-base">
+            One shot. One stake. Prove it. Pick a range or arena — offline local
+            play is live now.
           </p>
         </motion.div>
 
@@ -85,38 +145,42 @@ export function MapPicker({
         </div>
 
         <motion.div
-          className="mt-8 flex flex-col gap-4 rounded-2xl border border-border bg-card/70 p-5 backdrop-blur"
+          className="relative mt-8 overflow-hidden rounded-lg border border-border bg-card/80 p-5 shadow-md backdrop-blur"
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.15 }}
         >
+          <div className="absolute top-0 left-0 h-full w-0.5 bg-primary" />
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="text-center sm:text-left">
-              <div className="text-sm font-semibold">{selected.name}</div>
+              <div className="text-[10px] font-semibold tracking-[0.2em] text-primary uppercase">
+                Ready to deploy
+              </div>
+              <div className="mt-1 text-lg font-semibold">{selected.name}</div>
               <p className="mt-0.5 max-w-md text-xs text-muted-foreground">
                 {selected.blurb}
               </p>
             </div>
             <Button
               size="lg"
-              className="min-w-44 gap-2 text-base sm:shrink-0"
+              className="min-w-44 gap-2 text-base shadow-[0_0_20px_oklch(0.7_0.15_55/_0.22)] sm:shrink-0"
               onClick={() => {
                 gameAudio.uiConfirm()
                 onPlay()
               }}
             >
               <Target className="h-5 w-5" />
-              Play
+              Deploy
             </Button>
           </div>
 
-          <div className="border-t border-border/80 pt-4">
-            <div className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <div className="mt-5 border-t border-border/80 pt-4">
+            <div className="mb-2 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
               Skybox
             </div>
             <p className="mb-2.5 text-xs text-muted-foreground">
-              Same for everyone in this map session. Default is Day. Random picks
-              once when you hit Play and is locked in the URL.
+              Locked for this session. Default is Day. Random picks once when you
+              hit Deploy and is stored in the URL.
             </p>
             <div className="flex flex-wrap gap-1.5">
               {SKYBOX_OPTIONS.map((id) => {
@@ -132,8 +196,8 @@ export function MapPicker({
                     className={cn(
                       'rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
                       active
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground',
+                        ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                        : 'border-border bg-background/60 text-muted-foreground hover:border-primary/30 hover:bg-muted hover:text-foreground',
                     )}
                   >
                     {SKYBOX_LABELS[id]}
@@ -143,7 +207,13 @@ export function MapPicker({
             </div>
           </div>
         </motion.div>
+
+        <p className="mt-8 text-center text-[11px] text-muted-foreground/55">
+          Sniper viewmodel © DJMaesen (CC BY 4.0) · public/models/CREDITS.md
+        </p>
       </main>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }
@@ -169,22 +239,25 @@ function MapCard({
       whileHover={{ scale: 1.015 }}
       whileTap={{ scale: 0.985 }}
       className={cn(
-        'flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
+        'group relative flex flex-col overflow-hidden rounded-lg border text-left shadow-sm transition-colors',
         selected
-          ? 'border-primary bg-primary/10 ring-2 ring-primary/40'
-          : 'border-border bg-card/60 hover:bg-card',
+          ? 'border-primary bg-primary/10 ring-2 ring-primary/35'
+          : 'border-border bg-card/70 hover:border-primary/30 hover:bg-card',
       )}
     >
+      {selected && (
+        <div className="absolute top-0 left-0 z-10 h-full w-0.5 bg-primary" />
+      )}
       <MapThumb map={map} selected={selected} />
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">
           <h2 className="font-semibold leading-tight">{map.name}</h2>
           {map.kind === 'range' ? (
-            <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
+            <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-600 uppercase dark:text-emerald-400">
               Official
             </span>
           ) : (
-            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
               Arena
             </span>
           )}
@@ -207,7 +280,6 @@ function MapCard({
   )
 }
 
-/** Screenshot thumb when available; otherwise procedural color gradient. */
 function MapThumb({ map, selected }: { map: MapDef; selected: boolean }) {
   const a = `#${map.bgColor.toString(16).padStart(6, '0')}`
   const b = `#${map.fogColor.toString(16).padStart(6, '0')}`
@@ -218,7 +290,7 @@ function MapThumb({ map, selected }: { map: MapDef; selected: boolean }) {
         selected && 'opacity-100',
       )}
       style={{
-        background: `linear-gradient(145deg, ${a} 0%, ${b} 55%, oklch(0.2 0.02 250) 100%)`,
+        background: `linear-gradient(145deg, ${a} 0%, ${b} 55%, oklch(0.15 0.03 260) 100%)`,
       }}
     >
       {map.thumbUrl ? (
@@ -231,7 +303,7 @@ function MapThumb({ map, selected }: { map: MapDef; selected: boolean }) {
       ) : (
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_40%,white_0.5px,transparent_1px)] [background-size:12px_12px]" />
       )}
-      <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/55 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/60 to-transparent" />
       <div className="absolute bottom-2 left-3 flex items-center gap-1.5 text-xs font-medium text-white/90 drop-shadow">
         <MapIcon className="h-3.5 w-3.5" />
         {map.kind === 'range' ? 'Procedural' : 'GLB arena'}

@@ -60,6 +60,8 @@ export interface MapDef {
   fogFar: number
   fogColor: number
   bgColor: number
+  /** Optional thumbnail image URL for map picker */
+  thumbUrl?: string
   /**
    * When true, load Kenney prototype floor/cover textures (procedural range).
    * Skyboxes are always applied from user settings on every map.

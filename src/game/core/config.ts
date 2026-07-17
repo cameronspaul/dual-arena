@@ -103,7 +103,7 @@ export const SNIPER = {
 
 /**
  * First-person sniper pose (camera-local space).
- * Live-tune with the in-game Viewmodel Editor (button on /play), then paste the
+ * Live-tune with the in-game Viewmodel Editor (button during a match), then paste the
  * exported JSON back into this object (or hand the file to an agent).
  */
 export const VIEWMODEL = {

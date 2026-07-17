@@ -138,8 +138,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           }
         }}
       >
-        <DialogHeader className="shrink-0 space-y-1 border-b border-border px-5 py-4 pr-12 text-left">
-          <DialogTitle>Settings</DialogTitle>
+        <DialogHeader className="relative shrink-0 space-y-1 border-b border-border px-5 py-4 pr-12 text-left">
+          <div className="absolute top-0 left-0 h-full w-0.5 bg-primary" />
+          <DialogTitle className="tracking-tight">Settings</DialogTitle>
           <DialogDescription>
             Volume, mouse, and keybinds — saved in this browser.
           </DialogDescription>
@@ -156,10 +157,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 gameAudio.uiClick()
               }}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
+                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-semibold tracking-wide transition-colors',
                 section === id
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
+                  ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                  : 'border-border bg-card text-muted-foreground hover:border-primary/30 hover:bg-muted hover:text-foreground',
               )}
             >
               <Icon className="size-3.5" />

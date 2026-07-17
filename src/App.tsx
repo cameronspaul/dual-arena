@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import Home from './pages/Home'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import Game from './pages/Game'
 import { useAppStore } from './stores/useAppStore'
 import { bootstrapSettings } from './stores/useSettingsStore'
@@ -20,8 +19,10 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/play" element={<Game />} />
+        <Route path="/" element={<Game />} />
+        {/* Legacy /play bookmarks → main page */}
+        <Route path="/play" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

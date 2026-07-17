@@ -69,9 +69,9 @@ function hudKey(s: HudSnapshot): string {
 }
 
 const devBtn =
-  'pointer-events-auto rounded-lg border border-white/15 bg-black/70 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur hover:bg-black/85 hover:text-white'
+  'pointer-events-auto rounded-md border border-arena-panel-border bg-arena-panel px-3 py-1.5 text-xs font-medium tracking-wide text-white/75 shadow-md backdrop-blur-md transition-all hover:border-arena-heat/40 hover:bg-white/10 hover:text-white'
 const devBtnOn =
-  'pointer-events-auto rounded-lg border border-orange-400/50 bg-orange-500/25 px-3 py-1.5 text-xs font-medium text-orange-100 backdrop-blur hover:bg-orange-500/35'
+  'pointer-events-auto rounded-md border border-arena-heat/50 bg-arena-heat/20 px-3 py-1.5 text-xs font-medium tracking-wide text-arena-heat shadow-[0_0_16px_var(--arena-heat-dim)] backdrop-blur-md transition-all hover:bg-arena-heat/30'
 
 function readInitialMap(params: URLSearchParams): MapId {
   const q = params.get('map')
@@ -254,15 +254,16 @@ export default function Game() {
         <GameHud
           hud={hud}
           onOpenSettings={() => setSettingsOpen(true)}
+          onExit={backToPicker}
         />
       )}
 
       {/* Map + sky badge */}
       {!vmEdit && !levelEdit && (
-        <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-xs font-medium text-white/80 backdrop-blur">
-          {mapName}
-          <span className="mx-1.5 text-white/35">·</span>
-          {SKYBOX_LABELS[sessionSkybox]}
+        <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-md border border-arena-panel-border bg-arena-panel px-3.5 py-1.5 text-[11px] font-medium tracking-wide text-white/80 shadow-md backdrop-blur-md">
+          <span className="text-arena-heat">{mapName}</span>
+          <span className="mx-1.5 text-white/25">·</span>
+          <span className="text-arena-tech/90">{SKYBOX_LABELS[sessionSkybox]}</span>
         </div>
       )}
 
