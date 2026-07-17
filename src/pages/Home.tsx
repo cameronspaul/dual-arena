@@ -1,12 +1,16 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAppStore } from '../stores/useAppStore'
-import { Crosshair, Moon, Sun, Target } from 'lucide-react'
-import { Button } from '../components/ui/button'
+import { Crosshair, Moon, Settings, Sun, Target } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { gameAudio } from '../game/audio'
+
+import { SettingsDialog } from '@/components/SettingsDialog'
+import { Button } from '@/components/ui/button'
+import { gameAudio } from '@/game/audio'
+import { useAppStore } from '@/stores/useAppStore'
 
 function Home() {
   const { theme, toggleTheme } = useAppStore()
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
     <div className="relative min-h-svh overflow-hidden bg-background text-foreground">
@@ -14,13 +18,12 @@ function Home() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_oklch(0.35_0.08_250/_0.35),_transparent_55%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_oklch(0.4_0.12_40/_0.2),_transparent_50%)]" />
 
-      <div className="absolute top-4 left-4 z-10">
+      <div className="absolute top-4 left-4 right-4 z-10 flex items-center justify-between gap-2">
         <motion.button
           onClick={() => {
             gameAudio.uiClick()
             toggleTheme()
           }}
-          onMouseEnter={() => gameAudio.uiHover()}
           className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
           aria-label="Toggle theme"
           whileHover={{ scale: 1.05 }}
@@ -34,6 +37,20 @@ function Home() {
           <span className="font-medium">
             {theme === 'light' ? 'Dark' : 'Light'}
           </span>
+        </motion.button>
+
+        <motion.button
+          type="button"
+          onClick={() => {
+            gameAudio.uiClick()
+            setSettingsOpen(true)
+          }}
+          className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <Settings className="h-4 w-4" />
+          <span className="font-medium">Settings</span>
         </motion.button>
       </div>
 
@@ -77,11 +94,23 @@ function Home() {
             <Link
               to="/play"
               onClick={() => gameAudio.uiConfirm()}
-              onMouseEnter={() => gameAudio.uiHover()}
-            >
+                >
               <Target className="h-5 w-5" />
               Enter Range
             </Link>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="min-w-48 gap-2 text-base"
+            onClick={() => {
+              gameAudio.uiClick()
+              setSettingsOpen(true)
+            }}
+            >
+            <Settings className="h-5 w-5" />
+            Settings
           </Button>
         </motion.div>
 
@@ -121,6 +150,8 @@ function Home() {
           Sniper viewmodel © DJMaesen (CC BY 4.0) · See public/models/CREDITS.md
         </p>
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

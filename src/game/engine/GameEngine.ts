@@ -135,6 +135,15 @@ export class GameEngine {
     this.input.setGameplayEnabled(!active)
   }
 
+  /** Pause gameplay input (settings modal, etc.) and release pointer lock. */
+  setGameplayEnabled(enabled: boolean) {
+    this.input.setGameplayEnabled(enabled)
+  }
+
+  isGameplayEnabled() {
+    return this.input.isGameplayEnabled()
+  }
+
   setViewmodelArmSolo(solo: 'both' | 'left' | 'right') {
     this.viewmodel.setArmSolo(solo)
   }

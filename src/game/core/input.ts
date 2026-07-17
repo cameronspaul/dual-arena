@@ -1,25 +1,13 @@
 import { LOOK, MOVE } from './config'
 import { clampPitch } from './math'
 import type { PlayerInput } from './types'
-
-/** Keys we always suppress while the game owns input (scroll / browser actions). */
-const GAMEPLAY_PREVENT_DEFAULT = new Set([
-  'Space',
-  'KeyW',
-  'KeyA',
-  'KeyS',
-  'KeyD',
-  'KeyR',
-  'KeyC',
-  'ControlLeft',
-  'ControlRight',
-  'ShiftLeft',
-  'ShiftRight',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-])
+import {
+  allBoundCodes,
+  codesFor,
+  getUserSettings,
+  isBoundTo,
+  mouseButtonCode,
+} from './userSettings'
 
 /**
  * Ctrl/Cmd + these close tabs, open new ones, etc.
@@ -31,6 +19,15 @@ const BROWSER_SHORTCUT_CODES = new Set([
   'KeyN', // new window
   'KeyR', // reload
   'KeyQ', // quit (some browsers / macOS)
+])
+
+/** Keys we always suppress while the game owns input (scroll / browser actions). */
+const ALWAYS_PREVENT = new Set([
+  'Space',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
 ])
 
 type KeyboardLockAPI = {
@@ -49,6 +46,7 @@ function getKeyboardLock(): KeyboardLockAPI | null {
 /**
  * Browser input: keyboard + pointer lock mouse.
  * Produces a fresh PlayerInput each frame via sample().
+ * Sensitivity / multi-keybinds come from getUserSettings() (live).
  */
 export class InputManager {
   private keys = new Set<string>()
@@ -61,7 +59,7 @@ export class InputManager {
   private pointerLocked = false
   private canvas: HTMLElement | null = null
   private adsBlend = 0
-  /** When false, gameplay keys/mouse are ignored (UI / viewmodel editor). */
+  /** When false, gameplay keys/mouse are ignored (UI / settings / viewmodel editor). */
   private gameplayEnabled = true
   private keyboardLocked = false
 
@@ -76,13 +74,22 @@ export class InputManager {
 
     if (!this.gameplayEnabled) return
 
-    // prevent scroll / browser shortcuts while playing
-    if (GAMEPLAY_PREVENT_DEFAULT.has(e.code)) {
+    const boundCodes = allBoundCodes()
+    if (ALWAYS_PREVENT.has(e.code) || boundCodes.has(e.code)) {
       e.preventDefault()
     }
+
+    // Ignore auto-repeat for edge-triggered actions
+    if (e.repeat) {
+      this.keys.add(e.code)
+      return
+    }
+
     this.keys.add(e.code)
-    if (e.code === 'Space') this.jumpPressed = true
-    if (e.code === 'KeyR') this.reloadPressed = true
+    if (isBoundTo('jump', e.code)) this.jumpPressed = true
+    if (isBoundTo('reload', e.code)) this.reloadPressed = true
+    if (isBoundTo('fire', e.code)) this.firePressed = true
+    if (isBoundTo('ads', e.code)) this.adsHeld = true
   }
 
   private onKeyUp = (e: KeyboardEvent) => {
@@ -95,25 +102,31 @@ export class InputManager {
       void this.canvas.requestPointerLock()
       return
     }
-    if (e.button === 0) this.firePressed = true
-    if (e.button === 2) this.adsHeld = true
+    const code = mouseButtonCode(e.button)
+    if (!code) return
+    if (isBoundTo('fire', code)) this.firePressed = true
+    if (isBoundTo('ads', code)) this.adsHeld = true
   }
 
   private onMouseUp = (e: MouseEvent) => {
-    if (e.button === 2) this.adsHeld = false
+    const code = mouseButtonCode(e.button)
+    if (!code) return
+    if (isBoundTo('ads', code)) {
+      // Clear mouse ADS only if no other mouse ADS button is down (single button typical)
+      this.adsHeld = false
+    }
   }
 
   private onMouseMove = (e: MouseEvent) => {
     if (!this.pointerLocked) return
-    const sens =
-      this.adsBlend > 0.5 ? LOOK.adsSensitivity : LOOK.hipSensitivity
-    // blend sens smoothly
-    const s =
-      LOOK.hipSensitivity * (1 - this.adsBlend) +
-      LOOK.adsSensitivity * this.adsBlend
-    void sens
+    const settings = getUserSettings()
+    const hip = LOOK.hipSensitivity * settings.mouseSensitivity
+    const ads = LOOK.adsSensitivity * settings.adsSensitivity
+    const s = hip * (1 - this.adsBlend) + ads * this.adsBlend
     this.yaw -= e.movementX * s
-    this.pitch -= e.movementY * s
+    // Default: move mouse up → look up (negative pitch in engine convention).
+    const ySign = settings.invertY ? 1 : -1
+    this.pitch += e.movementY * s * ySign
     this.pitch = clampPitch(this.pitch, MOVE.maxPitch)
   }
 
@@ -136,11 +149,9 @@ export class InputManager {
     const kb = getKeyboardLock()
     if (!kb || this.keyboardLocked) return
     try {
-      // Empty list locks all keys the page is allowed to capture.
       await kb.lock()
       this.keyboardLocked = true
     } catch {
-      // Not available / not allowed (e.g. non-Chromium, missing gesture).
       this.keyboardLocked = false
     }
   }
@@ -158,7 +169,6 @@ export class InputManager {
 
   attach(canvas: HTMLElement) {
     this.canvas = canvas
-    // Capture phase so we beat other handlers and can cancel browser shortcuts.
     window.addEventListener('keydown', this.onKeyDown, true)
     window.addEventListener('keyup', this.onKeyUp, true)
     canvas.addEventListener('mousedown', this.onMouseDown)
@@ -188,7 +198,7 @@ export class InputManager {
   }
 
   /**
-   * Disable WASD / fire / pointer-lock while a panel (e.g. viewmodel editor) is open.
+   * Disable WASD / fire / pointer-lock while a panel (settings, viewmodel editor) is open.
    * Releases pointer lock when turning off.
    */
   setGameplayEnabled(enabled: boolean) {
@@ -223,31 +233,27 @@ export class InputManager {
   }
 
   sample(): PlayerInput {
-    const forward =
-      (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
-      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0)
-    const right =
-      (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
-      (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0)
+    const held = (action: Parameters<typeof codesFor>[0]) =>
+      codesFor(action).some((c) => this.keys.has(c))
+
+    // ADS: any keyboard ADS bind held, or mouse ADS hold flag
+    const adsKeyboard = held('ads')
+    const ads =
+      this.pointerLocked && (adsKeyboard || this.adsHeld)
 
     const input: PlayerInput = {
-      forward,
-      right,
+      forward: (held('forward') ? 1 : 0) - (held('back') ? 1 : 0),
+      right: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
       jump: this.jumpPressed,
-      crouch:
-        this.keys.has('ControlLeft') ||
-        this.keys.has('ControlRight') ||
-        this.keys.has('KeyC'),
-      sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
+      crouch: held('crouch'),
+      sprint: held('sprint'),
       yaw: this.yaw,
       pitch: this.pitch,
-      ads: this.adsHeld && this.pointerLocked,
-      // bolt-action: one shot per click (edge), not hold-to-spray
+      ads,
       fire: this.firePressed && this.pointerLocked,
       reload: this.reloadPressed,
     }
 
-    // edge-triggered
     this.jumpPressed = false
     this.reloadPressed = false
     this.firePressed = false

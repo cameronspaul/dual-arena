@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameCanvas } from '@/components/game/GameCanvas'
 import { GameHud } from '@/components/game/GameHud'
 import { ViewmodelEditor } from '@/components/game/ViewmodelEditor'
+import { SettingsDialog } from '@/components/SettingsDialog'
 import type { GameEngine } from '@/game/engine'
 import type { HudSnapshot } from '@/game/types'
 
@@ -40,6 +41,7 @@ export default function Game() {
     if (typeof window === 'undefined') return false
     return new URLSearchParams(window.location.search).has('vm-edit')
   })
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [thirdPerson, setThirdPerson] = useState(false)
   const [dummiesPaused, setDummiesPaused] = useState(false)
   const lastKey = useRef('')
@@ -62,6 +64,12 @@ export default function Game() {
     }
   }, [])
 
+  // Release pointer lock / block gameplay while settings are open
+  useEffect(() => {
+    if (!engine || vmEdit) return
+    engine.setGameplayEnabled(!settingsOpen)
+  }, [engine, settingsOpen, vmEdit])
+
   const toggleThirdPerson = useCallback(() => {
     if (!engine) return
     const next = !engine.isThirdPerson()
@@ -79,7 +87,12 @@ export default function Game() {
   return (
     <div className="relative h-svh w-full overflow-hidden bg-black">
       <GameCanvas onHud={onHud} onEngine={onEngine} />
-      {!vmEdit && <GameHud hud={hud} />}
+      {!vmEdit && (
+        <GameHud
+          hud={hud}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      )}
 
       {vmEdit ? (
         <ViewmodelEditor
@@ -110,6 +123,8 @@ export default function Game() {
           </button>
         </div>
       )}
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

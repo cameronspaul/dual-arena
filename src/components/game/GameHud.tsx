@@ -3,11 +3,16 @@ import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent } from '@/game/types'
-import { Target } from 'lucide-react'
+import { Settings, Target } from 'lucide-react'
 import { ScopeOverlay } from './ScopeOverlay'
+import {
+  formatKeyCode,
+  getUserSettings,
+} from '@/game/core/userSettings'
 
 interface GameHudProps {
   hud: HudSnapshot | null
+  onOpenSettings?: () => void
 }
 
 /** Map cone half-angle (rad) → half-gap in px for the dynamic reticle. */
@@ -70,7 +75,7 @@ function HitMarkerX({
   )
 }
 
-export function GameHud({ hud }: GameHudProps) {
+export function GameHud({ hud, onOpenSettings }: GameHudProps) {
   if (!hud) return null
 
   const phaseLabel =
@@ -126,14 +131,28 @@ export function GameHud({ hud }: GameHudProps) {
           </div>
         </div>
 
-        <Link
-          to="/"
-          onClick={() => gameAudio.uiClick()}
-          onMouseEnter={() => gameAudio.uiHover()}
-          className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
-        >
-          Exit
-        </Link>
+        <div className="flex items-center gap-2">
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={() => {
+                gameAudio.uiClick()
+                onOpenSettings()
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
+            >
+              <Settings className="size-3.5" />
+              Settings
+            </button>
+          )}
+          <Link
+            to="/"
+            onClick={() => gameAudio.uiClick()}
+            className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 text-sm text-white/80 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white"
+          >
+            Exit
+          </Link>
+        </div>
       </div>
 
       {/* Hipfire crosshair — fades out as scope takes over */}
@@ -280,46 +299,64 @@ export function GameHud({ hud }: GameHudProps) {
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
           <div className="rounded-xl border border-white/15 bg-black/70 px-8 py-6 text-center backdrop-blur-md">
             <div className="text-lg font-semibold">Click to play</div>
-            <div className="mt-3 space-y-1 text-sm text-white/60">
-              <p>
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  WASD
-                </kbd>{' '}
-                move ·{' '}
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  Shift
-                </kbd>{' '}
-                sprint ·{' '}
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  Ctrl
-                </kbd>{' '}
-                crouch/slide
-              </p>
-              <p>
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  Space
-                </kbd>{' '}
-                jump ·{' '}
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  LMB
-                </kbd>{' '}
-                fire ·{' '}
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  RMB
-                </kbd>{' '}
-                ADS ·{' '}
-                <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
-                  R
-                </kbd>{' '}
-                reload
-              </p>
-              <p className="text-white/40">
-                Sprint + crouch to slide · jump out of slide to hop
-              </p>
-            </div>
+            <ControlsHint />
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function Kbd({ children }: { children: string }) {
+  return (
+    <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs">
+      {children}
+    </kbd>
+  )
+}
+
+/** Primary bind label (first code) for compact tips. */
+function primary(codes: string[]): string {
+  return formatKeyCode(codes[0] ?? '?')
+}
+
+/** Reflect live keybinds so rebound players see the right tips. */
+function ControlsHint() {
+  const k = getUserSettings().keybinds
+  return (
+    <div className="mt-3 space-y-1 text-sm text-white/60">
+      <p className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1">
+        <span className="inline-flex gap-0.5">
+          <Kbd>{primary(k.forward)}</Kbd>
+          <Kbd>{primary(k.left)}</Kbd>
+          <Kbd>{primary(k.back)}</Kbd>
+          <Kbd>{primary(k.right)}</Kbd>
+        </span>
+        <span>move ·</span>
+        <Kbd>{primary(k.sprint)}</Kbd>
+        <span>sprint ·</span>
+        <Kbd>{primary(k.crouch)}</Kbd>
+        {k.crouch.length > 1 && (
+          <>
+            <span>/</span>
+            <Kbd>{formatKeyCode(k.crouch[1])}</Kbd>
+          </>
+        )}
+        <span>crouch/slide</span>
+      </p>
+      <p className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1">
+        <Kbd>{primary(k.jump)}</Kbd>
+        <span>jump ·</span>
+        <Kbd>{primary(k.fire)}</Kbd>
+        <span>fire ·</span>
+        <Kbd>{primary(k.ads)}</Kbd>
+        <span>ADS ·</span>
+        <Kbd>{primary(k.reload)}</Kbd>
+        <span>reload</span>
+      </p>
+      <p className="text-white/40">
+        Sprint + crouch to slide · jump out of slide to hop
+      </p>
     </div>
   )
 }

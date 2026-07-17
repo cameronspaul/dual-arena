@@ -3,6 +3,9 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Home from './pages/Home'
 import Game from './pages/Game'
 import { useAppStore } from './stores/useAppStore'
+import { bootstrapSettings } from './stores/useSettingsStore'
+
+bootstrapSettings()
 
 function App() {
   const theme = useAppStore((s) => s.theme)

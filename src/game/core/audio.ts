@@ -173,6 +173,8 @@ export class GameAudio {
   private cursor = new Map<SfxId, number>()
   private unlocked = false
   private muted = false
+  private masterVolume = 1
+  private sfxVolume = 1
   private lastFootstep = 0
   private lastUiHover = 0
   private lastDry = 0
@@ -192,6 +194,25 @@ export class GameAudio {
       this.pools.set(id, pool)
       this.cursor.set(id, 0)
     }
+  }
+
+  /** Sync from user settings store (master / sfx / mute). */
+  applyUserAudio(opts: {
+    masterVolume: number
+    sfxVolume: number
+    muted: boolean
+  }) {
+    this.masterVolume = Math.min(1, Math.max(0, opts.masterVolume))
+    this.sfxVolume = Math.min(1, Math.max(0, opts.sfxVolume))
+    this.muted = opts.muted
+  }
+
+  private scaleVolume(clipVolume: number) {
+    if (this.muted) return 0
+    return Math.min(
+      1,
+      Math.max(0, clipVolume * this.masterVolume * this.sfxVolume),
+    )
   }
 
   /** Call from a user gesture so browsers allow playback. */
@@ -224,6 +245,14 @@ export class GameAudio {
     return this.muted
   }
 
+  setMasterVolume(v: number) {
+    this.masterVolume = Math.min(1, Math.max(0, v))
+  }
+
+  setSfxVolume(v: number) {
+    this.sfxVolume = Math.min(1, Math.max(0, v))
+  }
+
   play(id: SfxId, opts?: { volume?: number; rate?: number }) {
     if (this.muted) return
     this.unlock()
@@ -244,7 +273,7 @@ export class GameAudio {
       }
     }
 
-    a.volume = Math.min(1, Math.max(0, opts?.volume ?? def.volume))
+    a.volume = this.scaleVolume(opts?.volume ?? def.volume)
     a.playbackRate = opts?.rate ?? 1
     try {
       a.currentTime = 0
