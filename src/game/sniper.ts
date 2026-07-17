@@ -78,8 +78,13 @@ export function tryFire(s: SniperState, input: PlayerInput): boolean {
   s.ammo -= 1
   s.phase = 'firing'
   s.phaseTimer = SNIPER.fireAnimTime
-  s.recoil = Math.min(1, s.recoil + 1)
+  // Recoil is applied after the shot so the bullet still goes where the
+  // crosshair was aiming this frame (kick affects subsequent frames).
   return true
+}
+
+export function applyRecoil(s: SniperState) {
+  s.recoil = Math.min(1, s.recoil + 1)
 }
 
 /** Sway angles (radians) added to pitch/yaw for aim. */

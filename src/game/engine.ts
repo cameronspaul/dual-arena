@@ -1,11 +1,13 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { DUMMY, LOOK, SNIPER } from './config'
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
+import { DEBUG, DUMMY, LOOK, SNIPER, VIEW_BOB, VIEWMODEL } from './config'
 import { castHitscan } from './hitscan'
 import { InputManager } from './input'
 import { lookDirection } from './math'
 import { createPlayer, eyePosition, stepPlayer } from './player'
 import {
+  applyRecoil,
   createSniper,
   effectiveLook,
   stepSniper,
@@ -44,7 +46,16 @@ export class GameEngine {
   private lastTime = 0
   private container: HTMLElement
   private viewmodel: THREE.Group | null = null
+  private bobPhase = 0
+  private bobAmount = 0
+  private landOffset = 0
+  private wasGrounded = true
+  /** Fall speed sampled before collision zeros velocity.y on land. */
+  private prevVelY = 0
   private dummyMeshes = new Map<string, THREE.Group>()
+  private dummyMixers = new Map<string, THREE.AnimationMixer>()
+  /** World-space helpers matching dummyHitboxes (axis-aligned, not yawed). */
+  private dummyHitboxHelpers = new Map<string, THREE.Group>()
   private impactPool: THREE.Mesh[] = []
   private tracer: THREE.Line | null = null
   private tracerTimer = 0
@@ -259,16 +270,107 @@ export class GameEngine {
   }
 
   /**
-   * Load public/models/man.glb once, clone per dummy, normalize to hitbox height.
+   * Visualize hitscan volumes from dummyHitboxes:
+   * - head: sphere at headOffsetY / headRadius
+   * - body: AABB at bodyOffsetY (axis-aligned; not rotated by dummy yaw)
+   */
+  private makeHitboxHelper(): THREE.Group {
+    const g = new THREE.Group()
+    g.renderOrder = 20
+
+    const bodyW = DUMMY.bodyHalfW * 2
+    const bodyH = DUMMY.bodyHeight
+    const bodyD = DUMMY.bodyHalfD * 2
+    const bodyGeo = new THREE.BoxGeometry(bodyW, bodyH, bodyD)
+
+    const bodyFill = new THREE.Mesh(
+      bodyGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0x33aaff,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    bodyFill.position.y = DUMMY.bodyOffsetY
+    bodyFill.renderOrder = 20
+
+    const bodyWire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(bodyGeo),
+      new THREE.LineBasicMaterial({
+        color: 0x66ccff,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: true,
+      }),
+    )
+    bodyWire.position.y = DUMMY.bodyOffsetY
+    bodyWire.renderOrder = 21
+
+    const headGeo = new THREE.SphereGeometry(DUMMY.headRadius, 16, 12)
+    const headFill = new THREE.Mesh(
+      headGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0xff3344,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+      }),
+    )
+    headFill.position.y = DUMMY.headOffsetY
+    headFill.renderOrder = 20
+
+    const headWire = new THREE.LineSegments(
+      new THREE.WireframeGeometry(headGeo),
+      new THREE.LineBasicMaterial({
+        color: 0xff8899,
+        transparent: true,
+        opacity: 0.75,
+        depthTest: true,
+      }),
+    )
+    headWire.position.y = DUMMY.headOffsetY
+    headWire.renderOrder = 21
+
+    g.add(bodyFill, bodyWire, headFill, headWire)
+    return g
+  }
+
+  /** Match clip by exact name or trailing `|Name` (Quaternius-style). */
+  private findClip(
+    clips: THREE.AnimationClip[],
+    ...names: string[]
+  ): THREE.AnimationClip | undefined {
+    for (const name of names) {
+      const hit = clips.find(
+        (c) => c.name === name || c.name.endsWith(`|${name}`),
+      )
+      if (hit) return hit
+    }
+    return undefined
+  }
+
+  /**
+   * Load public/models/man.glb once, clone per dummy (with skeleton), play Idle.
    * Falls back to a low-poly placeholder if the asset is missing.
    */
   private async loadDummies() {
-    let factory: () => THREE.Group
+    type DummyFactory = (id: string) => THREE.Group
+
+    let factory: DummyFactory
 
     try {
       const loader = new GLTFLoader()
       const gltf = await loader.loadAsync('/models/man.glb')
       const source = gltf.scene
+      const clips = gltf.animations ?? []
+
+      const idleClip =
+        this.findClip(clips, 'Idle_Neutral', 'Idle') ?? clips[0]
+      const hitClip = this.findClip(clips, 'HitRecieve')
+      const hitClipAlt = this.findClip(clips, 'HitRecieve_2')
+      const deathClip = this.findClip(clips, 'Death')
 
       const box = new THREE.Box3().setFromObject(source)
       const size = box.getSize(new THREE.Vector3())
@@ -276,11 +378,11 @@ export class GameEngine {
       const scale = targetHeight / Math.max(size.y, 0.001)
       const footY = box.min.y
 
-      factory = () => {
+      factory = (id: string) => {
         const root = new THREE.Group()
-        const model = source.clone(true)
+        // SkeletonUtils preserves skinned meshes / bone bindings for animation
+        const model = cloneSkinned(source)
         model.scale.setScalar(scale)
-        // Sit feet on the ground (group origin at floor)
         model.position.y = -footY * scale
 
         const mats: THREE.Material[] = []
@@ -289,6 +391,7 @@ export class GameEngine {
           if (!(o instanceof THREE.Mesh)) return
           o.castShadow = true
           o.receiveShadow = true
+          o.frustumCulled = false
           const list = Array.isArray(o.material) ? o.material : [o.material]
           const cloned = list.map((m) => {
             const c = m.clone()
@@ -304,6 +407,54 @@ export class GameEngine {
         root.add(model)
         root.userData.mats = mats
         root.userData.baseColors = baseColors
+        root.userData.animState = 'idle'
+        root.userData.wasAlive = true
+
+        if (idleClip) {
+          const mixer = new THREE.AnimationMixer(model)
+          this.dummyMixers.set(id, mixer)
+
+          const idle = mixer.clipAction(idleClip)
+          idle.setLoop(THREE.LoopRepeat, Infinity)
+          idle.clampWhenFinished = false
+          // desync so they don't idle in perfect unison
+          idle.time = Math.random() * idleClip.duration
+          idle.play()
+
+          const hit =
+            hitClip != null ? mixer.clipAction(hitClip) : null
+          const hitAlt =
+            hitClipAlt != null && hitClipAlt !== hitClip
+              ? mixer.clipAction(hitClipAlt)
+              : null
+          const death =
+            deathClip != null ? mixer.clipAction(deathClip) : null
+
+          if (hit) {
+            hit.setLoop(THREE.LoopOnce, 1)
+            hit.clampWhenFinished = true
+          }
+          if (hitAlt) {
+            hitAlt.setLoop(THREE.LoopOnce, 1)
+            hitAlt.clampWhenFinished = true
+          }
+          if (death) {
+            death.setLoop(THREE.LoopOnce, 1)
+            death.clampWhenFinished = true
+          }
+
+          root.userData.actions = { idle, hit, hitAlt, death }
+
+          mixer.addEventListener('finished', (e) => {
+            const action = e.action as THREE.AnimationAction
+            const state = root.userData.animState as string
+            if (state === 'hit' && (action === hit || action === hitAlt)) {
+              this.playDummyIdle(root)
+            }
+            // death holds last frame until respawn
+          })
+        }
+
         return root
       }
     } catch (e) {
@@ -312,12 +463,88 @@ export class GameEngine {
     }
 
     for (const d of this.dummies) {
-      const g = factory()
+      const g = factory(d.id)
       g.position.set(d.position.x, d.position.y, d.position.z)
       g.rotation.y = d.yaw
       this.scene.add(g)
       this.dummyMeshes.set(d.id, g)
+
+      if (DEBUG.showHitboxes) {
+        // World-aligned like dummyHitboxes — do not inherit dummy yaw
+        const hb = this.makeHitboxHelper()
+        hb.position.set(d.position.x, d.position.y, d.position.z)
+        this.scene.add(hb)
+        this.dummyHitboxHelpers.set(d.id, hb)
+      }
     }
+  }
+
+  private playDummyIdle(root: THREE.Group) {
+    const actions = root.userData.actions as
+      | {
+          idle: THREE.AnimationAction
+          hit: THREE.AnimationAction | null
+          hitAlt: THREE.AnimationAction | null
+          death: THREE.AnimationAction | null
+        }
+      | undefined
+    if (!actions?.idle) return
+    root.userData.animState = 'idle'
+    actions.hit?.stop()
+    actions.hitAlt?.stop()
+    actions.death?.stop()
+    actions.idle.reset().fadeIn(0.2).play()
+  }
+
+  private playDummyHit(id: string) {
+    const root = this.dummyMeshes.get(id)
+    const actions = root?.userData.actions as
+      | {
+          idle: THREE.AnimationAction
+          hit: THREE.AnimationAction | null
+          hitAlt: THREE.AnimationAction | null
+          death: THREE.AnimationAction | null
+        }
+      | undefined
+    if (!root || !actions) return
+    // don't interrupt death
+    if (root.userData.animState === 'death') return
+
+    const pick =
+      actions.hit && actions.hitAlt
+        ? Math.random() < 0.5
+          ? actions.hit
+          : actions.hitAlt
+        : (actions.hit ?? actions.hitAlt)
+    if (!pick) return
+
+    root.userData.animState = 'hit'
+    actions.idle.fadeOut(0.08)
+    actions.death?.stop()
+    actions.hit?.stop()
+    actions.hitAlt?.stop()
+    pick.reset().setEffectiveWeight(1).fadeIn(0.05).play()
+  }
+
+  private playDummyDeath(id: string) {
+    const root = this.dummyMeshes.get(id)
+    const actions = root?.userData.actions as
+      | {
+          idle: THREE.AnimationAction
+          hit: THREE.AnimationAction | null
+          hitAlt: THREE.AnimationAction | null
+          death: THREE.AnimationAction | null
+        }
+      | undefined
+    if (!root || !actions?.death) {
+      if (root) root.userData.animState = 'death'
+      return
+    }
+    root.userData.animState = 'death'
+    actions.idle.fadeOut(0.08)
+    actions.hit?.stop()
+    actions.hitAlt?.stop()
+    actions.death.reset().setEffectiveWeight(1).fadeIn(0.05).play()
   }
 
   private buildImpacts() {
@@ -357,20 +584,31 @@ export class GameEngine {
           o.frustumCulled = false
         }
       })
-      // normalize scale
+
+      // Quaternius sniper: stock→barrel is already -Z, scope +Y (camera-forward).
+      // Do NOT yaw 180° — that points the muzzle at the player.
+      const { modelRot } = VIEWMODEL
+      model.rotation.set(modelRot.x, modelRot.y, modelRot.z)
+      model.updateMatrixWorld(true)
+
+      // Normalize size, then center AABB so hip/ADS offsets use a stable pivot.
       const box = new THREE.Box3().setFromObject(model)
       const size = box.getSize(new THREE.Vector3())
       const maxDim = Math.max(size.x, size.y, size.z) || 1
-      const scale = 0.55 / maxDim
-      model.scale.setScalar(scale)
+      model.scale.setScalar(VIEWMODEL.scale / maxDim)
+      model.updateMatrixWorld(true)
+      box.setFromObject(model)
+      model.position.sub(box.getCenter(new THREE.Vector3()))
+
+      // Bias pivot slightly toward the grip so rotation feels hand-held.
+      model.position.y += VIEWMODEL.scale * 0.02
+      model.position.z += VIEWMODEL.scale * 0.08
 
       const root = new THREE.Group()
       root.add(model)
-      // hip offset (right-hand viewmodel)
-      root.position.set(0.28, -0.28, -0.55)
-      root.rotation.set(0.05, 0.15, 0.02)
-      model.position.set(0, 0, 0)
-      model.rotation.set(0, Math.PI, 0)
+      const { hipPos, hipRot } = VIEWMODEL
+      root.position.set(hipPos.x, hipPos.y, hipPos.z)
+      root.rotation.set(hipRot.x, hipRot.y, hipRot.z)
 
       this.camera.add(root)
       this.scene.add(this.camera)
@@ -382,7 +620,7 @@ export class GameEngine {
         new THREE.BoxGeometry(0.08, 0.08, 0.7),
         new THREE.MeshStandardMaterial({ color: 0x2a2a2a }),
       )
-      gun.position.set(0.25, -0.2, -0.4)
+      gun.position.set(0.22, -0.18, -0.4)
       root.add(gun)
       this.camera.add(root)
       this.scene.add(this.camera)
@@ -407,19 +645,79 @@ export class GameEngine {
     const input = this.input.sample()
     this.input.setAdsBlend(this.sniper.adsBlend)
 
+    this.prevVelY = this.player.velocity.y
     stepPlayer(this.player, input, dt, this.colliders)
     stepSniper(this.sniper, input, dt)
     stepRespawns(this.dummies, this.respawns, dt)
 
     if (tryFire(this.sniper, input)) {
+      // Fire with current aim (sway / existing recoil), then kick for next frames.
       this.fireShot()
+      applyRecoil(this.sniper)
     }
 
-    // camera
+    // --- View bob (visual only; fireShot still uses true eyePosition) ---
+    const p = this.player
+    const speed = Math.hypot(p.velocity.x, p.velocity.z)
+    const grounded = p.grounded
+
+    if (grounded && !this.wasGrounded) {
+      const impact = Math.max(0, -this.prevVelY)
+      this.landOffset = Math.min(
+        0.14,
+        VIEW_BOB.landKick + impact * 0.012,
+      )
+    }
+    this.wasGrounded = grounded
+    this.landOffset *= Math.exp(-VIEW_BOB.landDecay * dt)
+
+    let bobTarget = 0
+    if (grounded && speed > VIEW_BOB.minSpeed) {
+      bobTarget = Math.min(
+        1,
+        (speed - VIEW_BOB.minSpeed) /
+          (VIEW_BOB.fullSpeed - VIEW_BOB.minSpeed),
+      )
+      if (p.state === 'crouch') bobTarget *= VIEW_BOB.crouchMul
+      else if (p.state === 'slide') bobTarget *= VIEW_BOB.slideMul
+    } else if (!grounded) {
+      bobTarget = this.bobAmount * VIEW_BOB.airMul
+    }
+    bobTarget *= 1 - this.sniper.adsBlend * (1 - VIEW_BOB.adsMul)
+
+    const bobK = 1 - Math.exp(-VIEW_BOB.amountLerp * dt)
+    this.bobAmount += (bobTarget - this.bobAmount) * bobK
+
+    if (grounded && speed > VIEW_BOB.minSpeed) {
+      this.bobPhase +=
+        VIEW_BOB.frequency * (speed / VIEW_BOB.freqSpeedRef) * dt
+    }
+
+    const bobA = this.bobAmount
+    const s1 = Math.sin(this.bobPhase)
+    const s2 = Math.sin(this.bobPhase * 2)
+    const c2 = Math.cos(this.bobPhase * 2)
+    const bobCamX = s1 * VIEW_BOB.camX * bobA
+    const bobCamY = s2 * VIEW_BOB.camY * bobA
+    const bobGunX = s1 * VIEW_BOB.gunX * bobA
+    const bobGunY = s2 * VIEW_BOB.gunY * bobA
+    const bobGunZ = c2 * VIEW_BOB.gunZ * bobA
+    const bobGunPitch = c2 * VIEW_BOB.gunPitch * bobA
+    const bobGunRoll = s1 * VIEW_BOB.gunRoll * bobA
+
+    // Camera matches effective aim so crosshair, tracer, and hitscan agree.
     const eye = eyePosition(this.player)
-    this.camera.position.set(eye.x, eye.y, eye.z)
-    this.camera.rotation.y = this.player.yaw
-    this.camera.rotation.x = this.player.pitch
+    const look = effectiveLook(this.player, this.sniper)
+    // Lateral bob along camera right; vertical bob + landing dip on eye height.
+    const rightX = Math.cos(look.yaw)
+    const rightZ = -Math.sin(look.yaw)
+    this.camera.position.set(
+      eye.x + rightX * bobCamX,
+      eye.y + bobCamY - this.landOffset,
+      eye.z + rightZ * bobCamX,
+    )
+    this.camera.rotation.y = look.yaw
+    this.camera.rotation.x = look.pitch
 
     const fov = LOOK.hipFov + (LOOK.adsFov - LOOK.hipFov) * this.sniper.adsBlend
     if (Math.abs(this.camera.fov - fov) > 0.01) {
@@ -427,27 +725,68 @@ export class GameEngine {
       this.camera.updateProjectionMatrix()
     }
 
-    // viewmodel pose
+    // viewmodel pose — hip sits lower-right; ADS pulls to center then hides for scope UI
     if (this.viewmodel) {
       const ads = this.sniper.adsBlend
-      const hip = new THREE.Vector3(0.28, -0.28, -0.55)
-      const scoped = new THREE.Vector3(0.0, -0.22, -0.35)
+      const { hipPos, hipRot, adsPos, adsRot, hideAds } = VIEWMODEL
+      const hip = new THREE.Vector3(hipPos.x, hipPos.y, hipPos.z)
+      const scoped = new THREE.Vector3(adsPos.x, adsPos.y, adsPos.z)
       this.viewmodel.position.lerpVectors(hip, scoped, ads)
+      this.viewmodel.position.x += bobGunX
+      this.viewmodel.position.y +=
+        bobGunY - this.landOffset * VIEW_BOB.landGunMul
+      this.viewmodel.position.z += bobGunZ
       this.viewmodel.rotation.set(
-        0.05 - ads * 0.04 + this.sniper.recoil * SNIPER.viewmodelRecoil,
-        0.15 * (1 - ads),
-        0.02 * (1 - ads),
+        hipRot.x * (1 - ads) +
+          adsRot.x * ads +
+          this.sniper.recoil * SNIPER.viewmodelRecoil +
+          bobGunPitch,
+        hipRot.y * (1 - ads) + adsRot.y * ads,
+        hipRot.z * (1 - ads) + adsRot.z * ads + bobGunRoll,
       )
-      // hide gun when fully scoped (scope overlay in HUD)
-      this.viewmodel.visible = ads < 0.92
+      this.viewmodel.visible = ads < hideAds
     }
 
-    // dummy visuals (HP tint toward dark red)
+    // dummy mixers + visuals
+    for (const mixer of this.dummyMixers.values()) {
+      mixer.update(dt)
+    }
+
     for (const d of this.dummies) {
       const mesh = this.dummyMeshes.get(d.id)
       if (!mesh) continue
-      mesh.visible = d.alive
+
+      const wasAlive = mesh.userData.wasAlive !== false
+      if (d.alive && !wasAlive) {
+        // respawned — back to idle, full color
+        this.playDummyIdle(mesh)
+        const bases = mesh.userData.baseColors as THREE.Color[] | undefined
+        const mats = mesh.userData.mats as THREE.Material[] | undefined
+        if (mats && bases) {
+          for (let i = 0; i < mats.length; i++) {
+            const mat = mats[i]
+            const base = bases[i]
+            if (base && 'color' in mat) {
+              ;(mat as THREE.MeshStandardMaterial).color.copy(base)
+            }
+          }
+        }
+      }
+      mesh.userData.wasAlive = d.alive
+
+      // stay visible during death pose until respawn; hide only if no death anim
+      const dying = !d.alive && mesh.userData.animState === 'death'
+      mesh.visible = d.alive || dying
+
+      const hb = this.dummyHitboxHelpers.get(d.id)
+      if (hb) {
+        hb.position.set(d.position.x, d.position.y, d.position.z)
+        // Match combat: only living dummies contribute hitboxes
+        hb.visible = d.alive
+      }
+
       if (!d.alive) continue
+
       const hurt = d.hp / d.maxHp
       const mats = mesh.userData.mats as THREE.Material[] | undefined
       const bases = mesh.userData.baseColors as THREE.Color[] | undefined
@@ -498,15 +837,16 @@ export class GameEngine {
           z: origin.z + dir.z * SNIPER.maxRange,
         }
 
-    this.showTracer(origin, end)
+    this.showTracer(origin, dir, end)
     if (hit) this.showImpact(hit.point)
 
     if (hit?.hitbox) {
       const zone = hit.hitbox.zone
       const dmg = zone === 'head' ? SNIPER.headDamage : SNIPER.bodyDamage
-      const result = damageDummy(this.dummies, hit.hitbox.ownerId, dmg)
+      const ownerId = hit.hitbox.ownerId
+      const result = damageDummy(this.dummies, ownerId, dmg)
       this.lastHit = {
-        targetId: hit.hitbox.ownerId,
+        targetId: ownerId,
         zone,
         damage: dmg,
         killed: result.killed,
@@ -515,16 +855,25 @@ export class GameEngine {
       this.lastHitAge = 0
       if (result.killed) {
         this.kills += 1
-        queueRespawn(this.respawns, hit.hitbox.ownerId)
+        this.playDummyDeath(ownerId)
+        queueRespawn(this.respawns, ownerId)
+      } else if (result.hp > 0) {
+        this.playDummyHit(ownerId)
       }
     }
   }
 
-  private showTracer(from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }) {
+  private showTracer(
+    from: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+    to: { x: number; y: number; z: number },
+  ) {
     if (!this.tracer) return
     const pos = this.tracer.geometry.attributes.position as THREE.BufferAttribute
-    // slight offset from camera so it doesn't clip
-    pos.setXYZ(0, from.x, from.y - 0.05, from.z)
+    // Start slightly in front of the eye along the aim ray so the line
+    // projects through screen center (not world-down offset which looks off-ADS).
+    const start = 0.35
+    pos.setXYZ(0, from.x + dir.x * start, from.y + dir.y * start, from.z + dir.z * start)
     pos.setXYZ(1, to.x, to.y, to.z)
     pos.needsUpdate = true
     this.tracer.visible = true

@@ -57,7 +57,54 @@ export const SNIPER = {
   slideSwayMul: 4,
   recoilKick: 0.045,
   recoilDecay: 8,
-  viewmodelRecoil: 0.06,
+  viewmodelRecoil: 0.05,
+} as const
+
+/** First-person sniper pose (camera-local space). */
+export const VIEWMODEL = {
+  /** Target longest axis length after normalize (world units). */
+  scale: 0.48,
+  /**
+   * Model-local basis correction applied before hip/ADS pose.
+   * Quaternius sniper is already barrel→-Z / scope→+Y — leave at identity.
+   * Only change if a different glTF needs a flip.
+   */
+  modelRot: { x: 0, y: 0, z: 0 },
+  /** Bottom-right hip hold; muzzle tips left toward screen center. */
+  hipPos: { x: 0.22, y: -0.18, z: -0.42 },
+  hipRot: { x: 0.06, y: 0.22, z: 0.04 },
+  adsPos: { x: 0.0, y: -0.14, z: -0.28 },
+  adsRot: { x: 0.0, y: 0.0, z: 0.0 },
+  /** Hide mesh when ADS blend exceeds this (scope overlay takes over). */
+  hideAds: 0.92,
+} as const
+
+/** Walk cycle head + gun bob (visual only — hitscan stays on true eye). */
+export const VIEW_BOB = {
+  /** Cycle rate (rad/s) at walkSpeed */
+  frequency: 9.5,
+  freqSpeedRef: 4.5,
+  /** Camera translation amplitude (world units) */
+  camY: 0.028,
+  camX: 0.014,
+  /** Viewmodel local amplitude */
+  gunY: 0.01,
+  gunX: 0.007,
+  gunZ: 0.004,
+  gunPitch: 0.01,
+  gunRoll: 0.014,
+  /** Multipliers by state (ADS blends toward adsMul) */
+  adsMul: 0.06,
+  crouchMul: 0.4,
+  slideMul: 0.12,
+  airMul: 0.15,
+  minSpeed: 0.35,
+  fullSpeed: 7.4,
+  amountLerp: 10,
+  /** Landing dip */
+  landKick: 0.05,
+  landDecay: 9,
+  landGunMul: 0.55,
 } as const
 
 export const PLAYER = {
@@ -93,4 +140,10 @@ export const DUMMY = {
   headOffsetY: 1.42,
   bodyOffsetY: 0.55,
   respawnTime: 2.5,
+} as const
+
+/** Dev / tuning overlays */
+export const DEBUG = {
+  /** Draw head sphere + body AABB used by hitscan on each dummy */
+  showHitboxes: true,
 } as const
