@@ -34,8 +34,8 @@ export const MOVE = {
 } as const
 
 export const LOOK = {
-  hipSensitivity: 0.0022,
-  adsSensitivity: 0.0009,
+  hipSensitivity: 0.0011,
+  adsSensitivity: 0.00045,
   adsFov: 28,
   hipFov: 75,
   adsBlendSpeed: 10,
