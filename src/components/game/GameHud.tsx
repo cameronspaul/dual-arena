@@ -148,7 +148,14 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
 
         <div className="flex items-center gap-2">
           {/* Perf / net — top-right chrome next to settings */}
-          <div className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 font-mono text-xs backdrop-blur-sm">
+          <div
+            className="rounded-lg border border-white/10 bg-black/55 px-3 py-2 font-mono text-xs backdrop-blur-sm"
+            title={
+              hud.ping == null
+                ? 'Ping: offline (local range)'
+                : `Ping: ${Math.round(hud.ping)} ms`
+            }
+          >
             <div className="flex items-baseline gap-3 tabular-nums">
               <span className={fpsColor(hud.fps)}>
                 <span className="font-semibold">{hud.fps}</span>
@@ -156,17 +163,10 @@ export function GameHud({ hud, onOpenSettings }: GameHudProps) {
               </span>
               <span className="text-white/20">|</span>
               <span className={pingColor(hud.ping)}>
-                {hud.ping == null ? (
-                  <>
-                    <span className="font-semibold">—</span>
-                    <span className="ml-1 text-white/40">ms</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="font-semibold">{Math.round(hud.ping)}</span>
-                    <span className="ml-1 text-white/40">ms</span>
-                  </>
-                )}
+                <span className="font-semibold">
+                  {hud.ping == null ? '—' : Math.round(hud.ping)}
+                </span>
+                <span className="ml-1 text-white/40">ms</span>
               </span>
             </div>
           </div>

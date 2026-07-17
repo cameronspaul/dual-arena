@@ -154,26 +154,6 @@ export async function loadGltfMap(
   // Drop absurd wrapper shells from collision (keeps bullets/walk sane)
   hitMeshes = filterPlayableCollisionMeshes(hitMeshes, playBox)
 
-  // Soft ground plane under the map (visual only — not a collider).
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(
-      Math.max(size.x, size.z) * 1.4 + 40,
-      Math.max(size.x, size.z) * 1.4 + 40,
-    ),
-    new THREE.MeshStandardMaterial({
-      color: map.bgColor,
-      roughness: 0.95,
-      metalness: 0.02,
-      transparent: true,
-      opacity: 0.35,
-    }),
-  )
-  ground.rotation.x = -Math.PI / 2
-  ground.position.y = -0.02
-  ground.receiveShadow = true
-  ground.name = 'map-ground-pad'
-  scene.add(ground)
-
   const colliders = extractColliders(root, map, bounds)
 
   addMapLights(scene, map, bounds)
