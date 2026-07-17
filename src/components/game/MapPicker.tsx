@@ -1,22 +1,5 @@
-import {
-  useMemo,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from 'react'
-import {
-  Check,
-  ChevronRight,
-  Crosshair,
-  Moon,
-  Pencil,
-  Play,
-  Settings,
-  Sparkles,
-  Sun,
-  Target,
-  Zap,
-} from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { ChevronRight, Moon, Sparkles, Sun } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   SiDiscord,
@@ -29,6 +12,7 @@ import {
 import { CharacterPreview } from '@/components/game/CharacterPreview'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { Button } from '@/components/ui/button'
+import { icons, WAGER_ICONS } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { gameAudio } from '@/game/audio'
 import { MAP_LIST, type MapId } from '@/game/maps'
@@ -99,6 +83,25 @@ interface MapPickerProps {
   onPlay: () => void
 }
 
+/** Decorative game PNG icon from /public/icons. */
+function GameIcon({
+  src,
+  className,
+}: {
+  src: string
+  className?: string
+}) {
+  return (
+    <img
+      src={src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn('shrink-0 object-contain select-none', className)}
+    />
+  )
+}
+
 function SkyIcon({ id }: { id: SkyboxPreference }) {
   if (id === 'night' || id === 'space') return <Moon className="size-3.5" />
   if (id === 'random') return <Sparkles className="size-3.5" />
@@ -126,7 +129,7 @@ function MapThumb({
         )}
       >
         <div className="absolute inset-0 flex items-center justify-center">
-          <Target className="size-10 text-white/25" />
+          <GameIcon src={icons.aim} className="size-12 opacity-30" />
         </div>
         <div
           className="absolute inset-0 opacity-30"
@@ -184,12 +187,12 @@ function Chip({
 }
 
 function SideSection({
-  icon: Icon,
+  iconSrc,
   title,
   children,
   className,
 }: {
-  icon: ComponentType<{ className?: string }>
+  iconSrc: string
   title: string
   children: ReactNode
   className?: string
@@ -197,7 +200,7 @@ function SideSection({
   return (
     <div className={cn('space-y-3', className)}>
       <div className="flex items-center gap-2">
-        <Icon className="size-3.5 text-primary" />
+        <GameIcon src={iconSrc} className="size-4" />
         <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
           {title}
         </h3>
@@ -225,6 +228,7 @@ export function MapPicker({
     setServerRegion,
     wagerAmount,
     setWagerAmount,
+    balance,
   } = useAppStore()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -269,8 +273,8 @@ export function MapPicker({
       {/* ── Top bar ── */}
       <header className="relative z-20 flex items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/35 bg-primary/15 text-primary shadow-[0_0_20px_oklch(0.7_0.15_55/_0.25)]">
-            <Crosshair className="size-5" />
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/35 bg-primary/15 shadow-[0_0_20px_oklch(0.7_0.15_55/_0.25)]">
+            <GameIcon src={icons.aim} className="size-6" />
           </div>
           <div className="min-w-0">
             <div className="truncate text-base font-bold tracking-tight sm:text-lg">
@@ -284,9 +288,18 @@ export function MapPicker({
 
         <div className="flex items-center gap-2">
           <span className="hidden items-center gap-1.5 rounded-full border border-arena-tech/30 bg-arena-tech/10 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-arena-tech uppercase sm:inline-flex">
-            <span className="size-1.5 animate-pulse rounded-full bg-arena-ok" />
+            <GameIcon src={icons.bolt} className="size-3.5" />
             Practice mode
           </span>
+          <div
+            className="hidden items-center gap-1.5 rounded-xl border border-border/80 bg-card/70 px-2.5 py-1.5 shadow-sm backdrop-blur-sm sm:inline-flex"
+            title="Soft currency (coming with online stakes)"
+          >
+            <GameIcon src={icons.coins} className="size-4" />
+            <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+              {balance}
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -311,7 +324,7 @@ export function MapPicker({
             className="inline-flex size-10 items-center justify-center rounded-xl border border-border/80 bg-card/70 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:bg-muted sm:w-auto sm:gap-2 sm:px-3"
             aria-label="Settings"
           >
-            <Settings className="size-4 text-primary" />
+            <GameIcon src={icons.settings} className="size-5" />
             <span className="hidden text-sm font-medium sm:inline">
               Settings
             </span>
@@ -325,11 +338,18 @@ export function MapPicker({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="mb-5 flex flex-col gap-1 sm:mb-6 sm:flex-row sm:items-end sm:justify-between"
+          className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between"
         >
           <div>
-            <p className="text-[11px] font-semibold tracking-[0.2em] text-primary uppercase">
-              One shot · One stake · Prove it
+            <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tracking-[0.2em] text-primary uppercase">
+              <GameIcon src={icons.aim} className="size-3.5" />
+              One shot
+              <span className="text-primary/40">·</span>
+              <GameIcon src={icons.coins} className="size-3.5" />
+              One stake
+              <span className="text-primary/40">·</span>
+              <GameIcon src={icons.trophy} className="size-3.5" />
+              Prove it
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
               Pick a map. Deploy. Train your aim.
@@ -338,6 +358,11 @@ export function MapPicker({
               Offline sniper practice with dummies. Choose an arena and sky,
               then jump in — multiplayer duels land later.
             </p>
+          </div>
+          <div className="hidden items-center gap-2 sm:flex" aria-hidden>
+            <GameIcon src={icons.map} className="size-8 opacity-80" />
+            <GameIcon src={icons.flag} className="size-8 opacity-80" />
+            <GameIcon src={icons.rocket} className="size-8 opacity-80" />
           </div>
         </motion.div>
 
@@ -352,7 +377,7 @@ export function MapPicker({
           >
             <div className="mb-3 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Target className="size-4 text-primary" />
+                <GameIcon src={icons.map} className="size-5" />
                 <h2 className="text-sm font-semibold tracking-tight">
                   Choose map
                 </h2>
@@ -393,8 +418,8 @@ export function MapPicker({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
 
                     {active && (
-                      <div className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md">
-                        <Check className="size-3.5" strokeWidth={3} />
+                      <div className="absolute top-2 right-2 flex size-7 items-center justify-center rounded-full bg-primary/95 shadow-md ring-2 ring-primary/40">
+                        <GameIcon src={icons.check} className="size-4" />
                       </div>
                     )}
 
@@ -436,11 +461,13 @@ export function MapPicker({
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <GameIcon src={icons.location} className="size-5" />
                         <h3 className="text-lg font-bold tracking-tight">
                           {selected.name}
                         </h3>
                         {selected.kind === 'range' && (
-                          <span className="rounded-md border border-arena-ok/30 bg-arena-ok/10 px-1.5 py-0.5 text-[10px] font-semibold text-arena-ok uppercase">
+                          <span className="inline-flex items-center gap-1 rounded-md border border-arena-ok/30 bg-arena-ok/10 px-1.5 py-0.5 text-[10px] font-semibold text-arena-ok uppercase">
+                            <GameIcon src={icons.star} className="size-3.5" />
                             Best for new players
                           </span>
                         )}
@@ -456,7 +483,7 @@ export function MapPicker({
               {/* Skybox */}
               <div className="mt-4 border-t border-border/50 pt-4">
                 <div className="mb-2 flex items-center gap-2">
-                  <Sun className="size-3.5 text-primary" />
+                  <GameIcon src={icons.compass} className="size-4" />
                   <span className="text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                     Sky
                   </span>
@@ -485,7 +512,7 @@ export function MapPicker({
                   className="h-12 w-full gap-2 rounded-xl text-base font-bold shadow-[0_0_28px_oklch(0.7_0.15_55/_0.35)] sm:h-14 sm:flex-1 sm:text-lg"
                   onClick={handlePlay}
                 >
-                  <Play className="size-5 fill-current" />
+                  <GameIcon src={icons.rocket} className="size-6" />
                   Deploy to {selected.name}
                   <ChevronRight className="size-4 opacity-70" />
                 </Button>
@@ -507,7 +534,7 @@ export function MapPicker({
           >
             <div className="flex flex-1 flex-col gap-5 rounded-2xl border border-border/80 bg-card/85 p-4 shadow-lg backdrop-blur-md sm:p-5">
               {/* Username */}
-              <SideSection icon={Pencil} title="Callsign">
+              <SideSection iconSrc={icons.cap} title="Callsign">
                 <div className="flex gap-2">
                   {editingName ? (
                     <input
@@ -546,16 +573,20 @@ export function MapPicker({
                       >
                         {username.trim() || 'Set your name'}
                       </span>
-                      <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
+                      <GameIcon
+                        src={icons.pencil}
+                        className="size-4 shrink-0 opacity-70"
+                      />
                     </button>
                   )}
                 </div>
               </SideSection>
 
               {/* Character */}
-              <SideSection icon={Sparkles} title="Appearance">
+              <SideSection iconSrc={icons.brush} title="Appearance">
                 <div className="relative overflow-hidden rounded-xl border border-border/60 bg-gradient-to-b from-muted/50 to-background/80">
-                  <div className="absolute inset-x-0 top-2 z-10 text-center text-[11px] font-medium tracking-wide text-muted-foreground">
+                  <div className="absolute inset-x-0 top-2 z-10 flex items-center justify-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground">
+                    <GameIcon src={icons.verified} className="size-3.5 opacity-80" />
                     {displayName}
                   </div>
                   <CharacterPreview
@@ -602,24 +633,34 @@ export function MapPicker({
 
               {/* Quick summary before deploy (mobile helper) */}
               <div className="rounded-xl border border-border/60 bg-muted/25 p-3">
-                <div className="text-[10px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                  <GameIcon src={icons.inv} className="size-3.5" />
                   Ready loadout
                 </div>
                 <ul className="mt-2 space-y-1.5 text-xs text-muted-foreground">
                   <li className="flex items-center justify-between gap-2">
-                    <span>Map</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <GameIcon src={icons.map} className="size-3.5" />
+                      Map
+                    </span>
                     <span className="truncate font-semibold text-foreground">
                       {selected.name}
                     </span>
                   </li>
                   <li className="flex items-center justify-between gap-2">
-                    <span>Sky</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <GameIcon src={icons.compass} className="size-3.5" />
+                      Sky
+                    </span>
                     <span className="font-semibold text-foreground">
                       {SKYBOX_LABELS[skybox]}
                     </span>
                   </li>
                   <li className="flex items-center justify-between gap-2">
-                    <span>Operator</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <GameIcon src={icons.cap} className="size-3.5" />
+                      Operator
+                    </span>
                     <span className="truncate font-semibold text-foreground">
                       {displayName}
                     </span>
@@ -633,7 +674,7 @@ export function MapPicker({
                 className="h-12 w-full gap-2 rounded-xl font-bold shadow-[0_0_22px_oklch(0.7_0.15_55/_0.3)] lg:hidden"
                 onClick={handlePlay}
               >
-                <Play className="size-4 fill-current" />
+                <GameIcon src={icons.rocket} className="size-5" />
                 Deploy
               </Button>
             </div>
@@ -649,9 +690,10 @@ export function MapPicker({
                 className="flex w-full items-center justify-between gap-2 text-left"
               >
                 <div className="flex items-center gap-2">
-                  <Zap className="size-3.5 text-muted-foreground" />
+                  <GameIcon src={icons.globe} className="size-4" />
                   <span className="text-sm font-semibold">Online 1v1</span>
-                  <span className="rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    <GameIcon src={icons.locked} className="size-3" />
                     Soon
                   </span>
                 </div>
@@ -680,7 +722,8 @@ export function MapPicker({
                       </p>
 
                       <div>
-                        <div className="mb-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                          <GameIcon src={icons.location} className="size-3.5" />
                           Preferred region
                         </div>
                         <div className="flex gap-1.5">
@@ -699,6 +742,7 @@ export function MapPicker({
                                 setServerRegion(r.id)
                               }}
                             >
+                              <GameIcon src={icons.globe} className="size-3.5" />
                               {r.label}
                             </Chip>
                           ))}
@@ -706,11 +750,12 @@ export function MapPicker({
                       </div>
 
                       <div>
-                        <div className="mb-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                          <GameIcon src={icons.trade} className="size-3.5" />
                           Preferred stake
                         </div>
                         <div className="flex gap-1.5">
-                          {WAGER_OPTIONS.map((w) => (
+                          {WAGER_OPTIONS.map((w, i) => (
                             <Chip
                               key={w}
                               active={wagerAmount === w}
@@ -720,6 +765,10 @@ export function MapPicker({
                                 setWagerAmount(w)
                               }}
                             >
+                              <GameIcon
+                                src={WAGER_ICONS[i] ?? icons.coins}
+                                className="size-4"
+                              />
                               ${w}
                             </Chip>
                           ))}
@@ -733,7 +782,8 @@ export function MapPicker({
 
             {/* Community compact */}
             <div className="rounded-2xl border border-border/70 bg-card/50 p-4 backdrop-blur-md">
-              <p className="text-center text-xs font-medium text-muted-foreground">
+              <p className="flex items-center justify-center gap-1.5 text-center text-xs font-medium text-muted-foreground">
+                <GameIcon src={icons.friend} className="size-4" />
                 Join the community
               </p>
               <div className="mt-3 flex flex-wrap items-center justify-center gap-2">

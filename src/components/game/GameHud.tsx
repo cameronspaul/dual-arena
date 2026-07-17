@@ -2,13 +2,14 @@ import type { CSSProperties, ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
-import { Activity, Crosshair, Map as MapIcon, Settings, Zap } from 'lucide-react'
+import { Map as MapIcon, Settings, Zap } from 'lucide-react'
 import { ScopeOverlay } from './ScopeOverlay'
 import {
   formatKeyCode,
   getUserSettings,
 } from '@/game/core/userSettings'
 import { fmtNum } from '@/game/maps'
+import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 interface GameHudProps {
@@ -265,7 +266,12 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
         {/* Score / status */}
         <HudPanel className="min-w-[11rem] px-3.5 py-2.5 pl-4" accent="heat">
           <div className="flex items-center gap-2">
-            <Crosshair className="size-3 text-arena-heat" />
+            <img
+              src={icons.aim}
+              alt=""
+              aria-hidden
+              className="size-4 object-contain drop-shadow-sm"
+            />
             <HudLabel>Dual Arena</HudLabel>
           </div>
           <div className="mt-2 flex items-end gap-3">
@@ -456,14 +462,13 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
           <div className="flex items-center justify-between gap-3">
             <HudLabel>Integrity</HudLabel>
             <div className="flex items-center gap-1.5">
-              <Activity
+              <img
+                src={icons.heart}
+                alt=""
+                aria-hidden
                 className={cn(
-                  'size-3',
-                  hud.hp > 60
-                    ? 'text-arena-ok'
-                    : hud.hp > 30
-                      ? 'text-arena-heat'
-                      : 'text-arena-danger',
+                  'size-5 object-contain drop-shadow-sm transition-opacity',
+                  hud.hp <= 30 && 'opacity-90',
                 )}
               />
               <span className="font-mono text-lg font-semibold leading-none tabular-nums">
@@ -497,6 +502,16 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
           accent={phaseHot || lowAmmo ? 'danger' : 'tech'}
         >
           <div className="flex items-center justify-end gap-2">
+            <img
+              src={icons.ammo}
+              alt=""
+              aria-hidden
+              className={cn(
+                'size-5 object-contain drop-shadow-sm',
+                emptyMag && 'opacity-50 grayscale',
+                lowAmmo && !emptyMag && 'opacity-90',
+              )}
+            />
             <HudLabel>
               <span
                 className={cn(
@@ -522,10 +537,6 @@ export function GameHud({ hud, onOpenSettings, onExit }: GameHudProps) {
             <span className="text-xl font-semibold text-white/35">
               /{hud.magSize}
             </span>
-          </div>
-          <div className="mt-1.5 flex items-center justify-end gap-2 font-mono text-[11px] tabular-nums text-white/45">
-            <span className="tracking-widest uppercase">Res</span>
-            <span className="text-white/75">{hud.reserve}</span>
           </div>
           {/* Mag segment bar */}
           <div className="mt-2 flex justify-end gap-0.5">

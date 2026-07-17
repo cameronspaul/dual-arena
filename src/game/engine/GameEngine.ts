@@ -1350,7 +1350,6 @@ export class GameEngine {
       hp: this.playerHp,
       ammo: this.sniper.ammo,
       magSize: this.sniper.magSize,
-      reserve: this.sniper.reserve,
       phase: this.sniper.phase,
       ads: this.playerAlive && !freecam ? this.sniper.ads : false,
       adsBlend: this.playerAlive && !freecam ? this.sniper.adsBlend : 0,

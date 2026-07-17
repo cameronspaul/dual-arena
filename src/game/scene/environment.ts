@@ -271,7 +271,8 @@ export function buildRange(
   floor.name = 'range-floor'
   root.add(floor)
 
-  // Slightly raised bay slab under the firing line
+  // Slightly raised bay slab under the firing line (visual only —
+  // solid wide floor AABBs fight the capsule resolver; range uses y=0 floor).
   addBox({
     x: 0,
     y: 0.04,
@@ -280,6 +281,7 @@ export function buildRange(
     h: 0.08,
     d: REAR_Z - FIRE_LINE_Z + 0.4,
     mat: darkConcreteMat,
+    solid: false,
     castShadow: false,
     name: 'bay-slab',
   })

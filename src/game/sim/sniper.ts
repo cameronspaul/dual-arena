@@ -6,7 +6,6 @@ export function createSniper(): SniperState {
   return {
     ammo: SNIPER.magSize,
     magSize: SNIPER.magSize,
-    reserve: SNIPER.reserve,
     phase: 'ready',
     phaseTimer: 0,
     ads: false,
@@ -23,7 +22,6 @@ export function createSniper(): SniperState {
 export function resetSniper(s: SniperState) {
   s.ammo = SNIPER.magSize
   s.magSize = SNIPER.magSize
-  s.reserve = SNIPER.reserve
   s.phase = 'ready'
   s.phaseTimer = 0
   s.ads = false
@@ -36,7 +34,7 @@ export function resetSniper(s: SniperState) {
 }
 
 function canReload(s: SniperState): boolean {
-  return s.ammo < s.magSize && s.reserve > 0
+  return s.ammo < s.magSize
 }
 
 /** Start mag reload if allowed. Works while ADS / in the scope. */
@@ -116,7 +114,7 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
     s.phaseTimer -= dt
     if (s.phaseTimer <= 0) {
       if (s.phase === 'firing') {
-        // Empty chamber: skip bolt, reload right away if reserved.
+        // Empty chamber: skip bolt, reload right away.
         if (s.ammo <= 0 && canReload(s)) {
           beginReload(s)
         } else {
@@ -127,10 +125,7 @@ export function stepSniper(s: SniperState, input: PlayerInput, dt: number) {
         s.phase = 'ready'
         s.phaseTimer = 0
       } else if (s.phase === 'reloading') {
-        const need = s.magSize - s.ammo
-        const take = Math.min(need, s.reserve)
-        s.ammo += take
-        s.reserve -= take
+        s.ammo = s.magSize
         s.phase = 'ready'
         s.phaseTimer = 0
       }
@@ -153,7 +148,7 @@ export function tryFire(s: SniperState, input: PlayerInput): FireResult {
   if (s.phase !== 'ready') {
     // Empty click during bolt after the last round — still queue a reload
     // so scoped dry-fires aren't lost.
-    if (s.ammo <= 0 && s.reserve > 0 && s.phase !== 'reloading') {
+    if (s.ammo <= 0 && s.phase !== 'reloading') {
       s.reloadQueued = true
     }
     return 'none'

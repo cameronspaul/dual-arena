@@ -31,14 +31,21 @@ const DEBUG_CIRCLE_OUTLINE = false
 /** Shared reticle line color — same opacity on thin + thick segments. */
 const RETICLE_COLOR = 'rgba(8, 8, 10, 0.45)'
 
+/**
+ * Scope glass comes up very late in the ADS blend so aim spread is
+ * essentially full ADS accuracy before the overlay reads as "scoped".
+ */
+const SCOPE_APPEAR_AT = 0.82
+const SCOPE_FADE_SPAN = 0.16
+
 export function ScopeOverlay({
   adsBlend,
   reloadJiggleX = 0,
   reloadJiggleY = 0,
 }: ScopeOverlayProps) {
-  if (adsBlend < 0.08) return null
+  if (adsBlend < SCOPE_APPEAR_AT) return null
 
-  const t = Math.min(1, Math.max(0, (adsBlend - 0.08) / 0.72))
+  const t = Math.min(1, Math.max(0, (adsBlend - SCOPE_APPEAR_AT) / SCOPE_FADE_SPAN))
   const opacity = Math.min(1, t * 1.15)
 
   const jx = reloadJiggleX * JIGGLE_PX * t

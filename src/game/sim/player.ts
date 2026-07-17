@@ -135,8 +135,39 @@ function stateAfterSlide(
 }
 
 /**
- * Axis-separated capsule vs world AABBs (no position integration).
- * Used after mesh resolve for editor barrier walls on GLB maps.
+ * Unstick capsule from an AABB on the shallowest horizontal axis.
+ * Never center-shove: long walls/slabs used to teleport the player to an end-cap.
+ */
+function unstickHorizontal(pos: Vec3, vel: Vec3, r: number, box: AABB) {
+  const pMinX = pos.x - r
+  const pMaxX = pos.x + r
+  const pMinZ = pos.z - r
+  const pMaxZ = pos.z + r
+  if (pMaxX <= box.min.x || pMinX >= box.max.x) return
+  if (pMaxZ <= box.min.z || pMinZ >= box.max.z) return
+
+  const penPosX = pMaxX - box.min.x
+  const penNegX = box.max.x - pMinX
+  const penPosZ = pMaxZ - box.min.z
+  const penNegZ = box.max.z - pMinZ
+  const px = Math.min(penPosX, penNegX)
+  const pz = Math.min(penPosZ, penNegZ)
+
+  if (px <= pz) {
+    if (penPosX < penNegX) pos.x = box.min.x - r - 1e-4
+    else pos.x = box.max.x + r + 1e-4
+    vel.x = 0
+  } else {
+    if (penPosZ < penNegZ) pos.z = box.min.z - r - 1e-4
+    else pos.z = box.max.z + r + 1e-4
+    vel.z = 0
+  }
+}
+
+/**
+ * Axis-separated capsule vs world AABBs.
+ * Horizontal resolve uses **minimum penetration** (same idea as barriers) so
+ * wide cover / firing-line slabs cannot yeet the player off the map.
  */
 function resolveAabbOverlaps(
   p: PlayerBody,
@@ -150,35 +181,49 @@ function resolveAabbOverlaps(
   const pos = p.position
   const r = p.radius
   const h = p.height
+  const wasGrounded = p.grounded
 
+  // --- XZ integrate + resolve ---
   if (integrate) {
     pos.x += vel.x * dt
-  }
-  for (const box of world) {
-    if (overlapsCapsule(pos, r, h, box)) {
-      const cx = (box.min.x + box.max.x) * 0.5
-      if (pos.x < cx) pos.x = box.min.x - r - 1e-4
-      else pos.x = box.max.x + r + 1e-4
-      vel.x = 0
-    }
-  }
-
-  if (integrate) {
     pos.z += vel.z * dt
   }
+
+  // Prefer standing on short tops (crates / bay pads) before XZ unstick —
+  // otherwise a wide floor slab teleports you to its long-axis end.
   for (const box of world) {
-    if (overlapsCapsule(pos, r, h, box)) {
-      const cz = (box.min.z + box.max.z) * 0.5
-      if (pos.z < cz) pos.z = box.min.z - r - 1e-4
-      else pos.z = box.max.z + r + 1e-4
-      vel.z = 0
+    if (!overlapsCapsule(pos, r, h, box)) continue
+    const penNegY = box.max.y - pos.y
+    const penPosY = pos.y + h - box.min.y
+    const penPosX = pos.x + r - box.min.x
+    const penNegX = box.max.x - (pos.x - r)
+    const penPosZ = pos.z + r - box.min.z
+    const penNegZ = box.max.z - (pos.z - r)
+    const px = Math.min(penPosX, penNegX)
+    const pz = Math.min(penPosZ, penNegZ)
+    const topIsShallow =
+      vel.y <= 0.05 &&
+      penNegY <= penPosY &&
+      penNegY <= 0.55 &&
+      penNegY <= px + 1e-4 &&
+      penNegY <= pz + 1e-4
+    if (topIsShallow) {
+      pos.y = box.max.y
+      vel.y = 0
+      p.grounded = true
+      continue
     }
+    unstickHorizontal(pos, vel, r, box)
   }
 
-  const wasGrounded = p.grounded
+  // --- Y integrate ---
   if (integrate) {
-    pos.y += vel.y * dt
-    p.grounded = false
+    // Keep y if we already snapped onto a shallow top this frame (vel zeroed)
+    const snappedTop = p.grounded && vel.y === 0
+    if (!snappedTop) {
+      pos.y += vel.y * dt
+      p.grounded = false
+    }
   }
 
   if (infiniteFloor && pos.y < 0) {
@@ -187,6 +232,7 @@ function resolveAabbOverlaps(
     p.grounded = true
   }
 
+  // --- Land / ceiling / residual unstick ---
   const landSnap = wasGrounded ? 0.4 : 0.1
   const penMax = wasGrounded
     ? 0.45
@@ -210,7 +256,6 @@ function resolveAabbOverlaps(
       vel.y = 0
       continue
     }
-    // side shove already handled on XZ; residual Y unstick only when not rising
     if (vel.y <= 0.05 && feet < box.max.y && head > box.min.y) {
       const up = box.max.y - feet
       const down = head - box.min.y
@@ -218,6 +263,8 @@ function resolveAabbOverlaps(
         pos.y = box.max.y
         vel.y = 0
         p.grounded = true
+      } else {
+        unstickHorizontal(pos, vel, r, box)
       }
     }
   }

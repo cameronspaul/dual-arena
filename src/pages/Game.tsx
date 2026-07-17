@@ -29,7 +29,6 @@ import { gameAudio } from '@/game/audio'
 function hudKey(s: HudSnapshot): string {
   return [
     s.ammo,
-    s.reserve,
     s.phase,
     s.ads ? 1 : 0,
     Math.round(s.adsBlend * 10),

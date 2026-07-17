@@ -60,8 +60,8 @@ export const THIRD_PERSON = {
 } as const
 
 export const SNIPER = {
+  /** Rounds in the magazine — empty forces a reload; reloads always refill (infinite ammo) */
   magSize: 5,
-  reserve: 30,
   /** One-tap */
   headDamage: 100,
   /** Torso only */

@@ -117,7 +117,6 @@ export type SniperPhase = 'ready' | 'firing' | 'bolt' | 'reloading'
 export interface SniperState {
   ammo: number
   magSize: number
-  reserve: number
   phase: SniperPhase
   phaseTimer: number
   ads: boolean
@@ -159,7 +158,6 @@ export interface HudSnapshot {
   hp: number
   ammo: number
   magSize: number
-  reserve: number
   phase: SniperPhase
   ads: boolean
   adsBlend: number
