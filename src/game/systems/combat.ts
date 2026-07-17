@@ -160,7 +160,7 @@ export function fireShot(opts: {
     fx.showImpact(hit.point, 'world', false)
   }
 
-  // Tracer after damage so kills can leave a permanent red mark.
+  // Tracer after damage so kills get a longer red fade + silhouette.
   fx.showTracer(origin, dir, end, { killed })
 
   return { lastHit, killsDelta }

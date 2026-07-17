@@ -2,7 +2,7 @@
  * Tracer streaks + impact decal pool + kill ghost silhouettes.
  *
  * Normal shots: thin needle core + tight soft halo that fades out fast.
- * Killing shots: red streak + frozen red player silhouette that stay in the world.
+ * Killing shots: red streak + red player silhouette that fade out (not permanent).
  */
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
@@ -11,21 +11,23 @@ const MUZZLE_SKIP = 0.4
 /** How long a non-kill tracer stays visible (seconds). */
 const TRANSIENT_LIFE = 0.14
 const TRANSIENT_POOL = 10
-/** Max kill markers kept in the environment (oldest recycled). */
+/** Max concurrent kill tracers (oldest recycled). */
 const KILL_POOL = 40
-/** Max red kill silhouettes kept in the environment (oldest recycled). */
+/** Max red kill silhouettes (oldest recycled). */
 const GHOST_POOL = 24
-/** Brief settle time before a kill tracer freezes as a permanent mark. */
-const KILL_SETTLE = 0.2
+/**
+ * Kill tracer lifetime (seconds). Hot flash then fade out fully —
+ * no permanent marks left in the map.
+ */
+const KILL_TRACER_LIFE = 0.85
+/** Kill silhouette fade duration (seconds). */
+const GHOST_LIFE = 1.0
 
 /** Hairline radii (world units) — core is a needle, glow a thin bloom. */
 const NORMAL_CORE_R = 0.0038
 const NORMAL_GLOW_R = 0.011
 const KILL_CORE_R = 0.0055
 const KILL_GLOW_R = 0.016
-/** Permanent kill marks stay readable but still thin. */
-const KILL_SETTLED_CORE_R = 0.0042
-const KILL_SETTLED_GLOW_R = 0.012
 
 const NORMAL_CORE = 0xfff8e8
 const NORMAL_GLOW = 0xffc45a
@@ -41,17 +43,21 @@ type TracerVisual = {
   glow: THREE.Mesh
   coreMat: THREE.MeshBasicMaterial
   glowMat: THREE.MeshBasicMaterial
-  /** Remaining life; Infinity once a kill tracer has settled. */
   life: number
   maxLife: number
   isKill: boolean
   active: boolean
-  /** World length used when re-scaling on settle. */
+  /** World length used when re-scaling. */
   length: number
 }
 
 type GhostSlot = {
   root: THREE.Group | null
+  /** Remaining life (seconds); materials fade with life / maxLife. */
+  life: number
+  maxLife: number
+  /** Materials we created for opacity fades. */
+  mats: THREE.MeshBasicMaterial[]
 }
 
 export class CombatFx {
@@ -98,7 +104,7 @@ export class CombatFx {
       this.kills.push(this.makeTracer(scene))
     }
     for (let i = 0; i < GHOST_POOL; i++) {
-      this.ghosts.push({ root: null })
+      this.ghosts.push({ root: null, life: 0, maxLife: GHOST_LIFE, mats: [] })
     }
   }
 
@@ -152,7 +158,7 @@ export class CombatFx {
 
   /**
    * Spawn a shot streak from eye/muzzle toward the hit (or max range).
-   * Pass `killed: true` to leave a permanent red mark in the world.
+   * Pass `killed: true` for a longer red fade (still temporary).
    */
   showTracer(
     from: { x: number; y: number; z: number },
@@ -201,24 +207,22 @@ export class CombatFx {
     slot.isKill = killed
     slot.active = true
     slot.group.visible = true
+    slot.coreMat.blending = THREE.AdditiveBlending
+    slot.glowMat.blending = THREE.AdditiveBlending
 
     if (killed) {
-      // Hot white flash, then settle into a thin red world mark.
+      // Hot white flash → red, then fade out over KILL_TRACER_LIFE.
       slot.coreMat.color.setHex(KILL_FLASH)
       slot.glowMat.color.setHex(KILL_CORE)
       slot.coreMat.opacity = 1
       slot.glowMat.opacity = 0.32
-      slot.life = KILL_SETTLE
-      slot.maxLife = KILL_SETTLE
-      slot.coreMat.blending = THREE.AdditiveBlending
-      slot.glowMat.blending = THREE.AdditiveBlending
+      slot.life = KILL_TRACER_LIFE
+      slot.maxLife = KILL_TRACER_LIFE
     } else {
       slot.coreMat.color.setHex(NORMAL_CORE)
       slot.glowMat.color.setHex(NORMAL_GLOW)
       slot.coreMat.opacity = 0.95
       slot.glowMat.opacity = 0.16
-      slot.coreMat.blending = THREE.AdditiveBlending
-      slot.glowMat.blending = THREE.AdditiveBlending
       slot.life = TRANSIENT_LIFE
       slot.maxLife = TRANSIENT_LIFE
     }
@@ -226,7 +230,7 @@ export class CombatFx {
 
   /**
    * Freeze a red ghost silhouette of the victim at the moment of death.
-   * Pose is snapped from the live dummy; the ghost stays in the world.
+   * Fades out over {@link GHOST_LIFE} seconds, then is removed.
    */
   spawnKillGhost(dummyRoot: THREE.Object3D) {
     if (!this.scene) return
@@ -261,7 +265,7 @@ export class CombatFx {
       ghostModel.scale.set(1, 1, 1)
     }
 
-    this.paintGhost(ghostRoot)
+    const mats = this.paintGhost(ghostRoot)
 
     // Recycle oldest slot so the range never fills unboundedly.
     const slot = this.ghosts[this.ghostCursor++ % this.ghosts.length]!
@@ -269,6 +273,9 @@ export class CombatFx {
       this.disposeGhost(slot.root)
     }
     slot.root = ghostRoot
+    slot.life = GHOST_LIFE
+    slot.maxLife = GHOST_LIFE
+    slot.mats = mats
     this.scene.add(ghostRoot)
 
     // Ensure skinned meshes pick up the frozen bone pose immediately.
@@ -281,7 +288,8 @@ export class CombatFx {
     })
   }
 
-  private paintGhost(root: THREE.Object3D) {
+  private paintGhost(root: THREE.Object3D): THREE.MeshBasicMaterial[] {
+    const mats: THREE.MeshBasicMaterial[] = []
     root.traverse((o) => {
       // Strip labels / debug wires / hitscan proxies — silhouette only.
       if (o instanceof THREE.Sprite) {
@@ -312,7 +320,9 @@ export class CombatFx {
       o.receiveShadow = false
       o.frustumCulled = false
       o.renderOrder = 1
+      mats.push(mat)
     })
+    return mats
   }
 
   /** Drop a ghost and free only materials we created (geometry is shared). */
@@ -369,32 +379,43 @@ export class CombatFx {
     }
 
     for (const t of this.kills) {
-      if (!t.active || t.life === Infinity) continue
+      if (!t.active) continue
       t.life -= dt
       if (t.life <= 0) {
-        // Freeze as a permanent thin red mark in the environment.
-        t.life = Infinity
-        t.coreMat.color.setHex(KILL_CORE)
-        t.glowMat.color.setHex(KILL_GLOW)
-        t.coreMat.opacity = 0.62
-        t.glowMat.opacity = 0.14
-        t.core.scale.set(KILL_SETTLED_CORE_R, t.length, KILL_SETTLED_CORE_R)
-        t.glow.scale.set(KILL_SETTLED_GLOW_R, t.length, KILL_SETTLED_GLOW_R)
-        // Readable at range without additive blowout.
-        t.coreMat.blending = THREE.NormalBlending
-        t.glowMat.blending = THREE.NormalBlending
+        t.active = false
+        t.group.visible = false
         continue
       }
-      // Lerp flash → kill red while settling; slim slightly as it freezes.
-      const k = 1 - t.life / t.maxLife
-      t.coreMat.color.copy(this._cA.setHex(KILL_FLASH)).lerp(this._cB.setHex(KILL_CORE), k)
-      t.glowMat.color.copy(this._cA.setHex(KILL_CORE)).lerp(this._cB.setHex(KILL_GLOW), k)
-      t.coreMat.opacity = 1 - 0.28 * k
-      t.glowMat.opacity = 0.32 - 0.14 * k
-      const coreR = KILL_CORE_R + (KILL_SETTLED_CORE_R - KILL_CORE_R) * k
-      const glowR = KILL_GLOW_R + (KILL_SETTLED_GLOW_R - KILL_GLOW_R) * k
-      t.core.scale.set(coreR, t.length, coreR)
-      t.glow.scale.set(glowR, t.length, glowR)
+      // 0 → 1 age through lifetime
+      const age = 1 - t.life / t.maxLife
+      // Early flash settles to red (~first 20%), then fade opacity to 0.
+      const settle = Math.min(1, age / 0.22)
+      t.coreMat.color
+        .copy(this._cA.setHex(KILL_FLASH))
+        .lerp(this._cB.setHex(KILL_CORE), settle)
+      t.glowMat.color
+        .copy(this._cA.setHex(KILL_CORE))
+        .lerp(this._cB.setHex(KILL_GLOW), settle)
+
+      // Hold readable for a beat, then ease-out fade (smoothstep on remaining life).
+      const remain = t.life / t.maxLife
+      const fade = remain * remain // ease-out opacity
+      t.coreMat.opacity = (1 - 0.2 * settle) * fade
+      t.glowMat.opacity = (0.32 - 0.12 * settle) * fade * fade
+    }
+
+    for (const g of this.ghosts) {
+      if (!g.root) continue
+      g.life -= dt
+      if (g.life <= 0) {
+        this.disposeGhost(g.root)
+        g.root = null
+        g.mats = []
+        continue
+      }
+      // Linear fade over GHOST_LIFE (1s) so the silhouette clears cleanly.
+      const a = (g.life / g.maxLife) * GHOST_OPACITY
+      for (const m of g.mats) m.opacity = a
     }
   }
 }
