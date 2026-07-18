@@ -1,10 +1,10 @@
-/** Public entry — re-exports the orchestrator. */
-export {
-  GameEngine,
-  type HudListener,
-  type ChatLine,
-  type ChatListener,
-  type VoiceUiListener,
-  type GameEngineOptions,
-  type OnlineSessionOpts,
-} from './engine/GameEngine'
+/** Public entry — re-exports the orchestrator and shared types. */
+export { GameEngine } from './engine/GameEngine'
+export type {
+  HudListener,
+  ChatLine,
+  ChatListener,
+  VoiceUiListener,
+  GameEngineOptions,
+  OnlineSessionOpts,
+} from './engine/types'

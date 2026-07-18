@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { GameCanvas } from '@/components/game/GameCanvas'
 import { GameHud, HITMARKER_DURATION } from '@/components/game/GameHud'
 import { LevelEditor } from '@/components/game/LevelEditor'
-import { MapPicker } from '@/components/game/MapPicker'
+import { MainMenu } from '@/components/game/main-menu'
 import { TutorialOverlay } from '@/components/game/TutorialOverlay'
 import { ViewmodelEditor } from '@/components/game/ViewmodelEditor'
 import {
@@ -201,7 +201,7 @@ export default function Game() {
   const [dummiesEnabled, setDummiesEnabled] = useState(true)
   /**
    * Guided how-to-play on the practice range.
-   * URL `tutorial=1` or MapPicker "Tutorial" starts it offline.
+   * URL `tutorial=1` or MainMenu "Tutorial" starts it offline.
    */
   const [tutorialOpen, setTutorialOpen] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -702,7 +702,7 @@ export default function Game() {
 
   if (phase === 'pick') {
     return (
-      <MapPicker
+      <MainMenu
         selectedId={isDuelMapId(mapId) ? mapId : DEFAULT_MAP_ID}
         onSelect={(id) => {
           if (isDuelMapId(id)) setMapId(id)
