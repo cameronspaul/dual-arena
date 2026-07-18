@@ -11,10 +11,11 @@ import type {
   PlayerInput,
   SniperState,
 } from '../../core/types'
+import { lookDirection } from '../../core/math'
 import { castMapHitscan } from '../../maps'
 import { isBelowFallKill } from '../../sim/death'
-import { stepPlayer } from '../../sim/player'
-import { applyRecoil, stepSniper, tryFire } from '../../sim/sniper'
+import { eyePosition, stepPlayer } from '../../sim/player'
+import { applyRecoil, effectiveLook, stepSniper, tryFire } from '../../sim/sniper'
 import { stepDummies, stepRespawns, type RespawnTimer } from '../../sim/world'
 import type { CombatFx } from '../../systems/CombatFx'
 import type { DummySystem } from '../../systems/DummySystem'
@@ -85,14 +86,18 @@ export function tickOffline(
     host.dummiesSys.update(dt, host.dummies, false)
   }
 
-  // Control wall: look + fire toggles mode / reset / row count (no ammo spend)
+  // Control wall: eye-ray + fire edge (same aim ray as shooting; no ammo spend)
+  const look = effectiveLook(host.player, host.sniper)
+  const eye = eyePosition(host.player)
+  const aimDir = lookDirection(look.yaw, look.pitch)
   const controlConsumed = host.rangeControls.update({
-    camera: host.camera,
-    playerPos: host.player.position,
+    eye,
+    lookDir: aimDir,
     fire: input.fire,
     dt,
     dummies: host.dummies,
     respawns: host.respawns,
+    forceIdleVisuals: (dummies) => host.dummiesSys.forceIdleAll(dummies),
   })
 
   if (host.playerVisuals.isMan) {

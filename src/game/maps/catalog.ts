@@ -106,7 +106,7 @@ export const MAPS: Record<MapId, MapDef> = {
     id: 'range',
     name: 'Practice Range',
     blurb:
-      'Horizontal distance rows in a rainbow corridor — left/right dummies at 8–38 m. Control wall: still / move / strafe, reset, and row count. Start Tutorial from the lobby for a guided how-to-play.',
+      'Rainbow distance corridor with a left/middle/right squad. ROWS moves them to the next band (8–38 m). Control wall: still / move / strafe, reset. Start Tutorial from the lobby for a guided how-to-play.',
     tags: ['official', 'training', 'tutorial'],
     kind: 'range',
     scale: 1,

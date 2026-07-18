@@ -37,6 +37,18 @@ export class ViewFeel {
   private prevAdsScoped = false
   private footstepBobSign = 0
 
+  /**
+   * Look-turn gun lag (camera-local). Opposite of recent look delta,
+   * then springs back so the rifle is "pulled" into the new facing.
+   */
+  private lookLagYaw = 0
+  private lookLagPitch = 0
+  private lookLagRoll = 0
+  private lookLagPosX = 0
+  private lookLagPosY = 0
+  private prevLookYaw: number | null = null
+  private prevLookPitch: number | null = null
+
   /** Seconds since last shot punch (viewmodel envelope) */
   private gunRecoilAge = 99
   /** Seconds since last shot punch (camera screen-shake) */
@@ -83,6 +95,13 @@ export class ViewFeel {
     this.moveLeanFwd = 0
     this.moveLeanRight = 0
     this.bobAmount = 0
+    this.lookLagYaw = 0
+    this.lookLagPitch = 0
+    this.lookLagRoll = 0
+    this.lookLagPosX = 0
+    this.lookLagPosY = 0
+    this.prevLookYaw = null
+    this.prevLookPitch = null
   }
 
   /**
@@ -241,22 +260,80 @@ export class ViewFeel {
     // Stronger idle oscillation while sprinting so the rifle feels alive
     const sprintOsc = 1 + sprintT * GUN_SWAY.sprintOscMul
     const st = this.gunSwayTime
+    const breath = Math.sin(st * GUN_SWAY.breathFreq)
+    const breath2 = Math.cos(st * GUN_SWAY.breathFreq * 0.92 + 0.4)
     let swayX =
       Math.sin(st * GUN_SWAY.freqYaw) * GUN_SWAY.posX * swayMul * sprintOsc
     let swayY =
-      Math.cos(st * GUN_SWAY.freqPitch) * GUN_SWAY.posY * swayMul * sprintOsc
+      (Math.cos(st * GUN_SWAY.freqPitch) * GUN_SWAY.posY +
+        breath * GUN_SWAY.breathPosY) *
+      swayMul *
+      sprintOsc
     let swayYaw =
       Math.sin(st * GUN_SWAY.freqYaw * 0.85) *
       GUN_SWAY.yaw *
       swayMul *
       sprintOsc
     let swayPitch =
-      Math.cos(st * GUN_SWAY.freqPitch * 1.1) *
-      GUN_SWAY.pitch *
+      (Math.cos(st * GUN_SWAY.freqPitch * 1.1) * GUN_SWAY.pitch +
+        breath * GUN_SWAY.breathPitch) *
       swayMul *
       sprintOsc
     let swayRoll =
-      Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll * swayMul * sprintOsc
+      (Math.sin(st * GUN_SWAY.freqRoll) * GUN_SWAY.roll +
+        breath2 * GUN_SWAY.breathRoll) *
+      swayMul *
+      sprintOsc
+
+    // Look-turn inertia — scales with camera angular rate (no hard max).
+    // Impulse is proportional to look delta (rate * dt); spring return gives
+    // steady lag ≈ angularRate * impulse / returnLerp while spinning.
+    {
+      const L = GUN_SWAY.look
+      const lookMul = vm.freezeBob
+        ? 0
+        : 1 - adsBlend * (1 - L.adsMul)
+      const lookYaw = p.yaw
+      const lookPitch = p.pitch
+      if (this.prevLookYaw == null || this.prevLookPitch == null) {
+        this.prevLookYaw = lookYaw
+        this.prevLookPitch = lookPitch
+      } else {
+        let dYaw = lookYaw - this.prevLookYaw
+        let dPitch = lookPitch - this.prevLookPitch
+        // Unwrap yaw so a full spin doesn't slam the lag
+        if (dYaw > Math.PI) dYaw -= Math.PI * 2
+        if (dYaw < -Math.PI) dYaw += Math.PI * 2
+        this.prevLookYaw = lookYaw
+        this.prevLookPitch = lookPitch
+
+        // Ignore teleports / pose snaps (not real look velocity)
+        const isRealLook =
+          Math.abs(dYaw) < Math.PI * 0.5 && Math.abs(dPitch) < Math.PI * 0.5
+        if (isRealLook && lookMul > 0) {
+          // Faster spin → larger delta → more lag (unbounded)
+          this.lookLagYaw += -dYaw * L.yawImpulse * lookMul
+          this.lookLagPitch += -dPitch * L.pitchImpulse * lookMul
+          this.lookLagRoll += -dYaw * L.rollImpulse * lookMul
+          this.lookLagPosX += -dYaw * L.posXPerYaw * lookMul
+          this.lookLagPosY += -dPitch * L.posYPerPitch * lookMul
+        }
+      }
+
+      // Spring home — only limit on lag is how hard you spin vs return rate
+      const retK = 1 - Math.exp(-L.returnLerp * dt)
+      this.lookLagYaw += (0 - this.lookLagYaw) * retK
+      this.lookLagPitch += (0 - this.lookLagPitch) * retK
+      this.lookLagRoll += (0 - this.lookLagRoll) * retK
+      this.lookLagPosX += (0 - this.lookLagPosX) * retK
+      this.lookLagPosY += (0 - this.lookLagPosY) * retK
+
+      swayX += this.lookLagPosX
+      swayY += this.lookLagPosY
+      swayYaw += this.lookLagYaw
+      swayPitch += this.lookLagPitch
+      swayRoll += this.lookLagRoll
+    }
 
     // Procedural lean into local move direction (strafe / forward / back)
     {

@@ -36,12 +36,32 @@ export type RangeControlAction =
   | 'reset'
   | 'count'
 
+/**
+ * Button kinds share one visual/interaction language:
+ * - radio: mutually exclusive mode (always one selected)
+ * - action: one-shot (reset) — flash only
+ * - stepper: cycles a value (rows) — face shows live value
+ */
+export type RangeControlKind = 'radio' | 'action' | 'stepper'
+
 export type RangeControlButton = {
   id: RangeControlAction
+  kind: RangeControlKind
+  /** Visual body mesh. */
   mesh: THREE.Mesh
-  /** World-space center for proximity checks. */
+  /** Larger invisible mesh used for ray hits (same transform as mesh). */
+  hitMesh: THREE.Mesh
+  face: THREE.Mesh
+  bodyMat: THREE.MeshStandardMaterial
+  faceMat: THREE.MeshStandardMaterial
+  /** World-space center. */
   position: THREE.Vector3
-  label: string
+  /** Primary title drawn on the face. */
+  title: string
+  /** Accent color (hex number). */
+  accent: number
+  /** Mode this radio selects, if kind === 'radio'. */
+  mode?: 'stationary' | 'moving' | 'strafing'
 }
 
 export type RangeBuildResult = {
@@ -93,27 +113,6 @@ function aabbFromBox(b: {
   }
 }
 
-function makeDistanceLabel(text: string): THREE.CanvasTexture {
-  const c = document.createElement('canvas')
-  c.width = 256
-  c.height = 128
-  const ctx = c.getContext('2d')!
-  ctx.fillStyle = '#1a1a1a'
-  ctx.fillRect(0, 0, 256, 128)
-  ctx.strokeStyle = '#f0c040'
-  ctx.lineWidth = 8
-  ctx.strokeRect(6, 6, 244, 116)
-  ctx.fillStyle = '#f5f0e0'
-  ctx.font = 'bold 64px system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(text, 128, 68)
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
-  tex.anisotropy = 4
-  return tex
-}
-
 function makeFacilityLabel(
   text: string,
   opts?: { sub?: string; bg?: string; fg?: string },
@@ -144,27 +143,39 @@ function makeFacilityLabel(
   return tex
 }
 
-function makeButtonLabel(
+/**
+ * Shared face texture for control buttons.
+ * Keep styling identical so every button feels like the same widget.
+ */
+export function makeButtonLabel(
   title: string,
   sub?: string,
-  accent = '#7ec8f0',
+  opts?: { accent?: string; selected?: boolean },
 ): THREE.CanvasTexture {
+  const accent = opts?.accent ?? '#7ec8f0'
+  const selected = opts?.selected ?? false
   const c = document.createElement('canvas')
   c.width = 256
   c.height = 128
   const ctx = c.getContext('2d')!
-  ctx.fillStyle = '#121820'
+  ctx.fillStyle = selected ? '#1a2836' : '#121820'
   ctx.fillRect(0, 0, 256, 128)
   ctx.strokeStyle = accent
-  ctx.lineWidth = 6
+  ctx.lineWidth = selected ? 10 : 6
   ctx.strokeRect(4, 4, 248, 120)
+  if (selected) {
+    ctx.fillStyle = accent
+    ctx.globalAlpha = 0.12
+    ctx.fillRect(8, 8, 240, 112)
+    ctx.globalAlpha = 1
+  }
   ctx.fillStyle = '#f0f4f8'
-  ctx.font = 'bold 36px system-ui, sans-serif'
+  ctx.font = 'bold 34px system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   if (sub) {
-    ctx.fillText(title, 128, 48)
-    ctx.font = '22px system-ui, sans-serif'
+    ctx.fillText(title, 128, 46)
+    ctx.font = 'bold 24px system-ui, sans-serif'
     ctx.fillStyle = accent
     ctx.fillText(sub, 128, 88)
   } else {
@@ -172,7 +183,21 @@ function makeButtonLabel(
   }
   const tex = new THREE.CanvasTexture(c)
   tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
   return tex
+}
+
+/** Replace a button face map (disposes previous canvas texture). */
+export function setButtonFaceLabel(
+  faceMat: THREE.MeshStandardMaterial,
+  title: string,
+  sub?: string,
+  opts?: { accent?: string; selected?: boolean },
+) {
+  const prev = faceMat.map
+  faceMat.map = makeButtonLabel(title, sub, opts)
+  faceMat.needsUpdate = true
+  prev?.dispose()
 }
 
 /** Lights, rainbow corridor floor, side walls, berm, spawn, control wall. */
@@ -463,7 +488,7 @@ export function buildRange(
     name: 'fire-line',
   })
 
-  // ── Distance markers + dummy pads on each horizontal row ─────────────────
+  // ── Row floor marks + dummy pads (no distance posts / placards) ──────────
   for (let row = 0; row < RANGE.rowDist.length; row++) {
     const m = RANGE.rowDist[row]
     const z = rangeRowZ(row)
@@ -482,34 +507,7 @@ export function buildRange(
       name: `row-line-${m}`,
     })
 
-    // Side distance placards
-    for (const side of [-1, 1] as const) {
-      const px = side * (HALF_W - 0.55)
-      addBox({
-        x: px,
-        y: 1.1,
-        z,
-        w: 0.1,
-        h: 2.2,
-        d: 0.1,
-        mat: railMat,
-        name: `dist-post-${m}-${side > 0 ? 'r' : 'l'}`,
-      })
-      const tex = makeDistanceLabel(`${m}m`)
-      const plate = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.9, 0.45),
-        new THREE.MeshStandardMaterial({
-          map: tex,
-          roughness: 0.65,
-          metalness: 0.05,
-        }),
-      )
-      plate.position.set(px + side * 0.08, 1.85, z)
-      plate.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
-      root.add(plate)
-    }
-
-    // Target pads under each dummy in the row
+    // Target pads under each column on this band
     for (let col = 0; col < RANGE.colsPerRow; col++) {
       const x = rangeColX(col)
       addBox({
@@ -602,7 +600,7 @@ export function buildRange(
   })
   {
     const tex = makeFacilityLabel('RANGE CONTROLS', {
-      sub: 'LOOK + FIRE TO TOGGLE',
+      sub: 'LOOK + FIRE  ·  ROWS MOVES SQUAD',
       bg: '#152028',
       fg: '#7ec8f0',
     })
@@ -621,60 +619,87 @@ export function buildRange(
 
   type BtnSpec = {
     id: RangeControlAction
-    label: string
-    sub?: string
+    kind: RangeControlKind
+    title: string
+    sub: string
     accent: string
     x: number
+    mode?: 'stationary' | 'moving' | 'strafing'
   }
+  // Even spacing across the panel; identical widget size for every action
   const btnSpecs: BtnSpec[] = [
     {
       id: 'mode_stationary',
-      label: 'STILL',
-      sub: 'Stationary',
+      kind: 'radio',
+      title: 'STILL',
+      sub: 'Hold',
       accent: '#6ecf8e',
       x: -1.9,
+      mode: 'stationary',
     },
     {
       id: 'mode_moving',
-      label: 'MOVE',
+      kind: 'radio',
+      title: 'MOVE',
       sub: 'Wander',
       accent: '#7ec8f0',
       x: -0.95,
+      mode: 'moving',
     },
     {
       id: 'mode_strafing',
-      label: 'STRAFE',
-      sub: 'Side step',
+      kind: 'radio',
+      title: 'STRAFE',
+      sub: 'Side',
       accent: '#e0a84a',
       x: 0,
+      mode: 'strafing',
     },
     {
       id: 'reset',
-      label: 'RESET',
-      sub: 'Heal & home',
+      kind: 'action',
+      title: 'RESET',
+      sub: 'Home',
       accent: '#e07070',
       x: 0.95,
     },
     {
       id: 'count',
-      label: 'ROWS',
-      sub: `1–${RANGE.rowDist.length}`,
+      kind: 'stepper',
+      title: 'ROWS',
+      sub: `${RANGE.rowDist[0]}m`,
       accent: '#c9a0e8',
       x: 1.9,
     },
   ]
 
+  // Thin divider between mode radios and action/stepper
+  addBox({
+    x: 0.48,
+    y: btnY,
+    z: wallZ + 0.28,
+    w: 0.06,
+    h: 0.7,
+    d: 0.08,
+    mat: railMat,
+    solid: false,
+    castShadow: false,
+    name: 'ctrl-divider',
+  })
+
   for (const spec of btnSpecs) {
     const faceZ = wallZ + 0.24
+    const accentNum = parseInt(spec.accent.slice(1), 16)
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x1a222c,
+      roughness: 0.55,
+      metalness: 0.25,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
+    })
     const body = new THREE.Mesh(
-      new THREE.BoxGeometry(0.78, 0.52, 0.12),
-      new THREE.MeshStandardMaterial({
-        color: 0x1a222c,
-        roughness: 0.55,
-        metalness: 0.25,
-        emissive: 0x000000,
-        emissiveIntensity: 0,
-      }),
+      new THREE.BoxGeometry(0.82, 0.56, 0.14),
+      bodyMat,
     )
     body.position.set(spec.x, btnY, faceZ)
     body.castShadow = true
@@ -683,28 +708,54 @@ export function buildRange(
     root.add(body)
     coverMeshes.push(body)
 
-    const tex = makeButtonLabel(spec.label, spec.sub, spec.accent)
-    const face = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.72, 0.46),
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        roughness: 0.55,
-        metalness: 0.05,
-        side: THREE.DoubleSide,
-      }),
+    // Generous hit volume so aim doesn't need pixel-perfect center
+    const hitMat = new THREE.MeshBasicMaterial({
+      visible: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    })
+    const hitMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.95, 0.7, 0.35),
+      hitMat,
     )
-    face.position.set(spec.x, btnY, faceZ - 0.065)
+    hitMesh.position.set(spec.x, btnY, faceZ - 0.05)
+    hitMesh.name = `ctrl-hit-${spec.id}`
+    hitMesh.userData.rangeAction = spec.id
+    root.add(hitMesh)
+
+    const selected = spec.mode === 'stationary'
+    const faceMat = new THREE.MeshStandardMaterial({
+      map: makeButtonLabel(spec.title, spec.sub, {
+        accent: spec.accent,
+        selected,
+      }),
+      roughness: 0.55,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
+    })
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 0.5), faceMat)
+    // Plane default faces +Z; rotate so labels face spawn (−Z from wall)
+    face.position.set(spec.x, btnY, faceZ - 0.075)
     face.rotation.y = Math.PI
     face.name = `ctrl-face-${spec.id}`
-    body.userData.face = face
-    body.userData.accent = parseInt(spec.accent.slice(1), 16)
+    face.userData.rangeAction = spec.id
     root.add(face)
 
     controlButtons.push({
       id: spec.id,
+      kind: spec.kind,
       mesh: body,
+      hitMesh,
+      face,
+      bodyMat,
+      faceMat,
       position: body.position.clone(),
-      label: spec.label,
+      title: spec.title,
+      accent: accentNum,
+      mode: spec.mode,
     })
   }
 

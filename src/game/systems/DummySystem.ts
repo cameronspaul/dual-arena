@@ -268,6 +268,28 @@ export class DummySystem {
     return this.enabled
   }
 
+  /**
+   * Force idle clip + loco flags (e.g. after range RESET).
+   * Call after sim state is already idle/home.
+   */
+  forceIdleAll(dummies: DummyTarget[]) {
+    if (!this.enabled) return
+    for (const d of dummies) {
+      if (d.active === false) continue
+      const root = this.meshes.get(d.id)
+      if (!root) continue
+      root.position.set(d.position.x, d.position.y, d.position.z)
+      root.rotation.y = d.yaw
+      root.userData.locoState = null
+      root.userData.wasAlive = true
+      playDummyIdle(root)
+      applyDummyCrouchScale(root, false)
+      paintDummyMeshes(root, d.alive ? d.hp / d.maxHp : 0)
+      setDummyLabel(root, 'idle')
+      root.visible = d.alive
+    }
+  }
+
   /** Per-frame: loco mixers + root pose/labels/paint. No-op when disabled. */
   update(dt: number, dummies: DummyTarget[], paused: boolean) {
     if (!this.enabled) return

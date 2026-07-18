@@ -9,7 +9,8 @@ import type {
   PlayerInput,
   SniperState,
 } from '../../core/types'
-import { stepPlayer } from '../../sim/player'
+import { lookDirection } from '../../core/math'
+import { eyePosition, stepPlayer } from '../../sim/player'
 import { applyRecoil, stepSniper, tryFire } from '../../sim/sniper'
 import { stepDummies, stepRespawns, type RespawnTimer } from '../../sim/world'
 import type { CombatFx } from '../../systems/CombatFx'
@@ -102,17 +103,35 @@ export function tickOnline(
   // Cosmetic sniper step (server overwrites ammo/phase on snapshot)
   stepSniper(host.sniper, input, dt)
 
+  // Host wait-room range controls: process before fire so we can suppress the shot
+  let controlConsumed = false
+  if (host.dummiesEnabled) {
+    const look = effectiveLook(host.player, host.sniper)
+    const eye = eyePosition(host.player)
+    const aimDir = lookDirection(look.yaw, look.pitch)
+    controlConsumed = host.rangeControls.update({
+      eye,
+      lookDir: aimDir,
+      fire: input.fire,
+      dt,
+      dummies: host.dummies,
+      respawns: host.respawns,
+      forceIdleVisuals: (dummies) => host.dummiesSys.forceIdleAll(dummies),
+    })
+  }
+
   // Send pose + buttons (force on combat edges so rate limit never drops fire)
   if (host.net && host.localPlayerId) {
+    const canFire = fireAllowed && !controlConsumed
     const sendInput =
-      movementLocked || !fireAllowed
+      movementLocked || !canFire
         ? {
             ...input,
             forward: movementLocked ? 0 : input.forward,
             right: movementLocked ? 0 : input.right,
             jump: false,
             sprint: movementLocked ? false : input.sprint,
-            fire: fireAllowed ? input.fire : false,
+            fire: canFire ? input.fire : false,
           }
         : input
     const edge = sendInput.fire || sendInput.reload || sendInput.jump
@@ -134,7 +153,8 @@ export function tickOnline(
 
   const prevGrounded = host.viewFeel.wasGrounded
   // Optimistic fire FX only — damage comes from server HitEvents.
-  const fireInput = fireAllowed ? input : { ...input, fire: false }
+  const fireInput =
+    fireAllowed && !controlConsumed ? input : { ...input, fire: false }
   const fireResult = tryFire(host.sniper, fireInput)
   if (fireResult === 'shot') {
     gameAudio.playFire()
@@ -188,14 +208,6 @@ export function tickOnline(
     stepDummies(host.dummies, dt)
     stepRespawns(host.dummies, host.respawns, dt)
     host.dummiesSys.update(dt, host.dummies, false)
-    host.rangeControls.update({
-      camera: host.camera,
-      playerPos: host.player.position,
-      fire: input.fire,
-      dt,
-      dummies: host.dummies,
-      respawns: host.respawns,
-    })
   }
   host.combatFx.update(dt)
   host.barrierVisuals.update(host.player.position)

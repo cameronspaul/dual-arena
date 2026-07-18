@@ -3,6 +3,8 @@ import {
   MOVE,
   RANGE,
   WORLD,
+  rangeColX,
+  rangeRowZ,
   type DummyBehaviorMode,
 } from '../core/config'
 import { aabbFromCenter, clamp, lenXZ, normalizeXZ } from '../core/math'
@@ -16,28 +18,133 @@ export function buildWorldColliders(): AABB[] {
   )
 }
 
-/** How many nearest horizontal distance rows are live (1 … RANGE.rowDist.length). */
+/**
+ * Current distance-band index for the practice-range squad (0 = closest).
+ * Kept as `DummyActiveRows` name for RangeControls display field.
+ */
 export type DummyActiveRows = number
 
 /** Runtime practice-range AI mode (control wall). */
 let behaviorMode: DummyBehaviorMode = DUMMY.defaultMode
-/** How many nearest distance bands are live (1 = closest only). */
-let activeRows: DummyActiveRows = DUMMY.defaultRows
+/** Which distance band the squad stands on (0 = closest). */
+let activeRowIndex: DummyActiveRows = DUMMY.defaultRowIndex
 
 export function getDummyBehaviorMode(): DummyBehaviorMode {
   return behaviorMode
 }
 
-export function setDummyBehaviorMode(mode: DummyBehaviorMode) {
+/**
+ * Switch AI mode. When `dummies` is provided, every live dummy is snapped
+ * into that mode immediately (no leftover idle timers from STILL / RESET).
+ */
+export function setDummyBehaviorMode(
+  mode: DummyBehaviorMode,
+  dummies?: DummyTarget[],
+) {
   behaviorMode = mode
+  if (dummies) snapDummiesToMode(dummies, mode)
+}
+
+/**
+ * Apply mode instantly so MOVE / STRAFE read as immediate, not after a
+ * multi-second idle timer from the previous state.
+ */
+export function snapDummiesToMode(
+  dummies: DummyTarget[],
+  mode: DummyBehaviorMode,
+): void {
+  for (const d of dummies) {
+    if (!d.alive || d.active === false) continue
+
+    if (mode === 'stationary') {
+      d.position.x = d.home.x
+      d.position.y = d.home.y
+      d.position.z = d.home.z
+      d.velocity.x = 0
+      d.velocity.z = 0
+      d.state = 'idle'
+      d.stateTimer = 99
+      d.slideTimer = 0
+      d.yaw = 0
+      d.target = { x: d.home.x, y: d.home.y, z: d.home.z }
+      continue
+    }
+
+    if (mode === 'strafing') {
+      const halfX = rowInnerHalf()
+      const left = d.home.x - halfX
+      const right = d.home.x + halfX
+      // Stagger start time + direction so the squad isn't lockstep
+      const col = d.lane ?? 0
+      const startDelay = col * 0.55 + Math.random() * 0.4
+      // Alternate preferred first edge by column, with a bit of randomness
+      const preferRight =
+        col % 2 === 0 ? Math.random() > 0.35 : Math.random() > 0.65
+      d.target.x = preferRight ? right : left
+      d.target.y = d.home.y
+      d.target.z = d.home.z
+      d.slideTimer = 0
+      d.velocity.x = 0
+      d.velocity.z = 0
+      if (startDelay < 0.08) {
+        d.state = 'walk'
+        d.stateTimer = 2.8 + Math.random() * 2.2
+        const dir = d.target.x >= d.position.x ? 1 : -1
+        d.velocity.x = dir * RANGE.strafeSpeed
+      } else {
+        // Idle briefly, then stepDummies will kick into walk
+        d.state = 'idle'
+        d.stateTimer = startDelay
+      }
+      continue
+    }
+
+    // moving — start walking to a new point immediately (never linger in idle)
+    d.state = 'walk'
+    d.stateTimer = stateDuration('walk')
+    d.slideTimer = 0
+    d.target = pickWanderPoint(d, d.wanderBounds)
+    // Guarantee the target is far enough that we don't re-pick next frame
+    const dist = Math.hypot(d.target.x - d.position.x, d.target.z - d.position.z)
+    if (dist < DUMMY.arriveDist * 2) {
+      const halfX = rowInnerHalf()
+      d.target.x = d.home.x + (Math.random() > 0.5 ? halfX : -halfX)
+      d.target.z = d.home.z + (Math.random() * 2 - 1) * RANGE.rowWanderZ
+    }
+    const to = normalizeXZ({
+      x: d.target.x - d.position.x,
+      y: 0,
+      z: d.target.z - d.position.z,
+    })
+    const sp = MOVE.walkSpeed
+    d.velocity.x = to.x * sp
+    d.velocity.z = to.z * sp
+  }
 }
 
 export function getDummyActiveRows(): DummyActiveRows {
-  return activeRows
+  return activeRowIndex
 }
 
-export function setDummyActiveRows(rows: DummyActiveRows) {
-  activeRows = rows
+export function getDummyActiveRowIndex(): number {
+  return activeRowIndex
+}
+
+/** Distance in meters for the squad's current band (for UI). */
+export function getDummyActiveRowDist(): number {
+  return (
+    RANGE.rowDist[activeRowIndex] ??
+    RANGE.rowDist[RANGE.rowDist.length - 1]
+  )
+}
+
+export function setDummyActiveRows(rowIndex: DummyActiveRows) {
+  activeRowIndex = clampRowIndex(rowIndex)
+}
+
+function clampRowIndex(i: number): number {
+  const max = Math.max(0, RANGE.rowDist.length - 1)
+  return Math.max(0, Math.min(max, Math.floor(i)))
 }
 
 function randRange(lo: number, hi: number) {
@@ -108,18 +215,20 @@ function speedForState(state: DummyMoveState): number {
   }
 }
 
-/** Parse col/row from practice-range ids (`d-c0-r2` or legacy `d-l0-r2`). */
+/** Parse col/row from practice-range ids (`d-c0`, `d-c0-r2`, or legacy `d-l0-r2`). */
 function parseLaneRow(
   id: string,
   def?: MapDummyDef & { lane?: number; row?: number },
 ): { lane?: number; row?: number } {
   if (def && (typeof def.lane === 'number' || typeof def.row === 'number')) {
-    return { lane: def.lane, row: def.row }
+    return { lane: def.lane, row: def.row ?? activeRowIndex }
   }
+  const simple = /^d-c(\d+)$/.exec(id)
+  if (simple) return { lane: Number(simple[1]), row: activeRowIndex }
   const m =
     /^d-c(\d+)-r(\d+)$/.exec(id) ?? /^d-l(\d+)-r(\d+)$/.exec(id)
   if (m) return { lane: Number(m[1]), row: Number(m[2]) }
-  const home = buildRangeDummyHomes().find((h) => h.id === id)
+  const home = buildRangeDummyHomes(activeRowIndex).find((h) => h.id === id)
   if (home) return { lane: home.lane, row: home.row }
   return {}
 }
@@ -140,11 +249,11 @@ export function createDummies(opts: CreateDummiesOpts = {}): DummyTarget[] {
   const bounds = opts.bounds ?? DUMMY.bounds
   if (opts.practiceRange) {
     behaviorMode = DUMMY.defaultMode
-    activeRows = DUMMY.defaultRows
+    activeRowIndex = DUMMY.defaultRowIndex
   } else {
     // Arena / free maps: classic locomotion demo
     behaviorMode = 'moving'
-    activeRows = 3
+    activeRowIndex = 0
   }
 
   return defs.map((d, i) => {
@@ -154,16 +263,14 @@ export function createDummies(opts: CreateDummiesOpts = {}): DummyTarget[] {
       lane?: number
       row?: number
     })
-    const rowIdx = row ?? 0
-    // Row parking only applies on the practice range
-    const isActive = opts.practiceRange ? rowIdx < activeRows : true
+    const rowIdx = row ?? activeRowIndex
     const dummy: DummyTarget = {
       id: d.id,
       position: { x: d.x, y, z: d.z },
       velocity: { x: 0, y: 0, z: 0 },
       hp: DUMMY.maxHp,
       maxHp: DUMMY.maxHp,
-      alive: isActive,
+      alive: true,
       yaw: d.yaw,
       state: 'idle',
       home,
@@ -174,11 +281,9 @@ export function createDummies(opts: CreateDummiesOpts = {}): DummyTarget[] {
       wanderBounds: bounds,
       lane,
       row: rowIdx,
-      active: isActive,
+      active: true,
     }
-    if (isActive) {
-      dummy.target = pickWanderPoint(dummy, bounds)
-    }
+    dummy.target = pickWanderPoint(dummy, bounds)
     return dummy
   })
 }
@@ -224,10 +329,10 @@ export function stepRespawns(
       d.position.z = d.home.z
       d.velocity.x = 0
       d.velocity.z = 0
-      d.state = 'idle'
-      d.stateTimer = stateDuration('idle')
       d.slideTimer = 0
-      d.target = pickWanderPoint(d, d.wanderBounds)
+      // Resume whatever the control wall is set to (still / move / strafe)
+      // instead of always coming back idle.
+      snapDummiesToMode([d], behaviorMode)
     }
     timers.splice(i, 1)
   }
@@ -239,7 +344,9 @@ export function queueRespawn(timers: RespawnTimer[], id: string) {
 }
 
 /**
- * Snap every active dummy home, full HP, clear respawn timers.
+ * Snap every active dummy home, full HP, clear respawn timers, force idle.
+ * Also switches AI to stationary so they stay idle (MOVE/STRAFE would
+ * otherwise pick a new loco state next frame).
  * Inactive (parked) dummies stay parked.
  */
 export function resetRangeDummies(
@@ -247,11 +354,14 @@ export function resetRangeDummies(
   timers: RespawnTimer[],
 ): void {
   timers.length = 0
+  behaviorMode = 'stationary'
   for (const d of dummies) {
     if (d.active === false) {
       d.alive = false
       d.velocity.x = 0
       d.velocity.z = 0
+      d.state = 'idle'
+      d.slideTimer = 0
       continue
     }
     d.alive = true
@@ -265,47 +375,65 @@ export function resetRangeDummies(
     d.stateTimer = stateDuration('idle')
     d.slideTimer = 0
     d.yaw = 0
-    d.target = pickWanderPoint(d, d.wanderBounds)
+    d.cycleIdx = 0
+    d.target = { x: d.home.x, y: d.home.y, z: d.home.z }
   }
 }
 
 /**
- * Show rows `[0 .. rows)` and park the rest. Clears respawn timers for
- * parked dummies and heals newly activated ones.
+ * Move the existing dummy squad to the next distance band (wraps).
+ * Does not spawn extra dummies — same left/middle/right set relocates.
+ * Heals, clears respawns, updates homes, then re-applies current AI mode.
+ */
+export function advanceDummyDistanceRow(
+  dummies: DummyTarget[],
+  timers: RespawnTimer[],
+): DummyActiveRows {
+  const max = Math.max(1, RANGE.rowDist.length)
+  activeRowIndex = (activeRowIndex + 1) % max
+  relocateSquadToRow(dummies, timers, activeRowIndex)
+  return activeRowIndex
+}
+
+/**
+ * Place the squad on a specific distance band index.
+ * @deprecated Prefer advanceDummyDistanceRow for the ROWS button.
  */
 export function applyDummyRowCount(
   dummies: DummyTarget[],
   timers: RespawnTimer[],
-  rows: DummyActiveRows,
+  rowIndex: DummyActiveRows,
 ): void {
-  activeRows = rows
+  activeRowIndex = clampRowIndex(rowIndex)
+  relocateSquadToRow(dummies, timers, activeRowIndex)
+}
+
+function relocateSquadToRow(
+  dummies: DummyTarget[],
+  timers: RespawnTimer[],
+  rowIndex: number,
+): void {
+  timers.length = 0
+  const z = rangeRowZ(rowIndex)
   for (const d of dummies) {
-    const row = d.row ?? 0
-    const on = row < rows
-    d.active = on
-    if (!on) {
-      d.alive = false
-      d.velocity.x = 0
-      d.velocity.z = 0
-      // Drop pending respawns for parked targets
-      for (let i = timers.length - 1; i >= 0; i--) {
-        if (timers[i].id === d.id) timers.splice(i, 1)
-      }
-    } else if (!d.alive) {
-      // Leave dead active dummies to their respawn timer if any; otherwise revive
-      const pending = timers.some((t) => t.id === d.id)
-      if (!pending) {
-        d.alive = true
-        d.hp = d.maxHp
-        d.position.x = d.home.x
-        d.position.y = d.home.y
-        d.position.z = d.home.z
-        d.state = 'idle'
-        d.stateTimer = stateDuration('idle')
-        d.target = pickWanderPoint(d, d.wanderBounds)
-      }
-    }
+    const col = d.lane ?? 0
+    const x = rangeColX(col)
+    d.row = rowIndex
+    d.home = { x, y: d.home.y, z }
+    d.position.x = x
+    d.position.y = d.home.y
+    d.position.z = z
+    d.velocity.x = 0
+    d.velocity.z = 0
+    d.alive = true
+    d.active = true
+    d.hp = d.maxHp
+    d.yaw = 0
+    d.slideTimer = 0
+    d.target = { x, y: d.home.y, z }
   }
+  // Resume current mode immediately at the new band (walk/strafe/still)
+  snapDummiesToMode(dummies, behaviorMode)
 }
 
 function clampToRow(d: DummyTarget) {
@@ -349,18 +477,52 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
 
     // ── Strafing: side-to-side along the horizontal row ──────────────────
     if (mode === 'strafing') {
-      d.state = 'walk'
       const halfX = rowInnerHalf()
       const left = d.home.x - halfX
       const right = d.home.x + halfX
-      if (
-        Math.abs(d.target.x - d.position.x) < DUMMY.arriveDist ||
-        d.stateTimer <= 0
-      ) {
-        const atLeft = d.position.x <= d.home.x
-        d.target.x = atLeft ? right : left
+
+      // Staggered start: hold idle until stateTimer elapses
+      if (d.state === 'idle') {
+        d.stateTimer -= dt
+        d.velocity.x = 0
+        d.velocity.z = 0
+        d.position.y = d.home.y
+        d.position.z = d.home.z
+        if (d.stateTimer > 0) {
+          // Face fire line while waiting
+          let diff = 0 - d.yaw
+          while (diff > Math.PI) diff -= Math.PI * 2
+          while (diff < -Math.PI) diff += Math.PI * 2
+          d.yaw += clamp(diff, -DUMMY.turnSpeed * dt, DUMMY.turnSpeed * dt)
+          continue
+        }
+        // Begin strafe toward pre-picked edge
+        d.state = 'walk'
+        d.stateTimer = 2.5 + Math.random() * 2.5
+        if (
+          Math.abs(d.target.z - d.home.z) > 0.5 ||
+          (d.target.x > left - 0.1 && d.target.x < right + 0.1) === false
+        ) {
+          d.target.x = Math.random() > 0.5 ? right : left
+          d.target.z = d.home.z
+        }
+      }
+
+      // Retarget when near goal, timer elapsed, or target not on this row
+      const nearGoal = Math.abs(d.target.x - d.position.x) < DUMMY.arriveDist
+      const badTarget =
+        Math.abs(d.target.z - d.home.z) > RANGE.rowWanderZ * 2 ||
+        d.target.x < left - 0.5 ||
+        d.target.x > right + 0.5
+      if (nearGoal || d.stateTimer <= 0 || badTarget) {
+        const goingRight = d.velocity.x > 0.05
+        const goingLeft = d.velocity.x < -0.05
+        if (goingRight) d.target.x = left
+        else if (goingLeft) d.target.x = right
+        else d.target.x = d.position.x <= d.home.x ? right : left
         d.target.z = d.home.z
-        d.stateTimer = 4
+        // Varied leg length so turnarounds don't sync
+        d.stateTimer = 2.4 + Math.random() * 2.8
       }
       d.stateTimer -= dt
       const sp = RANGE.strafeSpeed
@@ -375,11 +537,21 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
       let diff = want - d.yaw
       while (diff > Math.PI) diff -= Math.PI * 2
       while (diff < -Math.PI) diff += Math.PI * 2
-      d.yaw += clamp(diff, -DUMMY.turnSpeed * dt, DUMMY.turnSpeed * dt)
+      d.yaw += clamp(
+        diff,
+        -DUMMY.turnSpeed * dt * 1.5,
+        DUMMY.turnSpeed * dt * 1.5,
+      )
       continue
     }
 
     // ── Moving: wander (row-clamped on practice range) ───────────────────
+    // Practice range: never sit in long idle — MOVE should look busy.
+    // Skip pure idle; if the demo cycle lands on idle, hop to walk.
+    if (d.state === 'idle') {
+      enterState(d, 'walk')
+    }
+
     d.stateTimer -= dt
 
     if (d.state === 'slide') {
@@ -388,7 +560,10 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
         enterState(d, 'run')
       }
     } else if (d.stateTimer <= 0) {
-      enterState(d, nextState(d))
+      let next = nextState(d)
+      // Avoid multi-second idle pauses while in MOVE mode
+      if (next === 'idle') next = 'walk'
+      enterState(d, next)
     }
 
     const bounds = d.wanderBounds ?? DUMMY.bounds
@@ -401,8 +576,13 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
 
     const sp = speedForState(d.state)
     if (sp <= 0.01) {
-      d.velocity.x = 0
-      d.velocity.z = 0
+      // Idle should not stick while MOVE is selected
+      if (d.state === 'idle') {
+        enterState(d, 'walk')
+      } else {
+        d.velocity.x = 0
+        d.velocity.z = 0
+      }
     } else {
       const to = normalizeXZ({
         x: d.target.x - d.position.x,
