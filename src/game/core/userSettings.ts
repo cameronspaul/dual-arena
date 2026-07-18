@@ -44,11 +44,13 @@ export interface UserSettings {
   /**
    * When true, crouch press toggles crouch on/off.
    * When false (default), hold to crouch.
+   * Sprint always clears a latched crouch (stand up to run).
    */
   toggleCrouch: boolean
   /**
-   * When true, sprint press toggles sprint on/off.
+   * When true, sprint toggles while moving and auto-clears when you stop.
    * When false (default), hold to sprint.
+   * Only engages if a movement key is already held; stop moving ends it.
    */
   toggleSprint: boolean
   /**

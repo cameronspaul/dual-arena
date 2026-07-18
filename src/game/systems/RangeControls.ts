@@ -7,7 +7,7 @@
  *  - Shared visual states: idle / hover / selected / pressed
  *
  * Button kinds:
- *  - radio (STILL/MOVE/STRAFE): one selected at a time
+ *  - radio (STILL/ROAM/STRAFE): one selected at a time
  *  - action (RESET): momentary flash
  *  - stepper (ROWS): advances the squad to the next distance band
  */
@@ -229,7 +229,7 @@ export class RangeControls {
     }
     if (btn.kind === 'radio') {
       if (btn.mode === 'stationary') return 'Hold'
-      if (btn.mode === 'moving') return 'Wander'
+      if (btn.mode === 'moving') return 'Free'
       if (btn.mode === 'strafing') return 'Side'
     }
     if (btn.id === 'reset') return 'Home'

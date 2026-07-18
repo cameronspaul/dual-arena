@@ -59,6 +59,11 @@ export class InputManager {
   private adsLatched = false
   private crouchLatched = false
   private sprintLatched = false
+  /**
+   * Previous-frame hold-sprint so we can uncrouch on sprint *engage* only.
+   * Continuous "sprint clears crouch" would block crouch-while-sprint slides.
+   */
+  private prevHoldSprint = false
   private yaw = 0
   private pitch = 0
   private canvas: HTMLElement | null = null
@@ -80,11 +85,47 @@ export class InputManager {
     this.adsLatched = false
     this.crouchLatched = false
     this.sprintLatched = false
+    this.prevHoldSprint = false
   }
 
   /** Live pointer-lock status from the document (never a stale cached flag). */
   private liveLocked() {
     return this.canvas != null && document.pointerLockElement === this.canvas
+  }
+
+  /** True if any movement bind is currently held (WASD by default). */
+  private hasMovementKeys() {
+    return (
+      codesFor('forward').some((c) => this.keys.has(c)) ||
+      codesFor('back').some((c) => this.keys.has(c)) ||
+      codesFor('left').some((c) => this.keys.has(c)) ||
+      codesFor('right').some((c) => this.keys.has(c))
+    )
+  }
+
+  /**
+   * Toggle sprint: only engage while already moving; always allow disengage.
+   * Engaging sprint from crouch stands you up (slide is crouch *while already*
+   * sprinting — that is handled on the crouch edge, not here).
+   */
+  private onSprintToggleEdge() {
+    if (this.sprintLatched) {
+      this.sprintLatched = false
+      return
+    }
+    if (!this.hasMovementKeys()) return
+    this.sprintLatched = true
+    // Sprint-from-crouch: stand up and run. Do not clear crouch when the
+    // player is already sprinting and taps crouch — that is a slide.
+    this.crouchLatched = false
+  }
+
+  /**
+   * Toggle crouch flip. Does NOT cancel sprint: crouch while sprinting is how
+   * you slide (needs crouch + speed/sprint in the sim).
+   */
+  private onCrouchToggleEdge() {
+    this.crouchLatched = !this.crouchLatched
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -113,7 +154,13 @@ export class InputManager {
     }
 
     this.keys.add(e.code)
-    if (isBoundTo('jump', e.code)) this.jumpPressed = true
+    if (isBoundTo('jump', e.code)) {
+      this.jumpPressed = true
+      // Jump stands you up out of toggle crouch (same idea as sprint-from-crouch).
+      // Must clear here so the same sample() has crouch=false and jump can fire —
+      // sim blocks jump while state is crouch.
+      this.crouchLatched = false
+    }
     if (isBoundTo('reload', e.code)) this.reloadPressed = true
     if (isBoundTo('fire', e.code)) this.firePressed = true
 
@@ -123,10 +170,10 @@ export class InputManager {
       this.adsLatched = !this.adsLatched
     }
     if (isBoundTo('crouch', e.code) && settings.toggleCrouch) {
-      this.crouchLatched = !this.crouchLatched
+      this.onCrouchToggleEdge()
     }
     if (isBoundTo('sprint', e.code) && settings.toggleSprint) {
-      this.sprintLatched = !this.sprintLatched
+      this.onSprintToggleEdge()
     }
   }
 
@@ -164,11 +211,12 @@ export class InputManager {
       }
     }
     // Mouse crouch / sprint (rare but supported via keybinds)
-    if (isBoundTo('crouch', code) && getUserSettings().toggleCrouch) {
-      this.crouchLatched = !this.crouchLatched
+    const settings = getUserSettings()
+    if (isBoundTo('crouch', code) && settings.toggleCrouch) {
+      this.onCrouchToggleEdge()
     }
-    if (isBoundTo('sprint', code) && getUserSettings().toggleSprint) {
-      this.sprintLatched = !this.sprintLatched
+    if (isBoundTo('sprint', code) && settings.toggleSprint) {
+      this.onSprintToggleEdge()
     }
   }
 
@@ -376,16 +424,41 @@ export class InputManager {
       : held('ads') || this.adsMouseHeld
     const ads = locked && adsRaw
 
+    const forward = (held('forward') ? 1 : 0) - (held('back') ? 1 : 0)
+    const right = (held('right') ? 1 : 0) - (held('left') ? 1 : 0)
+    const moving = forward !== 0 || right !== 0
+
+    // Toggle sprint only lasts while you keep moving — release WASD and it
+    // ends, so the next W press walks until you tap sprint again mid-move.
+    if (settings.toggleSprint && this.sprintLatched && !moving) {
+      this.sprintLatched = false
+    }
+
+    const holdSprint = !settings.toggleSprint && held('sprint')
+    // Hold-sprint edge: stand up out of toggle crouch. Must be edge-only —
+    // clearing crouch every frame while sprinting made slides impossible.
+    if (
+      settings.toggleCrouch &&
+      holdSprint &&
+      !this.prevHoldSprint &&
+      this.crouchLatched
+    ) {
+      this.crouchLatched = false
+    }
+    this.prevHoldSprint = holdSprint
+
+    const sprint = settings.toggleSprint
+      ? this.sprintLatched
+      : holdSprint
+
+    // Crouch while sprint stays true so canStartSlide gets crouch + sprint.
     const crouch = settings.toggleCrouch
       ? this.crouchLatched
       : held('crouch')
-    const sprint = settings.toggleSprint
-      ? this.sprintLatched
-      : held('sprint')
 
     const input: PlayerInput = {
-      forward: (held('forward') ? 1 : 0) - (held('back') ? 1 : 0),
-      right: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
+      forward,
+      right,
       jump: this.jumpPressed,
       jumpHeld: held('jump'),
       crouch,

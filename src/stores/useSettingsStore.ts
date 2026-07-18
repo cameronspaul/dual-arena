@@ -194,7 +194,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'glint-settings',
-      version: 4,
+      version: 6,
       migrate: (persisted) => {
         const p = (persisted ?? {}) as Partial<UserSettings>
         return hydrateFromPartial(p)

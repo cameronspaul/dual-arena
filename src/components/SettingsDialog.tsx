@@ -41,12 +41,11 @@ import {
   type VoiceMode,
 } from '@/game/core/userSettings'
 import { CharacterPreview } from '@/components/game/CharacterPreview'
-import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/stores/useAppStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
-/** audio | mouse (controls) | keybinds | character */
+/** mouse (controls) | keybinds | audio | character */
 export type SettingsSection = 'audio' | 'mouse' | 'keybinds' | 'character'
 
 interface SettingsDialogProps {
@@ -77,23 +76,27 @@ function pct(n: number) {
   return Math.round(n * 100)
 }
 
-function sensLabel(mul: number) {
-  return `${mul.toFixed(2)}×`
+/** Display multiplier without noisy trailing zeros (e.g. 1.25, 0.05). */
+function formatSens(mul: number) {
+  return parseFloat(mul.toFixed(3)).toString()
 }
 
-function GameIcon({ src, className }: { src: string; className?: string }) {
-  return (
-    <img
-      src={src}
-      alt=""
-      aria-hidden
-      draggable={false}
-      className={cn(
-        'shrink-0 object-contain select-none drop-shadow-[0_1px_0_color-mix(in_oklab,var(--foreground)_25%,transparent)]',
-        className,
-      )}
-    />
-  )
+function clampNumber(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * Parse a typed sensitivity string. Accepts "1.25", "1,25", trailing "x"/"×".
+ * Returns null if empty / not a number (caller reverts).
+ */
+function parseSensInput(raw: string): number | null {
+  const cleaned = raw.trim().replace(/×$/i, '').replace(/x$/i, '').replace(',', '.')
+  if (cleaned === '' || cleaned === '.' || cleaned === '-' || cleaned === '-.') {
+    return null
+  }
+  const n = Number(cleaned)
+  if (!Number.isFinite(n)) return null
+  return n
 }
 
 /** Chunk sticker button — hard border + offset shadow (theme tokens). */
@@ -256,6 +259,14 @@ function SliderRow({
   step = 0.01,
   disabled,
   onCommit,
+  /**
+   * When set, the value chip becomes a number field so users can type
+   * precise values (used for sensitivity). formatEditable renders the
+   * committed display; suffix is shown after the field (e.g. ×).
+   */
+  editable,
+  formatEditable,
+  suffix,
 }: {
   label: string
   valueLabel: string
@@ -266,21 +277,114 @@ function SliderRow({
   step?: number
   disabled?: boolean
   onCommit?: () => void
+  editable?: boolean
+  formatEditable?: (v: number) => string
+  suffix?: string
 }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const focusedRef = useRef(false)
+  const skipCommitRef = useRef(false)
+
+  const format = formatEditable ?? ((v: number) => String(v))
+
+  const commitDraft = useCallback(() => {
+    if (draft == null) return
+    const parsed = parseSensInput(draft)
+    if (parsed == null) {
+      setDraft(null)
+      return
+    }
+    // Round to step precision when step is finite (e.g. 0.01 → 2 dp)
+    const decimals =
+      step > 0 && step < 1
+        ? Math.min(6, Math.max(0, Math.round(-Math.log10(step))))
+        : 0
+    const rounded =
+      decimals > 0
+        ? Math.round(parsed * 10 ** decimals) / 10 ** decimals
+        : Math.round(parsed)
+    const next = clampNumber(rounded, min, max)
+    onChange(next)
+    setDraft(null)
+    onCommit?.()
+  }, [draft, max, min, onChange, onCommit, step])
+
+  // External value changes (slider / reset) while not typing — clear stale draft
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(null)
+  }, [value])
+
   return (
     <div className={cn('space-y-2.5', disabled && 'opacity-50')}>
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-extrabold tracking-wide text-foreground">
           {label}
         </span>
-        <span
-          className={cn(
-            'rounded-lg border-[2px] bg-muted/70 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-muted-foreground dark:bg-muted/50',
-            'border-foreground/55 dark:border-foreground/40',
-          )}
-        >
-          {valueLabel}
-        </span>
+        {editable ? (
+          <label
+            className={cn(
+              'inline-flex items-center gap-0.5 rounded-lg border-[2px] bg-muted/70 px-1.5 py-0.5 dark:bg-muted/50',
+              'border-foreground/55 dark:border-foreground/40',
+              'focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30',
+            )}
+          >
+            <span className="sr-only">{label} value</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled}
+              aria-label={`${label} value`}
+              value={draft ?? format(value)}
+              onFocus={() => {
+                focusedRef.current = true
+                skipCommitRef.current = false
+                setDraft(format(value))
+              }}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => {
+                focusedRef.current = false
+                if (skipCommitRef.current) {
+                  skipCommitRef.current = false
+                  setDraft(null)
+                  return
+                }
+                commitDraft()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  skipCommitRef.current = true
+                  setDraft(null)
+                  focusedRef.current = false
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+              className={cn(
+                'w-14 min-w-0 bg-transparent text-right font-mono text-xs font-bold tabular-nums text-foreground outline-none',
+                'disabled:cursor-not-allowed',
+              )}
+            />
+            {suffix != null && suffix !== '' && (
+              <span className="shrink-0 font-mono text-xs font-bold text-muted-foreground">
+                {suffix}
+              </span>
+            )}
+          </label>
+        ) : (
+          <span
+            className={cn(
+              'rounded-lg border-[2px] bg-muted/70 px-2 py-0.5 font-mono text-xs font-bold tabular-nums text-muted-foreground dark:bg-muted/50',
+              'border-foreground/55 dark:border-foreground/40',
+            )}
+          >
+            {valueLabel}
+          </span>
+        )}
       </div>
       <StickerSlider
         value={value}
@@ -499,7 +603,7 @@ export function SettingsDialog({
   )
 
   const [section, setSection] = useState<SettingsSection>(
-    initialSection ?? 'audio',
+    initialSection ?? 'mouse',
   )
   /** Action waiting for a new bind (add mode). */
   const [listening, setListening] = useState<ActionId | null>(null)
@@ -527,7 +631,7 @@ export function SettingsDialog({
   // tabs while already open (e.g. tutorial O hotkey → mouse / keybinds / audio).
   useEffect(() => {
     if (open && !wasOpenRef.current) {
-      setSection(initialSection ?? 'audio')
+      setSection(initialSection ?? 'mouse')
       setListening(null)
     } else if (open && initialSection) {
       setSection(initialSection)
@@ -680,12 +784,6 @@ export function SettingsDialog({
     icon: typeof Volume2
   }[] = [
     {
-      id: 'audio',
-      label: 'Audio',
-      blurb: 'Volume & voice',
-      icon: Volume2,
-    },
-    {
       id: 'mouse',
       label: 'Controls',
       blurb: 'Mouse & toggles',
@@ -696,6 +794,12 @@ export function SettingsDialog({
       label: 'Keybinds',
       blurb: 'Bindings',
       icon: Keyboard,
+    },
+    {
+      id: 'audio',
+      label: 'Audio',
+      blurb: 'Volume & voice',
+      icon: Volume2,
     },
     {
       id: 'character',
@@ -754,6 +858,14 @@ export function SettingsDialog({
             {/* Top sheen — subtle in both themes */}
             <div className="pointer-events-none absolute inset-x-4 top-0 z-10 h-2 rounded-b-full bg-foreground/[0.04] dark:bg-white/10" />
 
+            {/* Visually hidden dialog labels for accessibility */}
+            <h2 id={titleId} className="sr-only">
+              Settings
+            </h2>
+            <p id={descId} className="sr-only">
+              Game preferences saved locally on this device
+            </p>
+
             {/* ── Left rail ── */}
             <aside
               className={cn(
@@ -761,52 +873,8 @@ export function SettingsDialog({
                 'border-border dark:border-foreground/25 dark:bg-muted/25',
               )}
             >
-              <div className="relative shrink-0 px-4 py-4 sm:px-4 sm:pt-5 sm:pb-4">
-                <div className="absolute top-0 left-0 hidden h-full w-1 bg-primary sm:block" />
-                <div className="flex items-center gap-2.5 pr-10 sm:pr-0">
-                  <div
-                    className={cn(
-                      'flex size-10 shrink-0 items-center justify-center rounded-xl border-[2.5px] bg-primary',
-                      inkBorder,
-                      inkShadowSm,
-                    )}
-                  >
-                    <GameIcon src={icons.settings} className="size-6" />
-                  </div>
-                  <div className="min-w-0">
-                    <h2
-                      id={titleId}
-                      className="text-base font-black tracking-tight text-foreground sm:text-lg"
-                    >
-                      Settings
-                    </h2>
-                    <p
-                      id={descId}
-                      className="text-[10px] font-extrabold tracking-wide text-muted-foreground uppercase"
-                    >
-                      Saved locally
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  onClick={() => {
-                    gameAudio.uiClick()
-                    close()
-                  }}
-                  className={cn(
-                    'absolute top-3.5 right-3 inline-flex size-9 items-center justify-center rounded-xl border-[2.5px] bg-card text-foreground transition-all hover:-translate-y-0.5 hover:bg-muted sm:hidden',
-                    inkBorder,
-                    inkShadowSm,
-                  )}
-                >
-                  <X className="size-4" strokeWidth={2.75} />
-                </button>
-              </div>
-
               <nav
-                className="flex gap-1.5 overflow-x-auto px-3 pb-3 sm:flex-1 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:px-3 sm:pb-3"
+                className="flex gap-1.5 overflow-x-auto p-3 sm:flex-1 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto"
                 aria-label="Settings sections"
               >
                 {nav.map(({ id, label, blurb, icon: Icon }) => {
@@ -911,7 +979,7 @@ export function SettingsDialog({
                     close()
                   }}
                   className={cn(
-                    'absolute top-3.5 right-3.5 hidden size-9 items-center justify-center rounded-xl border-[2.5px] bg-muted/50 text-foreground transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5 sm:inline-flex',
+                    'absolute top-3.5 right-3.5 inline-flex size-9 items-center justify-center rounded-xl border-[2.5px] bg-muted/50 text-foreground transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0.5',
                     inkBorder,
                     inkShadowSm,
                     'dark:bg-muted/40',
@@ -1118,21 +1186,27 @@ export function SettingsDialog({
                   <div className="space-y-5">
                     <SliderRow
                       label="Hip sensitivity"
-                      valueLabel={sensLabel(mouseSensitivity)}
+                      valueLabel={`${formatSens(mouseSensitivity)}×`}
                       value={mouseSensitivity}
-                      min={0.1}
-                      max={3}
-                      step={0.05}
+                      min={0.05}
+                      max={5}
+                      step={0.01}
                       onChange={setMouseSensitivity}
+                      editable
+                      formatEditable={formatSens}
+                      suffix="×"
                     />
                     <SliderRow
                       label="ADS sensitivity"
-                      valueLabel={sensLabel(adsSensitivity)}
+                      valueLabel={`${formatSens(adsSensitivity)}×`}
                       value={adsSensitivity}
-                      min={0.1}
-                      max={3}
-                      step={0.05}
+                      min={0.05}
+                      max={5}
+                      step={0.01}
                       onChange={setAdsSensitivity}
+                      editable
+                      formatEditable={formatSens}
+                      suffix="×"
                     />
 
                     <Divider />
@@ -1183,7 +1257,7 @@ export function SettingsDialog({
                       label="Toggle crouch"
                       description={
                         toggleCrouch
-                          ? 'Press crouch to stay crouched'
+                          ? 'Press crouch to stay crouched (sprint stands you up)'
                           : 'Hold crouch to stay low'
                       }
                     >
@@ -1200,7 +1274,7 @@ export function SettingsDialog({
                       label="Toggle sprint"
                       description={
                         toggleSprint
-                          ? 'Press sprint to keep running'
+                          ? 'Tap sprint while moving; stops when you stop'
                           : 'Hold sprint to run'
                       }
                     >

@@ -46,7 +46,7 @@ export function setDummyBehaviorMode(
 }
 
 /**
- * Apply mode instantly so MOVE / STRAFE read as immediate, not after a
+ * Apply mode instantly so ROAM / STRAFE read as immediate, not after a
  * multi-second idle timer from the previous state.
  */
 export function snapDummiesToMode(
@@ -99,17 +99,19 @@ export function snapDummiesToMode(
       continue
     }
 
-    // moving — start walking to a new point immediately (never linger in idle)
+    // free roam (moving) on the range — walk to a map-wide target immediately
+    const freeRoam =
+      d.lane != null || d.row != null
     d.state = 'walk'
     d.stateTimer = stateDuration('walk')
     d.slideTimer = 0
-    d.target = pickWanderPoint(d, d.wanderBounds)
+    d.target = pickWanderPoint(d, d.wanderBounds, freeRoam)
     // Guarantee the target is far enough that we don't re-pick next frame
     const dist = Math.hypot(d.target.x - d.position.x, d.target.z - d.position.z)
     if (dist < DUMMY.arriveDist * 2) {
-      const halfX = rowInnerHalf()
-      d.target.x = d.home.x + (Math.random() > 0.5 ? halfX : -halfX)
-      d.target.z = d.home.z + (Math.random() * 2 - 1) * RANGE.rowWanderZ
+      d.target = freeRoam
+        ? pickFreeRoamPoint(d)
+        : pickWanderPoint(d, d.wanderBounds, false)
     }
     const to = normalizeXZ({
       x: d.target.x - d.position.x,
@@ -156,10 +158,64 @@ function rowInnerHalf(): number {
   return RANGE.rowInnerHalf
 }
 
-function pickWanderPoint(d: DummyTarget, bounds: number = DUMMY.bounds): Vec3 {
+/** Playable corridor half-width (stay off the side walls). */
+function roamHalfX(): number {
+  return Math.max(2.5, RANGE.halfW - 1.4)
+}
+
+/**
+ * Free-roam wander target anywhere in the practice-range hall
+ * (all distance bands, full corridor width).
+ */
+function pickFreeRoamPoint(d: DummyTarget): Vec3 {
+  const halfX = roamHalfX()
+  // Cover every dummy band plus a little approach toward the fire line / berm
+  const zNear = RANGE.fireLineZ - 1
+  const zFar = RANGE.bermZ + 2.5
+  const zLo = Math.min(zNear, zFar)
+  const zHi = Math.max(zNear, zFar)
+  return {
+    x: (Math.random() * 2 - 1) * halfX,
+    y: d.home.y,
+    z: zLo + Math.random() * (zHi - zLo),
+  }
+}
+
+/**
+ * Random grid spawn among all row × column points (any distance band).
+ * Used when free-roam dummies die and come back.
+ */
+function pickRandomRowSpawn(d: DummyTarget): {
+  x: number
+  z: number
+  lane: number
+  row: number
+} {
+  const row = Math.floor(Math.random() * RANGE.rowDist.length)
+  const lane = Math.floor(Math.random() * RANGE.colsPerRow)
+  return {
+    x: rangeColX(lane),
+    z: rangeRowZ(row),
+    lane,
+    row,
+  }
+}
+
+/**
+ * @param freeRoam When true (MOVE/ROAM mode on the range), pick anywhere in
+ * the hall instead of clamping to the home row band.
+ */
+function pickWanderPoint(
+  d: DummyTarget,
+  bounds: number = DUMMY.bounds,
+  freeRoam = false,
+): Vec3 {
+  if (freeRoam) {
+    return pickFreeRoamPoint(d)
+  }
   const home = d.home
   if (d.lane != null || d.row != null) {
-    // Stay on the horizontal row band around home
+    // Stay on the horizontal row band around home (STRAFE uses this path)
     const halfX = rowInnerHalf()
     const halfZ = RANGE.rowWanderZ
     return {
@@ -324,13 +380,26 @@ export function stepRespawns(
     if (d && d.active !== false) {
       d.alive = true
       d.hp = d.maxHp
-      d.position.x = d.home.x
-      d.position.y = d.home.y
-      d.position.z = d.home.z
+      // Free roam (practice range ROAM): reappear on a random row×column
+      // spawn at any distance. Still / strafe / arena: return to home.
+      // Keep d.home as the ROWS/RESET anchor so those buttons stay consistent.
+      if (
+        behaviorMode === 'moving' &&
+        (d.lane != null || d.row != null)
+      ) {
+        const spawn = pickRandomRowSpawn(d)
+        d.position.x = spawn.x
+        d.position.y = d.home.y
+        d.position.z = spawn.z
+      } else {
+        d.position.x = d.home.x
+        d.position.y = d.home.y
+        d.position.z = d.home.z
+      }
       d.velocity.x = 0
       d.velocity.z = 0
       d.slideTimer = 0
-      // Resume whatever the control wall is set to (still / move / strafe)
+      // Resume whatever the control wall is set to (still / roam / strafe)
       // instead of always coming back idle.
       snapDummiesToMode([d], behaviorMode)
     }
@@ -345,7 +414,7 @@ export function queueRespawn(timers: RespawnTimer[], id: string) {
 
 /**
  * Snap every active dummy home, full HP, clear respawn timers, force idle.
- * Also switches AI to stationary so they stay idle (MOVE/STRAFE would
+ * Also switches AI to stationary so they stay idle (ROAM/STRAFE would
  * otherwise pick a new loco state next frame).
  * Inactive (parked) dummies stay parked.
  */
@@ -447,8 +516,8 @@ function clampToRow(d: DummyTarget) {
 /**
  * Patrol / demo locomotion. Practice range honors DummyBehaviorMode:
  *  - stationary: idle at home
- *  - moving: wander within lane (or free wander on non-range maps)
- *  - strafing: walk left/right along home Z inside the lane
+ *  - moving (ROAM): free-roam the full hall (any distance band)
+ *  - strafing: walk left/right along home Z inside the row
  */
 export function stepDummies(dummies: DummyTarget[], dt: number): void {
   if (!DUMMY.moveEnabled) return
@@ -457,6 +526,11 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
 
   for (const d of dummies) {
     if (!d.alive || d.active === false) continue
+
+    // Free roam = practice-range ROAM (lane/row squad). Arena maps keep
+    // classic home-radius wander under the same 'moving' mode id.
+    const freeRoam =
+      mode === 'moving' && (d.lane != null || d.row != null)
 
     // ── Stationary: freeze at home ───────────────────────────────────────
     if (mode === 'stationary') {
@@ -545,11 +619,10 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
       continue
     }
 
-    // ── Moving: wander (row-clamped on practice range) ───────────────────
-    // Practice range: never sit in long idle — MOVE should look busy.
-    // Skip pure idle; if the demo cycle lands on idle, hop to walk.
+    // ── Free roam (moving): walk/run anywhere in the hall ────────────────
+    // Never sit in long idle — ROAM should look busy.
     if (d.state === 'idle') {
-      enterState(d, 'walk')
+      enterState(d, 'walk', freeRoam)
     }
 
     d.stateTimer -= dt
@@ -557,13 +630,13 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
     if (d.state === 'slide') {
       d.slideTimer -= dt
       if (d.slideTimer <= 0 || d.stateTimer <= 0) {
-        enterState(d, 'run')
+        enterState(d, 'run', freeRoam)
       }
     } else if (d.stateTimer <= 0) {
       let next = nextState(d)
-      // Avoid multi-second idle pauses while in MOVE mode
+      // Avoid multi-second idle pauses while in ROAM mode
       if (next === 'idle') next = 'walk'
-      enterState(d, next)
+      enterState(d, next, freeRoam)
     }
 
     const bounds = d.wanderBounds ?? DUMMY.bounds
@@ -571,14 +644,14 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
     const dx = d.target.x - d.position.x
     const dz = d.target.z - d.position.z
     if (Math.hypot(dx, dz) < DUMMY.arriveDist) {
-      d.target = pickWanderPoint(d, bounds)
+      d.target = pickWanderPoint(d, bounds, freeRoam)
     }
 
     const sp = speedForState(d.state)
     if (sp <= 0.01) {
-      // Idle should not stick while MOVE is selected
+      // Idle should not stick while ROAM is selected
       if (d.state === 'idle') {
-        enterState(d, 'walk')
+        enterState(d, 'walk', freeRoam)
       } else {
         d.velocity.x = 0
         d.velocity.z = 0
@@ -612,7 +685,24 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
     d.position.z += d.velocity.z * dt
     d.position.y = d.home.y
 
-    if (d.lane != null || d.row != null) {
+    // Free roam: clamp to the hall, not the home row band
+    if (freeRoam) {
+      const halfX = roamHalfX()
+      const zNear = RANGE.fireLineZ - 1
+      const zFar = RANGE.bermZ + 2.5
+      const zLo = Math.min(zNear, zFar)
+      const zHi = Math.max(zNear, zFar)
+      if (d.position.x < -halfX || d.position.x > halfX) {
+        d.position.x = clamp(d.position.x, -halfX, halfX)
+        d.velocity.x *= -1
+        d.target = pickFreeRoamPoint(d)
+      }
+      if (d.position.z < zLo || d.position.z > zHi) {
+        d.position.z = clamp(d.position.z, zLo, zHi)
+        d.velocity.z *= -1
+        d.target = pickFreeRoamPoint(d)
+      }
+    } else if (d.lane != null || d.row != null) {
       clampToRow(d)
     } else {
       const b = bounds
@@ -647,7 +737,11 @@ export function stepDummies(dummies: DummyTarget[], dt: number): void {
   }
 }
 
-function enterState(d: DummyTarget, state: DummyMoveState) {
+function enterState(
+  d: DummyTarget,
+  state: DummyMoveState,
+  freeRoam = false,
+) {
   d.state = state
   d.stateTimer = stateDuration(state)
   if (state === 'slide') {
@@ -669,7 +763,7 @@ function enterState(d: DummyTarget, state: DummyMoveState) {
     d.velocity.x = 0
     d.velocity.z = 0
   } else {
-    d.target = pickWanderPoint(d, d.wanderBounds)
+    d.target = pickWanderPoint(d, d.wanderBounds, freeRoam)
   }
 }
 

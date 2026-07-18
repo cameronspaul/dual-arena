@@ -640,8 +640,8 @@ export function buildRange(
     {
       id: 'mode_moving',
       kind: 'radio',
-      title: 'MOVE',
-      sub: 'Wander',
+      title: 'ROAM',
+      sub: 'Free',
       accent: '#7ec8f0',
       x: -0.95,
       mode: 'moving',
