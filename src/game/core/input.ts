@@ -61,12 +61,26 @@ export class InputManager {
   private sprintLatched = false
   private yaw = 0
   private pitch = 0
-  private pointerLocked = false
   private canvas: HTMLElement | null = null
   private adsBlend = 0
   /** When false, gameplay keys/mouse are ignored (UI / settings / viewmodel editor). */
   private gameplayEnabled = true
   private keyboardLocked = false
+  /** True while Escape is held (keydown without keyup). */
+  private escHeld = false
+  /**
+   * When true, ignore Escape-to-resume until keyup — set when the unlock was
+   * caused by Escape so the same press cannot immediately re-lock.
+   */
+  private suppressEscRelock = false
+  /** Notified when pointer lock is acquired or released (for immediate HUD). */
+  private onLockChange: ((locked: boolean) => void) | null = null
+  /**
+   * performance.now() of the last requestPointerLock() call.
+   * Collapses doc-capture + button mousedown both firing in the same click
+   * (a second request in one gesture is often denied and can cancel the first).
+   */
+  private lockRequestAt = 0
 
   private clearLatches() {
     this.adsMouseHeld = false
@@ -75,8 +89,40 @@ export class InputManager {
     this.sprintLatched = false
   }
 
+  /** Live pointer-lock status from the document (never a stale cached flag). */
+  private liveLocked() {
+    return this.canvas != null && document.pointerLockElement === this.canvas
+  }
+
+  private isTypingTarget(t: EventTarget | null) {
+    if (!(t instanceof HTMLElement)) return false
+    const tag = t.tagName
+    return (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      t.isContentEditable
+    )
+  }
+
   private onKeyDown = (e: KeyboardEvent) => {
-    if (e.code === 'Escape') return
+    if (e.code === 'Escape') {
+      this.escHeld = true
+      // Esc while unlocked → resume (pause menu). Prefer keydown for a stronger
+      // user-activation signal than keyup.
+      if (
+        !e.repeat &&
+        this.gameplayEnabled &&
+        !this.liveLocked() &&
+        !this.suppressEscRelock &&
+        this.canvas &&
+        !this.isTypingTarget(e.target)
+      ) {
+        e.preventDefault()
+        this.tryRequestPointerLock()
+      }
+      return
+    }
 
     // Always block tab-close / navigation combos while input is attached.
     // Ctrl is crouch; Ctrl+W would otherwise close the browser tab.
@@ -117,12 +163,31 @@ export class InputManager {
 
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys.delete(e.code)
+
+    if (e.code === 'Escape') {
+      this.escHeld = false
+      // Consume the Esc that exited pointer lock so it cannot re-lock.
+      this.suppressEscRelock = false
+    }
+  }
+
+  /**
+   * Document-level capture so clicks through HUD overlays still re-lock.
+   * Skip UI marked `[data-no-pointer-lock]` (pause menu, settings, etc.).
+   */
+  private onDocMouseDown = (e: MouseEvent) => {
+    if (!this.gameplayEnabled || this.liveLocked() || !this.canvas) return
+    if (e.button !== 0) return
+    const t = e.target
+    if (t instanceof Element && t.closest('[data-no-pointer-lock]')) return
+    this.tryRequestPointerLock()
   }
 
   private onMouseDown = (e: MouseEvent) => {
     if (!this.gameplayEnabled) return
-    if (!this.pointerLocked && this.canvas) {
-      void this.canvas.requestPointerLock()
+    if (!this.liveLocked()) {
+      // Canvas click — also covered by onDocMouseDown; keep as fallback.
+      this.tryRequestPointerLock()
       return
     }
     const code = mouseButtonCode(e.button)
@@ -153,7 +218,7 @@ export class InputManager {
   }
 
   private onMouseMove = (e: MouseEvent) => {
-    if (!this.pointerLocked) return
+    if (!this.liveLocked()) return
     const settings = getUserSettings()
     const hip = LOOK.hipSensitivity * settings.mouseSensitivity
     const ads = LOOK.adsSensitivity * settings.adsSensitivity
@@ -170,13 +235,27 @@ export class InputManager {
   }
 
   private onPointerLockChange = () => {
-    this.pointerLocked = document.pointerLockElement === this.canvas
-    if (this.pointerLocked) {
+    const locked = this.liveLocked()
+    if (locked) {
+      this.suppressEscRelock = false
       void this.lockKeyboard()
     } else {
+      // Block Esc-to-resume for the same press that unlocked. If unlock was not
+      // from Esc (settings / Alt-Tab), clear the block on the next frame.
+      this.suppressEscRelock = true
+      if (!this.escHeld) {
+        requestAnimationFrame(() => {
+          if (!this.escHeld) this.suppressEscRelock = false
+        })
+      }
       this.clearLatches()
       this.unlockKeyboard()
     }
+    this.onLockChange?.(locked)
+  }
+
+  private onPointerLockError = () => {
+    this.onLockChange?.(this.liveLocked())
   }
 
   /** Chromium: claim keys so Ctrl+W isn't handled by the browser while playing. */
@@ -184,7 +263,9 @@ export class InputManager {
     const kb = getKeyboardLock()
     if (!kb || this.keyboardLocked) return
     try {
-      await kb.lock()
+      // Only claim tab-close shortcuts — locking *all* keys can interfere with
+      // Esc / pointer-lock exit on some Chromium builds.
+      await kb.lock([...BROWSER_SHORTCUT_CODES])
       this.keyboardLocked = true
     } catch {
       this.keyboardLocked = false
@@ -202,31 +283,78 @@ export class InputManager {
     this.keyboardLocked = false
   }
 
+  /**
+   * @param opts.force — re-enable gameplay if needed (pause-menu resume).
+   *   Call only from a user-gesture stack (mousedown / click / keydown).
+   */
+  private tryRequestPointerLock(opts?: { force?: boolean }) {
+    if (opts?.force) this.gameplayEnabled = true
+    if (!this.gameplayEnabled || !this.canvas) return
+    if (this.liveLocked()) return
+
+    // One request per gesture. Doc capture + Resume mousedown both fire in the
+    // same click; a second requestPointerLock often fails and can cancel the first.
+    const now = performance.now()
+    if (now - this.lockRequestAt < 80) return
+    this.lockRequestAt = now
+
+    const canvas = this.canvas
+    try {
+      canvas.focus({ preventScroll: true })
+    } catch {
+      // ignore
+    }
+    try {
+      // Plain lock only. Do NOT:
+      //  - pass { unadjustedMovement: true } then async-fallback on reject
+      //  - call requestPointerLock again in a .catch()
+      // The browser consumes the user gesture on the first call; an async
+      // retry has no activation left → "works on the second click".
+      void canvas.requestPointerLock()
+    } catch {
+      // Older browsers / denied without promise
+    }
+  }
+
   attach(canvas: HTMLElement) {
     this.canvas = canvas
+    // Ensure the canvas fills its container so clicks always hit it.
+    if (canvas instanceof HTMLElement) {
+      canvas.style.display = 'block'
+      canvas.style.width = '100%'
+      canvas.style.height = '100%'
+    }
     window.addEventListener('keydown', this.onKeyDown, true)
     window.addEventListener('keyup', this.onKeyUp, true)
+    // Capture phase: one click anywhere (through pointer-events-none HUD) re-locks.
+    document.addEventListener('mousedown', this.onDocMouseDown, true)
     canvas.addEventListener('mousedown', this.onMouseDown)
     window.addEventListener('mouseup', this.onMouseUp)
     window.addEventListener('mousemove', this.onMouseMove)
     canvas.addEventListener('contextmenu', this.onContextMenu)
     document.addEventListener('pointerlockchange', this.onPointerLockChange)
-    void this.lockKeyboard()
+    document.addEventListener('pointerlockerror', this.onPointerLockError)
   }
 
   detach() {
     this.unlockKeyboard()
     window.removeEventListener('keydown', this.onKeyDown, true)
     window.removeEventListener('keyup', this.onKeyUp, true)
+    document.removeEventListener('mousedown', this.onDocMouseDown, true)
     this.canvas?.removeEventListener('mousedown', this.onMouseDown)
     window.removeEventListener('mouseup', this.onMouseUp)
     window.removeEventListener('mousemove', this.onMouseMove)
     this.canvas?.removeEventListener('contextmenu', this.onContextMenu)
     document.removeEventListener('pointerlockchange', this.onPointerLockChange)
+    document.removeEventListener('pointerlockerror', this.onPointerLockError)
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock()
     }
     this.canvas = null
+    this.escHeld = false
+    this.suppressEscRelock = false
+    this.onLockChange = null
+    this.lockRequestAt = 0
   }
 
   setAdsBlend(blend: number) {
@@ -256,7 +384,20 @@ export class InputManager {
   }
 
   isPointerLocked() {
-    return this.pointerLocked
+    return this.liveLocked()
+  }
+
+  /** Fired on every pointerlockchange (lock or unlock). */
+  setPointerLockChangeListener(fn: ((locked: boolean) => void) | null) {
+    this.onLockChange = fn
+  }
+
+  /**
+   * Request pointer lock on the game canvas (e.g. Resume from pause menu).
+   * Must run synchronously inside a user-gesture handler.
+   */
+  requestPointerLock(opts?: { force?: boolean }) {
+    this.tryRequestPointerLock(opts)
   }
 
   getLook() {
@@ -273,11 +414,13 @@ export class InputManager {
     const held = (action: Parameters<typeof codesFor>[0]) =>
       codesFor(action).some((c) => this.keys.has(c))
 
+    const locked = this.liveLocked()
+
     // ADS: hold (keyboard keys + mouse flag) or latched toggle
     const adsRaw = settings.toggleAds
       ? this.adsLatched
       : held('ads') || this.adsMouseHeld
-    const ads = this.pointerLocked && adsRaw
+    const ads = locked && adsRaw
 
     const crouch = settings.toggleCrouch
       ? this.crouchLatched
@@ -296,7 +439,7 @@ export class InputManager {
       yaw: this.yaw,
       pitch: this.pitch,
       ads,
-      fire: this.firePressed && this.pointerLocked,
+      fire: this.firePressed && locked,
       reload: this.reloadPressed,
     }
 

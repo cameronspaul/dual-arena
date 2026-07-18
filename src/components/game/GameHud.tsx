@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
 import type { GameEngine } from '@/game/engine/GameEngine'
@@ -6,32 +6,30 @@ import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
 import { SNIPER } from '@/game/core/config'
 import { ScopeOverlay } from './ScopeOverlay'
 import { InGameChat } from './InGameChat'
+import { PauseMenu } from './PauseMenu'
 import {
-  formatKeyCode,
-  getUserSettings,
-} from '@/game/core/userSettings'
+  LobbyHud,
+  type GameHudLobbyInfo,
+} from './LobbyHud'
 import { fmtNum } from '@/game/maps'
 import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-/** Lobby details for the online waiting / host chrome (from page state). */
-export type GameHudLobbyInfo = {
-  matchId: string
-  mapId: string
-  mapName: string
-  wager: number
-  /** Wall-clock ms when the lobby was created; null if unknown. */
-  createdAt: number | null
-  hostName?: string
-  /** Host is hanging on the practice range until someone joins. */
-  waitOnRange?: boolean
-}
+export type { GameHudLobbyInfo }
 
 interface GameHudProps {
   hud: HudSnapshot | null
   onOpenSettings?: () => void
   /** Return to map select (main page). */
   onExit?: () => void
+  /** Resume play: re-enable input + request pointer lock. */
+  onResume?: () => void
+  /** Open guided help / tutorial (practice range). */
+  onOpenHelp?: () => void
+  /** Settings modal open — hide pause menu while it owns the screen. */
+  settingsOpen?: boolean
+  /** Tutorial overlay open — hide pause menu so help owns the UI. */
+  tutorialOpen?: boolean
   /** Pregame ready toggle (online). Returns false if ignored (cooldown / invalid). */
   onReady?: (ready: boolean) => boolean | void
   /** Online engine for in-match chat / voice (null offline). */
@@ -147,27 +145,9 @@ function hpBarColor(hp: number): string {
   return 'bg-arena-danger'
 }
 
-/** Human lobby age from createdAt (e.g. 12s, 3m 04s). */
-function formatLobbyAge(createdAt: number, now: number): string {
-  const sec = Math.max(0, Math.floor((now - createdAt) / 1000))
-  if (sec < 60) return `${sec}s`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`
-  const h = Math.floor(m / 60)
-  const rm = m % 60
-  return `${h}h ${rm}m`
-}
-
-function formatMatchClock(seconds: number): string {
-  const s = Math.max(0, Math.ceil(seconds))
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${m}:${r.toString().padStart(2, '0')}`
-}
-
 function matchEndTitle(reason: HudSnapshot['matchEndReason']): string {
   if (reason === 'forfeit' || reason === 'disconnect') return 'Forfeit'
+  if (reason === 'draw') return 'Agreed draw'
   if (reason === 'time') return 'Time'
   return 'Match over'
 }
@@ -399,27 +379,6 @@ function HitMarkerX({
 }
 
 /** Chunky sticker button for HUD chrome (icon-friendly). */
-function ChromeBtn({
-  children,
-  onClick,
-  title,
-}: {
-  children: ReactNode
-  onClick?: () => void
-  title?: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className="inline-flex size-10 items-center justify-center rounded-xl border-[3px] border-arena-ink bg-arena-panel text-arena-fg shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover hover:shadow-[2px_4px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
-    >
-      {children}
-    </button>
-  )
-}
-
 /**
  * Reload cue — ammo sticker + progress bar, bottom-right of the reticle.
  * No panel/text — just icon + bar side by side (sticker language, bare).
@@ -456,20 +415,43 @@ export function GameHud({
   hud,
   onOpenSettings,
   onExit,
+  onResume,
+  onOpenHelp,
+  settingsOpen = false,
+  tutorialOpen = false,
   onReady,
   engine = null,
   chatOpen = false,
   onChatOpenChange,
   lobby = null,
 }: GameHudProps) {
-  const [now, setNow] = useState(() => Date.now())
+  /**
+   * Optimistic hide so Resume / Esc / backdrop close the menu on the first
+   * press even if the browser is slow or flaky about granting pointer lock.
+   * Re-shown when pointer lock is released again (Esc while playing).
+   */
+  const [pauseDismissed, setPauseDismissed] = useState(false)
+  const prevPointerLocked = useRef(false)
 
-  // Tick lobby age while waiting for an opponent
   useEffect(() => {
-    if (!hud?.matchWaiting || !lobby?.createdAt) return
-    const id = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [hud?.matchWaiting, lobby?.createdAt])
+    if (!hud) return
+    const locked = hud.pointerLocked
+    if (prevPointerLocked.current && !locked) {
+      // Just unlocked → show pause menu again
+      setPauseDismissed(false)
+    }
+    if (locked) {
+      setPauseDismissed(false)
+    }
+    prevPointerLocked.current = locked
+  }, [hud, hud?.pointerLocked])
+
+  const handleResume = () => {
+    // Request pointer lock FIRST (still inside the user-gesture stack), then
+    // dismiss the menu. Reversing this can drop transient activation in some browsers.
+    onResume?.()
+    setPauseDismissed(true)
+  }
 
   if (!hud) return null
 
@@ -506,11 +488,6 @@ export function GameHud({
   const lowAmmo = hud.ammo <= 1
   const emptyMag = hud.ammo === 0
   const online = hud.matchPhase != null
-  const inPregame = hud.matchPhase === 'pregame'
-  const inCountdown = hud.matchPhase === 'countdown'
-  const inRoundReset = hud.matchPhase === 'round_reset'
-  const inRejoin = hud.matchPhase === 'rejoin'
-  const countdownN = Math.max(0, Math.ceil(hud.matchPhaseTimer))
   const firstTo = hud.matchFirstTo || 7
   const reloading = hud.phase === 'reloading' && !hud.spectating
   const reloadProgress = reloading
@@ -519,8 +496,6 @@ export function GameHud({
         Math.min(1, 1 - hud.phaseTimer / Math.max(0.001, SNIPER.reloadTime)),
       )
     : 0
-  const lobbyAge =
-    lobby?.createdAt != null ? formatLobbyAge(lobby.createdAt, now) : null
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-arena-fg">
@@ -530,259 +505,7 @@ export function GameHud({
         reloadJiggleY={hud.reloadJiggleY}
       />
 
-      {/* Waiting for opponent — sits in the normal HUD (no full-screen dim) */}
-      <AnimatePresence>
-        {hud.matchWaiting && (
-          <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            className="pointer-events-none absolute bottom-24 left-1/2 z-40 w-[min(26rem,94vw)] -translate-x-1/2"
-          >
-            <HudPanel className="px-5 py-4 text-center" accent="tech">
-              <div className="flex items-center justify-center gap-2">
-                <GameIcon src={icons.globe} className="size-5" />
-                <div className="text-[11px] font-extrabold tracking-wide text-arena-tech uppercase">
-                  Lobby open
-                </div>
-                <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink/60 bg-arena-surface px-1.5 py-0.5 text-[9px] font-extrabold text-arena-ok uppercase">
-                  <span className="size-1.5 animate-pulse rounded-full bg-arena-ok" />
-                  Waiting
-                </span>
-              </div>
-              <div className="mt-1.5 text-base font-black tracking-tight">
-                Waiting for opponent…
-              </div>
-              {lobby?.waitOnRange && (
-                <div className="mt-0.5 text-[11px] font-semibold text-arena-fg/45">
-                  Warm up on the practice range — duel starts when they join.
-                </div>
-              )}
-
-              <div className="mt-3 grid grid-cols-2 gap-1.5 text-left">
-                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
-                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
-                    <GameIcon src={icons.map} className="size-3" />
-                    Map
-                  </div>
-                  <div className="mt-0.5 truncate text-xs font-extrabold text-arena-tech">
-                    {lobby?.mapName ?? '—'}
-                  </div>
-                </div>
-                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
-                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
-                    <GameIcon src={icons.coins} className="size-3" />
-                    Wager
-                  </div>
-                  <div className="mt-0.5 text-xs font-extrabold tabular-nums text-arena-heat">
-                    {lobby && lobby.wager > 0 ? `$${lobby.wager}` : 'Free'}
-                  </div>
-                </div>
-                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
-                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
-                    <GameIcon src={icons.trophy} className="size-3" />
-                    First to
-                  </div>
-                  <div className="mt-0.5 text-xs font-extrabold tabular-nums">
-                    {firstTo}
-                  </div>
-                </div>
-                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
-                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
-                    <GameIcon src={icons.bolt} className="size-3" />
-                    Open for
-                  </div>
-                  <div className="mt-0.5 text-xs font-extrabold tabular-nums text-arena-fg/85">
-                    {lobbyAge ?? '—'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-semibold text-arena-fg/45">
-                <span className="inline-flex items-center gap-1">
-                  <GameIcon src={icons.link} className="size-3" />
-                  <span className="font-mono text-arena-fg/70">
-                    {lobby?.matchId ?? '—'}
-                  </span>
-                </span>
-                {lobby?.hostName && (
-                  <span className="inline-flex items-center gap-1">
-                    <GameIcon src={icons.friend} className="size-3" />
-                    {lobby.hostName}
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-[10px] font-semibold text-arena-fg/35">
-                Share the room code — it shows in Lobbies for others to join.
-              </div>
-            </HudPanel>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Opponent left / disconnect — match paused for rejoin */}
-      <AnimatePresence>
-        {inRejoin && !hud.matchWaiting && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/55"
-          >
-            <HudPanel className="px-8 py-6 text-center" accent="danger">
-              <div className="flex items-center justify-center gap-2">
-                <GameIcon src={icons.globe} className="size-6" />
-                <div className="text-xs font-extrabold tracking-wide text-arena-danger uppercase">
-                  Match paused
-                </div>
-              </div>
-              <div className="mt-2 text-xl font-black tracking-tight">
-                Opponent reconnecting…
-              </div>
-              <div className="mt-1 text-sm font-semibold text-arena-fg/55">
-                They lost the round. Forfeit in{' '}
-                <span className="font-black tabular-nums text-arena-heat">
-                  {formatMatchClock(countdownN)}
-                </span>
-                .
-              </div>
-              <div className="mt-2 text-[11px] font-semibold text-arena-fg/40">
-                1st leave 60s · 2nd leave 30s · 3rd leave auto-forfeit. Use{' '}
-                <span className="text-arena-fg/70">Rejoin match</span> on the homepage.
-              </div>
-            </HudPanel>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Pregame: free fire until both ready */}
-      <AnimatePresence>
-        {inPregame && !hud.matchWaiting && (
-          <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            className="pointer-events-none absolute bottom-24 left-1/2 z-40 w-[min(28rem,92vw)] -translate-x-1/2"
-          >
-            <HudPanel className="px-6 py-4 text-center" accent="tech">
-              <div className="flex items-center justify-center gap-2">
-                <GameIcon src={icons.fire} className="size-5" />
-                <div className="text-[11px] font-extrabold tracking-wide text-arena-tech uppercase">
-                  Pre-game
-                </div>
-              </div>
-              <div className="mt-1.5 text-sm font-bold">
-                Warmup — run around and shoot. First to {firstTo} when live.
-              </div>
-              <div className="mt-2.5 flex items-center justify-center gap-4 text-xs font-extrabold">
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 uppercase tracking-wide',
-                    hud.localReady ? 'text-arena-ok' : 'text-arena-fg/45',
-                  )}
-                >
-                  {hud.localReady && (
-                    <GameIcon src={icons.check} className="size-3.5" />
-                  )}
-                  You: {hud.localReady ? 'Ready' : 'Not ready'}
-                </span>
-                <span className="text-arena-fg/25">|</span>
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 uppercase tracking-wide',
-                    hud.enemyReady ? 'text-arena-ok' : 'text-arena-fg/45',
-                  )}
-                >
-                  {hud.enemyReady && (
-                    <GameIcon src={icons.check} className="size-3.5" />
-                  )}
-                  Opp: {hud.enemyReady ? 'Ready' : 'Not ready'}
-                </span>
-              </div>
-              {onReady && (
-                <button
-                  type="button"
-                  title={
-                    hud.localReady
-                      ? 'Unready (Y)'
-                      : 'Ready up (Y)'
-                  }
-                  onClick={() => {
-                    if (onReady(!hud.localReady) !== false) {
-                      gameAudio.uiConfirm()
-                    }
-                  }}
-                  className={cn(
-                    'pointer-events-auto mt-3 inline-flex items-center gap-2 rounded-xl border-[3px] border-arena-ink px-5 py-2 text-xs font-extrabold tracking-wide uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]',
-                    hud.localReady
-                      ? 'bg-arena-sheen text-arena-fg/80 hover:bg-arena-hover'
-                      : 'bg-arena-ok text-arena-ink hover:brightness-110',
-                  )}
-                >
-                  <GameIcon
-                    src={hud.localReady ? icons.x : icons.check}
-                    className="size-4"
-                  />
-                  {hud.localReady ? 'Unready' : 'Ready up'}
-                  <kbd className="ml-0.5 rounded border-2 border-arena-ink/40 bg-black/15 px-1.5 py-0.5 text-[10px] font-black tracking-normal normal-case opacity-80">
-                    Y
-                  </kbd>
-                </button>
-              )}
-            </HudPanel>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Round countdown */}
-      <AnimatePresence>
-        {inCountdown && countdownN > 0 && (
-          <motion.div
-            key={`cd-${countdownN}`}
-            initial={{ opacity: 0, scale: 1.2 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.85 }}
-            className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center"
-          >
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 text-[11px] font-extrabold tracking-wide text-arena-fg/60 uppercase">
-                <GameIcon src={icons.bolt} className="size-4" />
-                Round starting
-              </div>
-              <div className="mt-1 text-8xl font-black tabular-nums text-arena-fg drop-shadow-[0_4px_0_var(--arena-ink)]">
-                {countdownN}
-              </div>
-              <div className="mt-1 text-sm font-bold text-arena-fg/50">
-                Weapons locked until go
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Round reset after kill */}
-      <AnimatePresence>
-        {inRoundReset && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="pointer-events-none absolute top-20 left-1/2 z-40 -translate-x-1/2"
-          >
-            <HudPanel className="px-5 py-2.5 text-center" accent="heat">
-              <div className="flex items-center justify-center gap-1.5 text-[11px] font-extrabold tracking-wide text-arena-heat uppercase">
-                <GameIcon src={icons.boom} className="size-4" />
-                Round over
-              </div>
-              <div className="mt-0.5 text-sm font-extrabold tabular-nums text-arena-fg/80">
-                Reset in {countdownN}s
-              </div>
-            </HudPanel>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Match end */}
+      {/* Match end — full-screen moment (kept out of compact LobbyHud) */}
       <AnimatePresence>
         {hud.matchEndReason && (
           <motion.div
@@ -792,12 +515,21 @@ export function GameHud({
             className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/60"
           >
             <HudPanel className="min-w-[17rem] px-8 py-7 text-center" accent="heat">
-              <GameIcon src={icons.trophy} className="mx-auto size-14" />
+              <GameIcon
+                src={
+                  hud.matchEndReason === 'draw' ? icons.trade : icons.trophy
+                }
+                className="mx-auto size-14"
+              />
               <div className="mt-2 text-xs font-extrabold tracking-wide text-arena-fg/50 uppercase">
                 {matchEndTitle(hud.matchEndReason)}
               </div>
               <div className="mt-1 text-3xl font-black text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                {hud.matchWinnerId ? 'Winner!' : 'Draw'}
+                {!hud.matchWinnerId
+                  ? 'Draw'
+                  : hud.matchWinnerId === engine?.getLocalPlayerId()
+                    ? 'You win!'
+                    : 'You lose'}
               </div>
               <div className="mt-2 text-lg font-extrabold tabular-nums text-arena-fg/85">
                 {hud.kills}
@@ -825,58 +557,19 @@ export function GameHud({
         )}
       </AnimatePresence>
 
-      {/* Top chrome — score dead-center; utilities corners */}
+      {/* Top chrome — lobby/score center; utilities right */}
       <div
         className="pointer-events-none absolute top-3 left-3 right-3 z-30 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
-        {/* Scoreboard — center of screen, pure game state (0 – 2) */}
         <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2">
-          <HudPanel
-            className="min-w-[9.5rem] px-5 py-2 text-center"
-            accent="heat"
-          >
-            {online ? (
-              <div className="flex items-center justify-center gap-2.5">
-                <span
-                  className={cn(
-                    'min-w-[1.6rem] text-center text-4xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
-                    hud.teamColor === 'blue' ? 'text-sky-300' : 'text-arena-heat',
-                  )}
-                >
-                  {hud.kills}
-                </span>
-                <span className="text-xl font-black text-arena-fg/25">–</span>
-                <span
-                  className={cn(
-                    'min-w-[1.6rem] text-center text-4xl font-black leading-none tabular-nums drop-shadow-[0_2px_0_var(--arena-ink)]',
-                    hud.teamColor === 'red' ? 'text-sky-300' : 'text-arena-fg',
-                  )}
-                >
-                  {hud.enemyKills}
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center gap-2">
-                <GameIcon src={icons.aim} className="size-6" />
-                <span className="text-4xl font-black leading-none tabular-nums text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                  {hud.kills}
-                </span>
-              </div>
-            )}
-            <div className="mt-0.5 flex items-center justify-center gap-2 text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
-              {online && <span>FT{firstTo}</span>}
-              {online && hud.matchTimeLeft != null && (
-                <span className="text-arena-fg/25">·</span>
-              )}
-              {hud.matchTimeLeft != null && (
-                <span className="tabular-nums text-arena-tech">
-                  {formatMatchClock(hud.matchTimeLeft)}
-                </span>
-              )}
-              {!online && <span>elims</span>}
-            </div>
-          </HudPanel>
+          <LobbyHud
+            hud={hud}
+            lobby={lobby}
+            localName={lobby?.localName}
+            onReady={onReady}
+            engine={engine}
+          />
         </div>
 
         {/* Top-right utilities */}
@@ -911,28 +604,7 @@ export function GameHud({
             {hud.perf && <PerfPanel perf={hud.perf} fps={hud.fps} />}
           </HudPanel>
 
-          {onOpenSettings && (
-            <ChromeBtn
-              onClick={() => {
-                gameAudio.uiClick()
-                onOpenSettings()
-              }}
-              title="Settings"
-            >
-              <GameIcon src={icons.settings} className="size-5" />
-            </ChromeBtn>
-          )}
-          {onExit && (
-            <ChromeBtn
-              onClick={() => {
-                gameAudio.uiClick()
-                onExit()
-              }}
-              title="Return to map select"
-            >
-              <GameIcon src={icons.map} className="size-5" />
-            </ChromeBtn>
-          )}
+          {/* Settings / exit live in the Esc pause menu */}
         </div>
       </div>
 
@@ -1157,121 +829,69 @@ export function GameHud({
         </HudPanel>
       </div>
 
-      {/* Death free-cam spectate */}
-      {hud.spectating && !hud.alive && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center">
-          <HudPanel className="px-12 py-8 text-center" accent="danger">
-            <GameIcon src={icons.shocked} className="mx-auto size-12" />
-            <div className="mt-2 text-[11px] font-extrabold tracking-wide text-arena-danger uppercase">
-              Knocked out
-            </div>
-            <div className="mt-1 text-2xl font-black tracking-tight text-arena-fg">
-              {hud.deathReason === 'fall'
-                ? 'Fell out of the world'
-                : 'Eliminated'}
-            </div>
-            <div className="mt-4 text-sm font-bold text-arena-fg/70">
-              Free cam · respawning in{' '}
-              <span className="text-2xl font-black tabular-nums text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                {Math.ceil(hud.respawnIn)}
-              </span>
-              s
-            </div>
-            <p className="mt-3 text-xs font-semibold text-arena-fg/45">
-              WASD + mouse · Space / crouch to fly · Sprint to boost
-            </p>
-            <p className="mt-1 text-xs font-semibold text-arena-fg/35">
-              Toggle Free cam off (bottom left) to respawn now
-            </p>
-          </HudPanel>
-        </div>
-      )}
-
-      {/* Voluntary free-cam */}
-      {hud.spectating && hud.alive && (
-        <div className="pointer-events-none absolute top-16 left-1/2 z-20 -translate-x-1/2">
-          <HudPanel className="px-5 py-2.5 text-center" accent="tech">
-            <div className="flex items-center justify-center gap-1.5 text-[11px] font-extrabold tracking-wide text-arena-tech uppercase">
-              <GameIcon src={icons.jetpack} className="size-4" />
-              Free cam
-            </div>
-            <p className="mt-1 text-[11px] font-semibold text-arena-fg/55">
-              WASD + mouse · Space / crouch fly · Sprint boost
-            </p>
-          </HudPanel>
-        </div>
-      )}
-
-      {/* Click to play — hide while typing chat so the composer stays usable */}
+      {/*
+        Click-to-look when menu was dismissed but browser denied pointer lock
+        (common after Esc — many browsers require a mouse gesture to re-lock).
+      */}
       {!hud.pointerLocked &&
+        pauseDismissed &&
         !chatOpen &&
+        !settingsOpen &&
+        !tutorialOpen &&
         !(!hud.alive && hud.spectating) && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-black/45">
-          <HudPanel className="px-10 py-8 text-center" accent="heat">
-            <div className="text-2xl font-black tracking-tight">
-              {hud.spectating ? 'Click to look' : 'Click to play'}
+          <div className="pointer-events-none absolute inset-x-0 bottom-28 z-40 flex justify-center">
+            <div className="rounded-xl border-[3px] border-arena-ink bg-arena-panel px-4 py-2 text-xs font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)]">
+              Click to look
             </div>
-            <ControlsHint />
-          </HudPanel>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function Kbd({ children }: { children: string }) {
-  return (
-    <kbd className="rounded-lg border-[2px] border-arena-ink bg-arena-sheen px-1.5 py-0.5 text-[11px] font-extrabold text-arena-fg shadow-[1px_2px_0_var(--arena-ink)]">
-      {children}
-    </kbd>
-  )
-}
-
-function primary(codes: string[]): string {
-  return formatKeyCode(codes[0] ?? '?')
-}
-
-function ControlsHint() {
-  const k = getUserSettings().keybinds
-  return (
-    <div className="mt-5 space-y-2 text-sm font-semibold text-arena-fg/60">
-      <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
-        <span className="inline-flex gap-0.5">
-          <Kbd>{primary(k.forward)}</Kbd>
-          <Kbd>{primary(k.left)}</Kbd>
-          <Kbd>{primary(k.back)}</Kbd>
-          <Kbd>{primary(k.right)}</Kbd>
-        </span>
-        <span className="text-arena-fg/40">move</span>
-        <span className="text-arena-fg/20">·</span>
-        <Kbd>{primary(k.sprint)}</Kbd>
-        <span className="text-arena-fg/40">sprint</span>
-        <span className="text-arena-fg/20">·</span>
-        <Kbd>{primary(k.crouch)}</Kbd>
-        {k.crouch.length > 1 && (
-          <>
-            <span className="text-arena-fg/20">/</span>
-            <Kbd>{formatKeyCode(k.crouch[1])}</Kbd>
-          </>
+          </div>
         )}
-        <span className="text-arena-fg/40">crouch</span>
-      </p>
-      <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1.5">
-        <Kbd>{primary(k.jump)}</Kbd>
-        <span className="text-arena-fg/40">jump</span>
-        <span className="text-arena-fg/20">·</span>
-        <Kbd>{primary(k.fire)}</Kbd>
-        <span className="text-arena-fg/40">fire</span>
-        <span className="text-arena-fg/20">·</span>
-        <Kbd>{primary(k.ads)}</Kbd>
-        <span className="text-arena-fg/40">ADS</span>
-        <span className="text-arena-fg/20">·</span>
-        <Kbd>{primary(k.reload)}</Kbd>
-        <span className="text-arena-fg/40">reload</span>
-      </p>
-      <p className="text-[11px] font-bold tracking-wide text-arena-fg/35">
-        Sprint + crouch to slide · jump out of slide to hop
-      </p>
+
+      {/*
+        Pause / unlock menu — Esc or lost pointer lock.
+        Hide while chat, settings, tutorial, death free-cam, or optimistic dismiss.
+        Eliminated / free-cam status lives in LobbyHud (top score strip).
+      */}
+      {!hud.pointerLocked &&
+        !pauseDismissed &&
+        !chatOpen &&
+        !settingsOpen &&
+        !tutorialOpen &&
+        !(!hud.alive && hud.spectating) && (
+          <PauseMenu
+            spectating={hud.spectating}
+            onResume={handleResume}
+            onOpenSettings={onOpenSettings}
+            onOpenHelp={onOpenHelp}
+            onExit={onExit}
+            onlineAgreement={
+              online && engine?.canOfferAgreement()
+                ? {
+                    drawOfferedBySelf:
+                      Boolean(hud.pendingDrawFromId) &&
+                      hud.pendingDrawFromId === engine.getLocalPlayerId(),
+                    drawOfferedByOpponent:
+                      Boolean(hud.pendingDrawFromId) &&
+                      hud.pendingDrawFromId !== engine.getLocalPlayerId(),
+                    onOfferDraw: () => {
+                      engine.offerDraw()
+                    },
+                    onCancelDraw: () => {
+                      engine.cancelDraw()
+                    },
+                    onAcceptDraw: () => {
+                      engine.acceptDraw()
+                    },
+                    onDeclineDraw: () => {
+                      engine.declineDraw()
+                    },
+                    onSurrender: () => {
+                      engine.surrender()
+                    },
+                  }
+                : null
+            }
+          />
+        )}
     </div>
   )
 }

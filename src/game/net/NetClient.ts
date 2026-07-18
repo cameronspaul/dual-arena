@@ -6,6 +6,7 @@
 import type {
   ChatBroadcastMessage,
   ClientMessage,
+  DrawUpdateMessage,
   ErrorMessage,
   InputMessage,
   MatchEndMessage,
@@ -31,6 +32,7 @@ export type NetClientHandlers = {
   onWelcome?: (msg: WelcomeMessage) => void
   onSnapshot?: (msg: SnapshotMessage) => void
   onMatchEnd?: (msg: MatchEndMessage) => void
+  onDrawUpdate?: (msg: DrawUpdateMessage) => void
   onError?: (msg: ErrorMessage) => void
   onStatus?: (status: NetClientStatus, detail?: string) => void
   onPong?: (rttMs: number) => void
@@ -177,6 +179,9 @@ export class NetClient {
         this.matchEnd = msg
         this.handlers.onMatchEnd?.(msg)
         break
+      case 'draw_update':
+        this.handlers.onDrawUpdate?.(msg)
+        break
       case 'pong':
         this.onPong(msg)
         break
@@ -218,6 +223,26 @@ export class NetClient {
   /** Relay WebRTC voice signaling through the game server. */
   sendVoiceSignal(signal: VoiceSignal) {
     this.send({ type: 'voice_signal', signal })
+  }
+
+  /** Voluntary forfeit — opponent wins. */
+  sendSurrender() {
+    this.send({ type: 'surrender' })
+  }
+
+  /** Offer a mutual draw to the opponent. */
+  sendDrawOffer() {
+    this.send({ type: 'draw_offer' })
+  }
+
+  /** Accept or decline a pending draw offer. */
+  sendDrawResponse(accept: boolean) {
+    this.send({ type: 'draw_response', accept })
+  }
+
+  /** Cancel your own pending draw offer. */
+  sendDrawCancel() {
+    this.send({ type: 'draw_cancel' })
   }
 
   private send(msg: ClientMessage) {

@@ -68,6 +68,7 @@ function hudKey(s: HudSnapshot): string {
     s.matchTimeLeft != null ? Math.ceil(s.matchTimeLeft) : '',
     s.matchWinnerId ?? '',
     s.matchEndReason ?? '',
+    s.pendingDrawFromId ?? '',
     s.matchWaiting ? 1 : 0,
     s.matchPhase ?? '',
     Math.ceil(s.matchPhaseTimer ?? 0),
@@ -232,10 +233,33 @@ export default function Game() {
 
   // Release pointer lock / block gameplay while settings or chat are open.
   // Viewmodel editor manages input itself; level editor keeps fly controls unless settings open.
+  // Pause menu itself is driven by pointer unlock (Esc) — input stays enabled so Resume can re-lock.
   useEffect(() => {
     if (!engine || vmEdit) return
     engine.setGameplayEnabled(!settingsOpen && !chatOpen)
   }, [engine, settingsOpen, chatOpen, vmEdit])
+
+  /** Resume from Esc pause menu: re-enable input and request pointer lock. */
+  const resumePlay = useCallback(() => {
+    setChatOpen(false)
+    // Settings owns the screen while open — don't steal lock out from under it.
+    if (settingsOpen) return
+    // force: ensure InputManager accepts the lock even if a panel left it disabled.
+    // Must stay synchronous inside the click/keydown stack for user-activation.
+    engine?.requestPointerLock({ force: true })
+  }, [engine, settingsOpen])
+
+  const openHelp = useCallback(() => {
+    setTutorialOpen(true)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('tutorial', '1')
+        return next
+      },
+      { replace: true },
+    )
+  }, [setSearchParams])
 
   // Leave chat when leaving online match / map select
   useEffect(() => {
@@ -273,6 +297,24 @@ export default function Game() {
 
       if (isTypingTarget(e.target)) return
 
+      // Pending opponent draw offer: Y accept / N decline (works in-game + Esc menu)
+      const localId = engine?.getLocalPlayerId() ?? null
+      const drawFromOpponent =
+        Boolean(hud?.pendingDrawFromId) &&
+        Boolean(localId) &&
+        hud!.pendingDrawFromId !== localId &&
+        !hud?.matchEndReason
+      if (drawFromOpponent && (e.code === 'KeyY' || e.code === 'KeyN')) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.code === 'KeyY') {
+          if (engine?.acceptDraw()) gameAudio.uiConfirm()
+        } else if (engine?.declineDraw()) {
+          gameAudio.uiClick()
+        }
+        return
+      }
+
       // Pregame: Y = ready / unready (same as the Ready up button)
       const inPregame =
         hud?.matchPhase === 'pregame' && !hud.matchWaiting
@@ -304,7 +346,12 @@ export default function Game() {
     engine,
     hud?.matchPhase,
     hud?.matchWaiting,
+    hud?.pendingDrawFromId,
+    hud?.matchEndReason,
   ])
+
+  // Esc resume while unlocked: PauseMenu keydown handler + InputManager
+  // (suppresses the same Esc that exited pointer lock).
 
   // Live character colors from settings → third-person body
   useEffect(() => {
@@ -688,6 +735,8 @@ export default function Game() {
           hud={hud}
           engine={isOnline ? engine : null}
           chatOpen={chatOpen}
+          settingsOpen={settingsOpen}
+          tutorialOpen={tutorialOpen}
           onChatOpenChange={(open) => {
             if (open) engine?.setGameplayEnabled(false)
             setChatOpen(open)
@@ -697,6 +746,10 @@ export default function Game() {
             setSettingsSection(undefined)
             setSettingsOpen(true)
           }}
+          onResume={resumePlay}
+          onOpenHelp={
+            !isOnline && mapId === 'range' ? openHelp : undefined
+          }
           onExit={backToPicker}
           onReady={(ready) => engine?.setReady(ready) ?? false}
           lobby={
@@ -709,6 +762,7 @@ export default function Game() {
                   createdAt: onlineSession.createdAt ?? null,
                   hostName: onlineSession.hostName,
                   waitOnRange: Boolean(onlineSession.waitOnRange),
+                  localName: username.trim() || 'You',
                 }
               : null
           }
@@ -739,10 +793,10 @@ export default function Game() {
         />
       )}
 
-      {/* Map + sky badge (+ offline Help) — top-left; hide badge while tutorial owns that corner */}
+      {/* Map + sky badge — top-left; Help lives in Esc pause menu */}
       {!vmEdit && !levelEdit && !tutorialOpen && (
-        <div className="absolute top-3 left-3 z-30 flex max-w-[min(50vw,22rem)] flex-col items-start gap-1.5">
-          <div className="pointer-events-none flex max-w-full items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)]">
+        <div className="pointer-events-none absolute top-3 left-3 z-30 flex max-w-[min(50vw,22rem)] flex-col items-start gap-1.5">
+          <div className="flex max-w-full items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)]">
             <img
               src={icons.map}
               alt=""
@@ -769,34 +823,6 @@ export default function Game() {
               </>
             )}
           </div>
-          {/* Tutorial lives on the practice range only */}
-          {!isOnline && mapId === 'range' && (
-            <button
-              type="button"
-              onClick={() => {
-                gameAudio.uiClick()
-                setTutorialOpen(true)
-                setSearchParams(
-                  (prev) => {
-                    const next = new URLSearchParams(prev)
-                    next.set('tutorial', '1')
-                    return next
-                  },
-                  { replace: true },
-                )
-              }}
-              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 text-[10px] font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
-              title="Open how-to-play tutorial"
-            >
-              <img
-                src={icons.star}
-                alt=""
-                aria-hidden
-                className="size-3.5 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
-              />
-              Help
-            </button>
-          )}
         </div>
       )}
 

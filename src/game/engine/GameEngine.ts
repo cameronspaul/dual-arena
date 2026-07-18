@@ -98,6 +98,7 @@ import {
   pickTeamSpawn,
   TICK_RATE,
   type ChatBroadcastMessage,
+  type DrawUpdateMessage,
   type MatchEndMessage,
   type MatchPhase,
   type NetHitEvent,
@@ -217,6 +218,8 @@ export class GameEngine {
   private voiceUiListeners = new Set<VoiceUiListener>()
   private chatIdSeq = 0
   private matchEnd: MatchEndMessage | null = null
+  /** Pending draw offer player id (server-authoritative via draw_update). */
+  private pendingDrawFromId: string | null = null
   private pendingSnapshots: SnapshotMessage[] = []
   private serverTickRate = TICK_RATE
   private matchTimeLeft: number | null = null
@@ -382,6 +385,11 @@ export class GameEngine {
     void this.bootstrapMap()
     void this.viewmodel.load(this.camera, this.scene)
     this.input.attach(this.renderer.domElement)
+    // Push HUD immediately on lock/unlock so the pause menu doesn't lag a frame
+    // (or stick if something else throttles React updates).
+    this.input.setPointerLockChangeListener(() => {
+      this.emitHud()
+    })
 
     if (this.isOnline && opts.online) {
       void this.remotes.ensureLoaded(this.scene)
@@ -417,6 +425,10 @@ export class GameEngine {
         onSnapshot: (s) => this.pendingSnapshots.push(s),
         onMatchEnd: (m) => {
           this.matchEnd = m
+          this.pendingDrawFromId = null
+        },
+        onDrawUpdate: (m) => {
+          this.onDrawUpdate(m)
         },
         onPong: (rtt) => {
           this.pingMs = rtt
@@ -484,6 +496,7 @@ export class GameEngine {
     resetSniper(this.sniper)
     this.prevSniperPhase = 'ready'
     this.matchEnd = null
+    this.pendingDrawFromId = null
     this.deathReason = null
     this.freeCam = null
     this.voluntaryFreeCam = false
@@ -594,6 +607,74 @@ export class GameEngine {
 
   getMatchEnd() {
     return this.matchEnd
+  }
+
+  getLocalPlayerId() {
+    return this.localPlayerId
+  }
+
+  getPendingDrawFromId() {
+    return this.pendingDrawFromId
+  }
+
+  /**
+   * Competitive phases where surrender / draw are allowed
+   * (countdown, live, round_reset — not pregame / waiting / rejoin).
+   */
+  canOfferAgreement(): boolean {
+    if (!this.isOnline || !this.net || this.matchEnd) return false
+    const p = this.matchPhase
+    return p === 'live' || p === 'countdown' || p === 'round_reset'
+  }
+
+  /** Voluntary forfeit — opponent wins. */
+  surrender(): boolean {
+    if (!this.canOfferAgreement() || !this.net) return false
+    this.net.sendSurrender()
+    return true
+  }
+
+  /** Offer a mutual draw (or accept if opponent already offered). */
+  offerDraw(): boolean {
+    if (!this.canOfferAgreement() || !this.net) return false
+    this.net.sendDrawOffer()
+    return true
+  }
+
+  /** Accept a pending draw offer from the opponent. */
+  acceptDraw(): boolean {
+    if (!this.canOfferAgreement() || !this.net) return false
+    if (!this.pendingDrawFromId || this.pendingDrawFromId === this.localPlayerId)
+      return false
+    this.net.sendDrawResponse(true)
+    return true
+  }
+
+  /** Decline a pending draw offer from the opponent. */
+  declineDraw(): boolean {
+    if (!this.net) return false
+    if (!this.pendingDrawFromId || this.pendingDrawFromId === this.localPlayerId)
+      return false
+    this.net.sendDrawResponse(false)
+    return true
+  }
+
+  /** Cancel your own pending draw offer. */
+  cancelDraw(): boolean {
+    if (!this.net) return false
+    if (this.pendingDrawFromId !== this.localPlayerId) return false
+    this.net.sendDrawCancel()
+    return true
+  }
+
+  private onDrawUpdate(m: DrawUpdateMessage) {
+    if (m.status === 'pending') {
+      this.pendingDrawFromId = m.fromId
+    } else {
+      // declined / cancelled
+      this.pendingDrawFromId = null
+    }
+    this.emitHud()
   }
 
   /**
@@ -911,6 +992,11 @@ export class GameEngine {
 
   isGameplayEnabled() {
     return this.input.isGameplayEnabled()
+  }
+
+  /** Re-enter pointer lock after pause menu / settings (canvas must be enabled). */
+  requestPointerLock(opts?: { force?: boolean }) {
+    this.input.requestPointerLock(opts)
   }
 
   setViewmodelArmSolo(solo: 'both' | 'left' | 'right') {
@@ -1465,6 +1551,7 @@ export class GameEngine {
     this.chatLines = []
     this.remotes.clear()
     this.prediction.clear()
+    this.input.setPointerLockChangeListener(null)
     this.input.detach()
     window.removeEventListener('resize', this.onResize)
     this.levelEditor.dispose()
@@ -2255,6 +2342,7 @@ export class GameEngine {
       matchTimeLeft: this.isOnline ? this.matchTimeLeft : null,
       matchWinnerId: this.matchEnd?.winnerId ?? null,
       matchEndReason: this.matchEnd?.reason ?? null,
+      pendingDrawFromId: this.isOnline ? this.pendingDrawFromId : null,
       matchWaiting: this.isOnline && this.matchWaiting,
       matchPhase: this.isOnline ? this.matchPhase : null,
       matchPhaseTimer: this.isOnline ? this.matchPhaseTimer : 0,
