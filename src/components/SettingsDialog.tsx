@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Keyboard,
+  Mic,
   Mouse,
   Palette,
   Plus,
@@ -27,7 +28,9 @@ import {
   formatKeyCode,
   MAX_BINDS_PER_ACTION,
   mouseButtonCode,
+  VOICE_MODE_OPTIONS,
   type ActionId,
+  type VoiceMode,
 } from '@/game/core/userSettings'
 import { CharacterPreview } from '@/components/game/CharacterPreview'
 import { icons } from '@/lib/icons'
@@ -460,6 +463,8 @@ export function SettingsDialog({
     toggleAds,
     toggleCrouch,
     toggleSprint,
+    voiceMode,
+    voiceVolume,
     keybinds,
     setMasterVolume,
     setSfxVolume,
@@ -470,6 +475,8 @@ export function SettingsDialog({
     setToggleAds,
     setToggleCrouch,
     setToggleSprint,
+    setVoiceMode,
+    setVoiceVolume,
     addKeybind,
     removeKeybind,
     resetKeybinds,
@@ -580,7 +587,7 @@ export function SettingsDialog({
     {
       id: 'audio',
       label: 'Audio',
-      blurb: 'Volume & mute',
+      blurb: 'Volume & voice',
       icon: Volume2,
     },
     {
@@ -788,7 +795,7 @@ export function SettingsDialog({
                   </div>
                   <p className="mt-0.5 text-xs font-semibold text-muted-foreground">
                     {section === 'audio' &&
-                      'Master & SFX levels — mute without losing values.'}
+                      'Master, SFX, and in-match voice chat.'}
                     {section === 'mouse' &&
                       'Sensitivity, invert Y, and hold vs toggle actions.'}
                     {section === 'keybinds' &&
@@ -820,7 +827,7 @@ export function SettingsDialog({
                   <div className="space-y-5">
                     <SettingRow
                       label="Mute all"
-                      description="Silence SFX without losing your levels"
+                      description="Silence SFX and voice chat without losing levels"
                     >
                       <div className="flex items-center gap-2">
                         {muted ? (
@@ -856,6 +863,155 @@ export function SettingsDialog({
                       disabled={muted}
                       onCommit={() => gameAudio.uiClick()}
                     />
+
+                    <Divider />
+
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Mic
+                          className="size-3.5 text-primary"
+                          strokeWidth={2.5}
+                        />
+                        <div className="text-[11px] font-extrabold tracking-wide text-primary uppercase">
+                          Voice chat
+                        </div>
+                      </div>
+                      <p className="text-xs leading-relaxed font-semibold text-muted-foreground">
+                        Online matches only. Transmit mode, push-to-talk bind,
+                        and how loud your opponent is.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-extrabold tracking-wide text-foreground">
+                        Mic mode
+                      </div>
+                      <div className="grid gap-1.5">
+                        {VOICE_MODE_OPTIONS.map((opt) => {
+                          const active = voiceMode === opt.id
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => {
+                                setVoiceMode(opt.id as VoiceMode)
+                                gameAudio.uiClick()
+                              }}
+                              className={cn(
+                                'flex flex-col items-start gap-0.5 rounded-xl border-[2.5px] px-3 py-2.5 text-left transition-all',
+                                active
+                                  ? cn(
+                                      'border-foreground/85 bg-primary text-primary-foreground dark:border-foreground/60',
+                                      inkShadowSm,
+                                    )
+                                  : 'border-border bg-muted/40 text-foreground hover:bg-muted/70 dark:border-foreground/20 dark:bg-muted/25 dark:hover:bg-muted/40',
+                              )}
+                            >
+                              <span className="text-xs font-extrabold tracking-wide uppercase">
+                                {opt.label}
+                              </span>
+                              <span
+                                className={cn(
+                                  'text-[10px] font-semibold leading-snug',
+                                  active
+                                    ? 'text-primary-foreground/80'
+                                    : 'text-muted-foreground',
+                                )}
+                              >
+                                {opt.description}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <SliderRow
+                      label="Voice volume"
+                      valueLabel={`${pct(voiceVolume)}%`}
+                      value={voiceVolume}
+                      onChange={setVoiceVolume}
+                      disabled={muted || voiceMode === 'off'}
+                      onCommit={() => gameAudio.uiClick()}
+                    />
+
+                    {voiceMode === 'push_to_talk' && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-extrabold tracking-wide text-foreground">
+                              Push-to-talk key
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Hold to transmit. Also rebindable under Keybinds.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {(keybinds.voice ?? []).map((code) => (
+                            <span
+                              key={code}
+                              className={cn(
+                                'inline-flex items-center gap-0.5 rounded-lg border-[2px] bg-muted/70 font-mono text-xs font-bold text-foreground dark:bg-muted/50',
+                                'border-foreground/55 dark:border-foreground/40',
+                                inkShadowSm,
+                              )}
+                            >
+                              <span className="px-2 py-1">
+                                {formatKeyCode(code)}
+                              </span>
+                              {(keybinds.voice ?? []).length > 1 && (
+                                <button
+                                  type="button"
+                                  title={`Remove ${formatKeyCode(code)}`}
+                                  onClick={() => {
+                                    removeKeybind('voice', code)
+                                    gameAudio.uiClick()
+                                  }}
+                                  className="rounded-r-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                                >
+                                  <X className="size-3" strokeWidth={2.75} />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            disabled={
+                              (keybinds.voice?.length ?? 0) >=
+                                MAX_BINDS_PER_ACTION && listening !== 'voice'
+                            }
+                            onClick={() => {
+                              gameAudio.uiClick()
+                              setListening(
+                                listening === 'voice' ? null : 'voice',
+                              )
+                            }}
+                            className={cn(
+                              'inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border-[2px] px-2 text-xs font-extrabold transition-all',
+                              listening === 'voice'
+                                ? cn(
+                                    'animate-pulse border-foreground/85 bg-primary text-primary-foreground dark:border-foreground/60',
+                                    inkShadowSm,
+                                  )
+                                : 'border-dashed border-foreground/40 text-muted-foreground hover:border-foreground/70 hover:bg-muted hover:text-foreground disabled:opacity-40 dark:border-foreground/30 dark:hover:border-foreground/50',
+                            )}
+                          >
+                            {listening === 'voice' ? (
+                              'Press…'
+                            ) : (
+                              <>
+                                <Plus
+                                  className="size-3.5"
+                                  strokeWidth={2.75}
+                                />
+                                Add
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

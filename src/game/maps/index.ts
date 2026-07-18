@@ -1,9 +1,13 @@
 export {
   MAPS,
   MAP_LIST,
+  DUEL_MAP_LIST,
   DEFAULT_MAP_ID,
+  DEFAULT_DUEL_MAP_ID,
   getMap,
   isMapId,
+  isDuelMapId,
+  coerceDuelMapId,
   type MapId,
   type MapDef,
   type MapDummyDef,

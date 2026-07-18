@@ -13,8 +13,10 @@ import {
 } from '@/components/SettingsDialog'
 import type { GameEngine } from '@/game/engine'
 import {
+  coerceDuelMapId,
   DEFAULT_MAP_ID,
   getMap,
+  isDuelMapId,
   isMapId,
   type MapId,
 } from '@/game/maps'
@@ -95,9 +97,13 @@ const devBtn =
 const devBtnOn =
   'pointer-events-auto rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 py-1.5 text-xs font-extrabold tracking-wide text-arena-ink shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]'
 
+/**
+ * Picker selection is always a duel arena (never practice range).
+ * `map=range` only applies while already in a play session (practice / tutorial / host wait).
+ */
 function readInitialMap(params: URLSearchParams): MapId {
   const q = params.get('map')
-  if (q && isMapId(q)) return q
+  if (q && isDuelMapId(q)) return q
   return DEFAULT_MAP_ID
 }
 
@@ -181,6 +187,8 @@ export default function Game() {
     return new URLSearchParams(window.location.search).has('level-edit')
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  /** In-match chat composer — pauses WASD / pointer lock like settings. */
+  const [chatOpen, setChatOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<
     SettingsSection | undefined
   >(undefined)
@@ -222,12 +230,71 @@ export default function Game() {
     }
   }, [])
 
-  // Release pointer lock / block gameplay while settings are open.
+  // Release pointer lock / block gameplay while settings or chat are open.
   // Viewmodel editor manages input itself; level editor keeps fly controls unless settings open.
   useEffect(() => {
     if (!engine || vmEdit) return
-    engine.setGameplayEnabled(!settingsOpen)
-  }, [engine, settingsOpen, vmEdit])
+    engine.setGameplayEnabled(!settingsOpen && !chatOpen)
+  }, [engine, settingsOpen, chatOpen, vmEdit])
+
+  // Leave chat when leaving online match / map select
+  useEffect(() => {
+    if (!onlineSession) setChatOpen(false)
+  }, [onlineSession])
+
+  // In-match chat hotkeys (page-level so they work even before HUD mounts fully).
+  // Enter / Y open; Esc closes. Capture phase beats game InputManager.
+  useEffect(() => {
+    if (!onlineSession || phase !== 'play' || settingsOpen || vmEdit || levelEdit) {
+      return
+    }
+    const isTypingTarget = (t: EventTarget | null) => {
+      if (!(t instanceof HTMLElement)) return false
+      const tag = t.tagName
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        t.isContentEditable
+      )
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+
+      if (chatOpen) {
+        if (e.code === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          setChatOpen(false)
+        }
+        return
+      }
+
+      if (isTypingTarget(e.target)) return
+
+      if (
+        e.code === 'Enter' ||
+        e.code === 'NumpadEnter' ||
+        e.code === 'KeyY'
+      ) {
+        e.preventDefault()
+        e.stopPropagation()
+        // Drop pointer lock / WASD immediately (don't wait for React effect)
+        engine?.setGameplayEnabled(false)
+        setChatOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [
+    onlineSession,
+    phase,
+    settingsOpen,
+    chatOpen,
+    vmEdit,
+    levelEdit,
+    engine,
+  ])
 
   // Live character colors from settings → third-person body
   useEffect(() => {
@@ -345,6 +412,9 @@ export default function Game() {
 
   /** Host: mint a fresh room code and open a joinable lobby. */
   const startHostOnline = useCallback(() => {
+    // Practice range is training-only — never a 1v1 arena
+    if (!isDuelMapId(mapId)) return
+    const duelMap = coerceDuelMapId(mapId)
     const code = `duel-${Math.random().toString(36).slice(2, 8)}`
     setMatchIdStore(code)
     const session: OnlineSessionOpts = {
@@ -353,9 +423,13 @@ export default function Game() {
       token: playerToken,
       hostName: username.trim() || 'Host',
       wager: wagerAmount,
+      mapId: duelMap,
+      waitOnRange: true,
+      createdAt: Date.now(),
     }
-    rememberRejoin(session, mapId)
-    startPlay(mapId, skyboxPref, session)
+    rememberRejoin(session, duelMap)
+    // Hang on the practice range until an opponent joins, then remount onto duelMap
+    startPlay('range', skyboxPref, session)
   }, [
     serverUrl,
     username,
@@ -373,12 +447,16 @@ export default function Game() {
     (lobby: { matchId: string; mapId?: MapId }) => {
       const mid = lobby.matchId.trim() || matchIdStore.trim() || 'duel-1'
       setMatchIdStore(mid)
-      const playMap =
-        lobby.mapId && isMapId(lobby.mapId) ? lobby.mapId : mapId
+      // Never load practice range as a 1v1 arena
+      const playMap = coerceDuelMapId(
+        lobby.mapId && isMapId(lobby.mapId) ? lobby.mapId : mapId,
+      )
       const session: OnlineSessionOpts = {
         serverUrl: serverUrl.trim() || 'ws://localhost:2567',
         matchId: mid,
         token: playerToken,
+        mapId: playMap,
+        createdAt: Date.now(),
       }
       rememberRejoin(session, playMap)
       startPlay(playMap, skyboxPref, session)
@@ -403,12 +481,13 @@ export default function Game() {
       clearRejoinSession()
       return
     }
-    const playMap = isMapId(session.mapId) ? session.mapId : mapId
+    const playMap = coerceDuelMapId(session.mapId)
     setMatchIdStore(session.matchId)
     const online: OnlineSessionOpts = {
       serverUrl: session.serverUrl,
       matchId: session.matchId,
       token: session.token || playerToken,
+      mapId: playMap,
     }
     // Stay on the armed CTA while reconnecting; clear on match end
     setRejoinSession({
@@ -442,6 +521,12 @@ export default function Game() {
     } else {
       clearRejoinSession()
     }
+    // Picker never holds practice range — restore duel map or default arena
+    if (onlineSession?.mapId && isDuelMapId(onlineSession.mapId)) {
+      setMapId(onlineSession.mapId)
+    } else if (!isDuelMapId(mapId)) {
+      setMapId(DEFAULT_MAP_ID)
+    }
     setPhase('pick')
     setEngine(null)
     setHud(null)
@@ -471,6 +556,7 @@ export default function Game() {
     hud?.matchPhase,
     armRejoinWindow,
     clearRejoinSession,
+    mapId,
   ])
 
   const toggleThirdPerson = useCallback(() => {
@@ -500,6 +586,43 @@ export default function Game() {
     if (hud?.matchEndReason) clearRejoinSession()
   }, [hud?.matchEndReason, clearRejoinSession])
 
+  /**
+   * Host wait room: after an opponent joins, remount from practice range onto
+   * the duel map. Server keeps the pregame seat for a short reconnect grace.
+   */
+  useEffect(() => {
+    if (!onlineSession?.waitOnRange) return
+    if (!onlineSession.mapId || !isDuelMapId(onlineSession.mapId)) return
+    if (mapId !== 'range') return
+    // Still alone in lobby
+    if (!hud || hud.matchWaiting || hud.matchPhase === 'waiting') return
+    if (hud.matchPhase == null) return
+
+    const duelMap = onlineSession.mapId
+    const nextSession: OnlineSessionOpts = {
+      ...onlineSession,
+      waitOnRange: false,
+    }
+    setOnlineSession(nextSession)
+    setMapId(duelMap)
+    setHud(null)
+    lastKey.current = ''
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('map', duelMap)
+        return next
+      },
+      { replace: true },
+    )
+  }, [
+    onlineSession,
+    mapId,
+    hud?.matchWaiting,
+    hud?.matchPhase,
+    setSearchParams,
+  ])
+
   // Tab close / refresh mid-match: arm the next leave's rejoin window
   useEffect(() => {
     if (!onlineSession) return
@@ -514,11 +637,16 @@ export default function Game() {
   if (phase === 'pick') {
     return (
       <MapPicker
-        selectedId={mapId}
-        onSelect={setMapId}
+        selectedId={isDuelMapId(mapId) ? mapId : DEFAULT_MAP_ID}
+        onSelect={(id) => {
+          if (isDuelMapId(id)) setMapId(id)
+        }}
         skybox={skyboxPref}
         onSkyboxChange={setSkyboxPref}
-        onPlay={() => startPlay(mapId, skyboxPref)}
+        onPlay={() =>
+          startPlay(isDuelMapId(mapId) ? mapId : DEFAULT_MAP_ID, skyboxPref)
+        }
+        onPracticeRange={() => startPlay('range', skyboxPref)}
         onTutorial={startTutorial}
         onHostOnline={startHostOnline}
         onJoinOnline={startJoinOnline}
@@ -529,6 +657,12 @@ export default function Game() {
 
   const mapName = getMap(mapId).name
   const isOnline = !!onlineSession
+  /** Duel arena for the open lobby (may differ from visual wait-room map). */
+  const lobbyDuelMapId =
+    onlineSession?.mapId && isMapId(onlineSession.mapId)
+      ? onlineSession.mapId
+      : mapId
+  const lobbyMapName = getMap(lobbyDuelMapId).name
 
   return (
     <div className="relative h-svh w-full overflow-hidden bg-black">
@@ -542,12 +676,32 @@ export default function Game() {
       {!vmEdit && !levelEdit && (
         <GameHud
           hud={hud}
+          engine={isOnline ? engine : null}
+          chatOpen={chatOpen}
+          onChatOpenChange={(open) => {
+            if (open) engine?.setGameplayEnabled(false)
+            setChatOpen(open)
+          }}
           onOpenSettings={() => {
+            setChatOpen(false)
             setSettingsSection(undefined)
             setSettingsOpen(true)
           }}
           onExit={backToPicker}
           onReady={(ready) => engine?.setReady(ready)}
+          lobby={
+            isOnline && onlineSession
+              ? {
+                  matchId: onlineSession.matchId,
+                  mapId: lobbyDuelMapId,
+                  mapName: lobbyMapName,
+                  wager: onlineSession.wager ?? 0,
+                  createdAt: onlineSession.createdAt ?? null,
+                  hostName: onlineSession.hostName,
+                  waitOnRange: Boolean(onlineSession.waitOnRange),
+                }
+              : null
+          }
         />
       )}
 

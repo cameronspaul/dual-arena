@@ -18,7 +18,13 @@ import {
 import { icons, WAGER_ICONS } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { gameAudio } from '@/game/audio'
-import { isMapId, MAP_LIST, type MapId } from '@/game/maps'
+import {
+  DUEL_MAP_LIST,
+  isDuelMapId,
+  isMapId,
+  MAP_LIST,
+  type MapId,
+} from '@/game/maps'
 import {
   SKYBOX_IDS,
   SKYBOX_LABELS,
@@ -79,6 +85,8 @@ interface MapPickerProps {
   skybox: SkyboxPreference
   onSkyboxChange: (sky: SkyboxPreference) => void
   onPlay: () => void
+  /** Offline free roam on the practice range. */
+  onPracticeRange?: () => void
   /** Offline guided course on the practice range. */
   onTutorial?: () => void
   /** Host a new open lobby (map/region/stake from picker). */
@@ -119,6 +127,9 @@ function mapLabel(mapId: string): string {
   const m = MAP_LIST.find((x) => x.id === mapId)
   return m?.name ?? mapId
 }
+
+/** 1v1 arena carousel only — practice range lives next to Tutorial. */
+const PICKER_MAPS = DUEL_MAP_LIST
 
 /** Cartoon PNG from /public/icons — thick outline sticker set (matches HUD). */
 function GameIcon({
@@ -298,6 +309,7 @@ export function MapPicker({
   skybox,
   onSkyboxChange,
   onPlay,
+  onPracticeRange,
   onTutorial,
   onHostOnline,
   onJoinOnline,
@@ -339,21 +351,27 @@ export function MapPicker({
   /** Seconds left on the homepage rejoin CTA (ticks every 250ms). */
   const [rejoinLeft, setRejoinLeft] = useState(0)
 
-  const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
+  // Practice range is never a selectable picker state — fall back to first arena
+  const selected =
+    PICKER_MAPS.find((m) => m.id === selectedId) ??
+    PICKER_MAPS[0] ??
+    MAP_LIST.find((m) => m.duelEligible)!
+  const canHostDuel = isDuelMapId(selectedId)
   const displayName = username.trim() || 'Operator'
 
   /** Lobby backdrop: selected map art when available, else a duel-map thumb. */
   const backdropUrl = useMemo(() => {
     if (selected.thumbUrl) return selected.thumbUrl
-    const withThumb = MAP_LIST.find((m) => m.thumbUrl)
+    const withThumb = PICKER_MAPS.find((m) => m.thumbUrl)
     return withThumb?.thumbUrl ?? '/maps/thumbs/arena-v3.png'
   }, [selected.thumbUrl])
 
-  const mapsPerPage = 2
-  const mapPageCount = Math.max(1, Math.ceil(MAP_LIST.length / mapsPerPage))
+  /** Three arena previews per page — practice range is a separate button. */
+  const mapsPerPage = 3
+  const mapPageCount = Math.max(1, Math.ceil(PICKER_MAPS.length / mapsPerPage))
 
   const selectedIndex = useMemo(
-    () => MAP_LIST.findIndex((m) => m.id === selectedId),
+    () => PICKER_MAPS.findIndex((m) => m.id === selectedId),
     [selectedId],
   )
 
@@ -365,7 +383,7 @@ export function MapPicker({
 
   const visibleMaps = useMemo(() => {
     const start = mapPage * mapsPerPage
-    return MAP_LIST.slice(start, start + mapsPerPage)
+    return PICKER_MAPS.slice(start, start + mapsPerPage)
   }, [mapPage])
 
   const commitName = () => {
@@ -384,12 +402,19 @@ export function MapPicker({
     onPlay()
   }
 
+  /** Jump straight into free range — does not change the selected arena. */
+  const handlePracticeRange = () => {
+    gameAudio.uiConfirm()
+    onPracticeRange?.()
+  }
+
   const handleTutorial = () => {
     gameAudio.uiConfirm()
     onTutorial?.()
   }
 
   const handleHostOnline = () => {
+    if (!canHostDuel) return
     gameAudio.uiConfirm()
     onHostOnline?.()
   }
@@ -508,21 +533,6 @@ export function MapPicker({
               {Math.floor(rejoinLeft / 60)}:
               {(rejoinLeft % 60).toString().padStart(2, '0')}
             </span>
-          </button>
-        )}
-        <span className="hidden items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-2.5 py-1.5 text-[10px] font-extrabold tracking-wide text-arena-tech uppercase shadow-[2px_2px_0_var(--arena-ink)] sm:inline-flex">
-          <GameIcon src={icons.bolt} className="size-3.5" />
-          Practice
-        </span>
-        {onTutorial && (
-          <button
-            type="button"
-            onClick={handleTutorial}
-            className="inline-flex h-9 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
-            title="Guided how-to-play on the practice range"
-          >
-            <GameIcon src={icons.star} className="size-4" />
-            Tutorial
           </button>
         )}
         <ChromeBtn
@@ -647,15 +657,34 @@ export function MapPicker({
             <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-2">
               <div>
                 <SectionLabel iconSrc={icons.map}>Map</SectionLabel>
-                <div className="flex items-center gap-2 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2.5 py-1.5">
+                <div
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border-[2px] bg-arena-surface px-2.5 py-1.5',
+                    canHostDuel
+                      ? 'border-arena-ink'
+                      : 'border-arena-danger/50',
+                  )}
+                >
                   <GameIcon src={icons.location} className="size-3.5 shrink-0" />
                   <span className="truncate text-xs font-extrabold text-arena-fg">
                     {selected.name}
                   </span>
-                  <span className="ml-auto shrink-0 text-[9px] font-bold tracking-wide text-arena-fg/40 uppercase">
-                    Picker
+                  <span
+                    className={cn(
+                      'ml-auto shrink-0 text-[9px] font-bold tracking-wide uppercase',
+                      canHostDuel
+                        ? 'text-arena-fg/40'
+                        : 'text-arena-danger',
+                    )}
+                  >
+                    {canHostDuel ? '1v1' : 'Training only'}
                   </span>
                 </div>
+                {!canHostDuel && (
+                  <p className="mt-1 text-[10px] font-semibold text-arena-danger/90">
+                    Pick a duel arena below — Practice Range can&apos;t host 1v1.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -707,13 +736,20 @@ export function MapPicker({
             </div>
 
             <p className="mt-2 shrink-0 text-[10px] font-semibold text-arena-fg/40">
-              Opens a lobby in the browser next door. Room code is generated for you.
+              You wait on the practice range; the duel map loads when someone joins.
             </p>
 
             <button
               type="button"
-              disabled={!onHostOnline || !serverUrl.trim()}
+              disabled={
+                !onHostOnline || !serverUrl.trim() || !canHostDuel
+              }
               onClick={handleHostOnline}
+              title={
+                !canHostDuel
+                  ? 'Select a 1v1 map — Practice Range is training only'
+                  : undefined
+              }
               className="mt-2 inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-4 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
             >
               <GameIcon src={icons.flag} className="size-5" />
@@ -855,7 +891,12 @@ export function MapPicker({
                 <GameIcon src={icons.map} className="size-4" />
                 <h2 className="text-sm font-extrabold tracking-tight">Map</h2>
                 <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-surface px-1.5 py-0.5 text-[10px] font-extrabold text-arena-fg/50 tabular-nums">
-                  {selectedIndex + 1}/{MAP_LIST.length}
+                  {selectedIndex >= 0
+                    ? `${selectedIndex + 1}/${PICKER_MAPS.length}`
+                    : `${PICKER_MAPS.length} arenas`}
+                </span>
+                <span className="hidden text-[10px] font-semibold text-arena-fg/40 sm:inline">
+                  1v1 arenas
                 </span>
               </div>
               <div className="flex items-center gap-1">
@@ -889,7 +930,7 @@ export function MapPicker({
                 <GameIcon src={icons.leftArrow} className="size-5" />
               </button>
 
-              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 sm:gap-2">
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5 sm:grid-cols-3 sm:gap-2">
                 {visibleMaps.map((map) => {
                   const active = map.id === selectedId
                   return (
@@ -897,6 +938,7 @@ export function MapPicker({
                       key={`${mapPage}-${map.id}`}
                       type="button"
                       onClick={() => {
+                        if (!map.duelEligible) return
                         gameAudio.uiClick()
                         onSelect(map.id)
                       }}
@@ -933,16 +975,6 @@ export function MapPicker({
                         >
                           {map.name}
                         </div>
-                        <div className="mt-0.5 flex flex-wrap gap-1">
-                          {map.tags.slice(0, 2).map((tag) => (
-                            <span
-                              key={tag}
-                              className="rounded border border-white/15 bg-black/45 px-1 py-px text-[8px] font-bold tracking-wide text-white/75 uppercase"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
                       </div>
                     </button>
                   )
@@ -959,7 +991,7 @@ export function MapPicker({
               </button>
             </div>
 
-            {/* Selected map + sky chips + deploy — one compact row */}
+            {/* Selected map + sky chips + train / deploy */}
             <div className="mt-2 flex flex-col gap-2 border-t-2 border-arena-ink/35 pt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <AnimatePresence mode="wait">
                 <motion.div
@@ -975,12 +1007,6 @@ export function MapPicker({
                     <h3 className="truncate text-sm font-black tracking-tight">
                       {selected.name}
                     </h3>
-                    {selected.kind === 'range' && (
-                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border-[2px] border-arena-ink bg-arena-ok/20 px-1 py-px text-[8px] font-extrabold text-arena-ok uppercase">
-                        <GameIcon src={icons.star} className="size-2.5" />
-                        Train
-                      </span>
-                    )}
                   </div>
                 </motion.div>
               </AnimatePresence>
@@ -1003,16 +1029,31 @@ export function MapPicker({
               </div>
 
               <div className="flex w-full shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row">
-                {onTutorial && (
-                  <button
-                    type="button"
-                    onClick={handleTutorial}
-                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-3 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:px-3.5"
-                    title="Learn movement, ammo, damage zones, and match rules"
-                  >
-                    <GameIcon src={icons.star} className="size-4" />
-                    Tutorial
-                  </button>
+                {(onPracticeRange || onTutorial) && (
+                  <div className="flex gap-1.5">
+                    {onPracticeRange && (
+                      <button
+                        type="button"
+                        onClick={handlePracticeRange}
+                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-2.5 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
+                        title="Free roam on the practice range — dummies, no match"
+                      >
+                        <GameIcon src={icons.aim} className="size-4" />
+                        <span className="truncate">Practice</span>
+                      </button>
+                    )}
+                    {onTutorial && (
+                      <button
+                        type="button"
+                        onClick={handleTutorial}
+                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-2.5 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
+                        title="Guided how-to-play on the practice range"
+                      >
+                        <GameIcon src={icons.star} className="size-4" />
+                        <span className="truncate">Tutorial</span>
+                      </button>
+                    )}
+                  </div>
                 )}
                 <button
                   type="button"

@@ -8,8 +8,10 @@ import {
   DEFAULT_USER_SETTINGS,
   MAX_BINDS_PER_ACTION,
   normalizeKeybinds,
+  normalizeVoiceMode,
   type ActionId,
   type UserSettings,
+  type VoiceMode,
 } from '@/game/core/userSettings'
 import { gameAudio } from '@/game/core/audio'
 
@@ -23,6 +25,8 @@ type SettingsState = UserSettings & {
   setToggleAds: (v: boolean) => void
   setToggleCrouch: (v: boolean) => void
   setToggleSprint: (v: boolean) => void
+  setVoiceMode: (mode: VoiceMode) => void
+  setVoiceVolume: (v: number) => void
   /** Add a code to an action (multi-bind). Removes it from other actions. */
   addKeybind: (action: ActionId, code: string) => void
   /** Remove one code from an action (keeps at least one bind). */
@@ -43,6 +47,8 @@ function snapshot(get: () => SettingsState): UserSettings {
     toggleAds: s.toggleAds,
     toggleCrouch: s.toggleCrouch,
     toggleSprint: s.toggleSprint,
+    voiceMode: s.voiceMode,
+    voiceVolume: s.voiceVolume,
     keybinds: cloneKeybinds(s.keybinds),
   }
 }
@@ -72,6 +78,10 @@ function hydrateFromPartial(p: Partial<UserSettings>): UserSettings {
     toggleAds: p.toggleAds ?? DEFAULT_USER_SETTINGS.toggleAds,
     toggleCrouch: p.toggleCrouch ?? DEFAULT_USER_SETTINGS.toggleCrouch,
     toggleSprint: p.toggleSprint ?? DEFAULT_USER_SETTINGS.toggleSprint,
+    voiceMode: normalizeVoiceMode(
+      p.voiceMode ?? DEFAULT_USER_SETTINGS.voiceMode,
+    ),
+    voiceVolume: p.voiceVolume ?? DEFAULT_USER_SETTINGS.voiceVolume,
     keybinds: normalizeKeybinds(
       p.keybinds as Partial<Record<ActionId, string | string[]>> | undefined,
     ),
@@ -119,6 +129,14 @@ export const useSettingsStore = create<SettingsState>()(
       setToggleSprint: (toggleSprint) => {
         set({ toggleSprint })
         pushRuntime({ toggleSprint }, get)
+      },
+      setVoiceMode: (voiceMode) => {
+        set({ voiceMode })
+        pushRuntime({ voiceMode }, get)
+      },
+      setVoiceVolume: (voiceVolume) => {
+        set({ voiceVolume })
+        pushRuntime({ voiceVolume }, get)
       },
       addKeybind: (action, code) => {
         const keybinds = cloneKeybinds(get().keybinds)
@@ -176,7 +194,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'dual-arena-settings',
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const p = (persisted ?? {}) as Partial<UserSettings>
         return hydrateFromPartial(p)
@@ -191,6 +209,8 @@ export const useSettingsStore = create<SettingsState>()(
         toggleAds: s.toggleAds,
         toggleCrouch: s.toggleCrouch,
         toggleSprint: s.toggleSprint,
+        voiceMode: s.voiceMode,
+        voiceVolume: s.voiceVolume,
         keybinds: s.keybinds,
       }),
       onRehydrateStorage: () => (state) => {

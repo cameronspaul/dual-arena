@@ -1,8 +1,10 @@
 /**
  * WebSocket client for server-authoritative 1v1.
  * Sends inputs only; never damage/kill claims.
+ * Also carries in-match chat + WebRTC voice signaling (not lobby browser).
  */
 import type {
+  ChatBroadcastMessage,
   ClientMessage,
   ErrorMessage,
   InputMessage,
@@ -12,9 +14,11 @@ import type {
   PongMessage,
   ServerMessage,
   SnapshotMessage,
+  VoiceSignal,
+  VoiceSignalRelayMessage,
   WelcomeMessage,
 } from '@duel/shared'
-import { INPUT_SEND_HZ } from '@duel/shared'
+import { CHAT_MAX_LEN, INPUT_SEND_HZ } from '@duel/shared'
 
 export type NetClientStatus =
   | 'idle'
@@ -30,6 +34,8 @@ export type NetClientHandlers = {
   onError?: (msg: ErrorMessage) => void
   onStatus?: (status: NetClientStatus, detail?: string) => void
   onPong?: (rttMs: number) => void
+  onChat?: (msg: ChatBroadcastMessage) => void
+  onVoiceSignal?: (msg: VoiceSignalRelayMessage) => void
 }
 
 export type NetClientOpts = {
@@ -178,6 +184,12 @@ export class NetClient {
         this.handlers.onError?.(msg)
         this.setStatus('error', msg.message)
         break
+      case 'chat':
+        this.handlers.onChat?.(msg)
+        break
+      case 'voice_signal':
+        this.handlers.onVoiceSignal?.(msg)
+        break
     }
   }
 
@@ -194,6 +206,18 @@ export class NetClient {
   /** Toggle ready during pregame (both players must ready to start). */
   sendReady(ready: boolean) {
     this.send({ type: 'ready', ready })
+  }
+
+  /** In-match text chat. Empty / oversize strings are ignored. */
+  sendChat(text: string) {
+    const cleaned = text.replace(/[\u0000-\u001F\u007F]/g, '').trim()
+    if (!cleaned) return
+    this.send({ type: 'chat', text: cleaned.slice(0, CHAT_MAX_LEN) })
+  }
+
+  /** Relay WebRTC voice signaling through the game server. */
+  sendVoiceSignal(signal: VoiceSignal) {
+    this.send({ type: 'voice_signal', signal })
   }
 
   private send(msg: ClientMessage) {

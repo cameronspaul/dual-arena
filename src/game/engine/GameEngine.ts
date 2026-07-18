@@ -85,6 +85,8 @@ import {
   NetClient,
   Prediction,
   RemotePlayerSystem,
+  VoicePeer,
+  type VoicePeerStatus,
 } from '../net'
 import {
   effectiveLook,
@@ -95,6 +97,7 @@ import {
   aimSpread as aimSpreadShared,
   pickTeamSpawn,
   TICK_RATE,
+  type ChatBroadcastMessage,
   type MatchEndMessage,
   type MatchPhase,
   type NetHitEvent,
@@ -104,6 +107,27 @@ import {
 } from '@duel/shared'
 
 export type HudListener = (hud: HudSnapshot) => void
+
+/** In-match chat line for the HUD. */
+export type ChatLine = {
+  id: string
+  fromId: string
+  /** True when from local player. */
+  self: boolean
+  text: string
+  t: number
+}
+
+export type ChatListener = (lines: ChatLine[]) => void
+export type VoiceUiListener = (state: {
+  status: VoicePeerStatus
+  /** Local push-to-talk held. */
+  talking: boolean
+  micReady: boolean
+  speakerEnabled: boolean
+  remoteSpeaking: boolean
+  detail?: string
+}) => void
 
 export type OnlineSessionOpts = {
   /** WebSocket URL, e.g. ws://localhost:2567 */
@@ -115,6 +139,18 @@ export type OnlineSessionOpts = {
   hostName?: string
   /** Soft stake for lobby listing. */
   wager?: number
+  /**
+   * Ranked room map id sent on join (may differ from the visual wait-room map).
+   * Practice range is never a duel arena — use a real 1v1 map here.
+   */
+  mapId?: string
+  /**
+   * Host lobby: load practice range visually until an opponent joins, then
+   * remount onto `mapId`. Skips server team-pad snap while waiting.
+   */
+  waitOnRange?: boolean
+  /** Wall-clock ms when this lobby was created (client; HUD age timer). */
+  createdAt?: number
 }
 
 export type GameEngineOptions = {
@@ -171,10 +207,15 @@ export class GameEngine {
   /** Online 1v1 — null when offline practice. */
   private readonly isOnline: boolean
   private net: NetClient | null = null
+  private voice: VoicePeer | null = null
   private prediction = new Prediction()
   private remotes = new RemotePlayerSystem()
   private localPlayerId: string | null = null
   private onlineStatus = 'idle'
+  private chatLines: ChatLine[] = []
+  private chatListeners = new Set<ChatListener>()
+  private voiceUiListeners = new Set<VoiceUiListener>()
+  private chatIdSeq = 0
   private matchEnd: MatchEndMessage | null = null
   private pendingSnapshots: SnapshotMessage[] = []
   private serverTickRate = TICK_RATE
@@ -195,6 +236,11 @@ export class GameEngine {
    * Prevents map bootstrap from overwriting it with solo pickPlaySpawn.
    */
   private onlineTeamSpawnReady = false
+  /**
+   * Host wait room: practice range visual while lobby is open.
+   * Skips duel-map team spawns until remount onto the real arena.
+   */
+  private readonly waitOnRange: boolean
 
   private hudListeners = new Set<HudListener>()
   private lastHit: HitEvent | null = null
@@ -266,13 +312,19 @@ export class GameEngine {
     this.mapDef = getMap(opts.mapId)
     this.skyboxId = opts.skybox ?? 'day'
     this.isOnline = opts.mode === 'online' && !!opts.online?.serverUrl
+    this.waitOnRange = Boolean(opts.online?.waitOnRange) && this.isOnline
     this.spawnLayout = loadSpawnLayout(this.mapDef.id)
     this.barrierLayout = loadBarrierLayout(this.mapDef.id)
     this.rebuildBarrierColliders()
 
     if (this.isOnline) {
-      // Ranked room: no practice dummies, no local kill inventing
-      this.dummiesEnabled = false
+      // Ranked room: no practice dummies — except host wait room on the range
+      this.dummiesEnabled = this.waitOnRange
+      // Host wait room: show lobby HUD immediately (before first snapshot)
+      if (this.waitOnRange) {
+        this.matchWaiting = true
+        this.matchPhase = 'waiting'
+      }
     }
 
     this.scene = new THREE.Scene()
@@ -340,11 +392,21 @@ export class GameEngine {
     const token =
       online.token?.trim() ||
       `p-${Math.random().toString(36).slice(2, 10)}`
+
+    this.voice?.dispose()
+    this.voice = new VoicePeer({
+      sendSignal: (signal) => this.net?.sendVoiceSignal(signal),
+      onStatus: () => this.emitVoiceUi(),
+      onRemoteSpeaking: () => this.emitVoiceUi(),
+      onLocalTalking: () => this.emitVoiceUi(),
+    })
+
     this.net = new NetClient({
       url: online.serverUrl,
       matchId: online.matchId,
       token,
-      mapId: this.mapDef.id,
+      // Room map may be the duel arena while we visually sit on the range
+      mapId: online.mapId ?? this.mapDef.id,
       hostName: online.hostName,
       wager: online.wager,
       handlers: {
@@ -375,6 +437,10 @@ export class GameEngine {
             }
           }
         },
+        onChat: (msg) => this.onNetChat(msg),
+        onVoiceSignal: (msg) => {
+          void this.voice?.handleSignal(msg.fromId, msg.signal)
+        },
       },
     })
     this.net.connect()
@@ -382,23 +448,27 @@ export class GameEngine {
 
   private onNetWelcome(w: WelcomeMessage) {
     this.localPlayerId = w.playerId
+    this.voice?.setLocalPlayerId(w.playerId)
     this.serverTickRate = w.tickRate || TICK_RATE
     this.matchFirstTo = w.firstTo ?? MATCH.firstTo
     this.teamColor = w.teamColor ?? (w.team === 0 ? 'blue' : 'red')
-    // Prefer server-provided pad (map blue/red); fallback to shared table
-    const spawn =
-      w.spawn ??
-      pickTeamSpawn(w.mapId || this.mapDef.id, w.team)
-    this.applySpawn(
-      { x: spawn.x, y: spawn.y, z: spawn.z },
-      spawn.yaw,
-    )
-    this.playSpawn = {
-      spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
-      spawnYaw: spawn.yaw,
+    // Prefer server-provided pad (map blue/red); fallback to shared table.
+    // Host wait room stays on practice-range spawns — duel pads load after remount.
+    if (!this.waitOnRange) {
+      const spawn =
+        w.spawn ??
+        pickTeamSpawn(w.mapId || this.mapDef.id, w.team)
+      this.applySpawn(
+        { x: spawn.x, y: spawn.y, z: spawn.z },
+        spawn.yaw,
+      )
+      this.playSpawn = {
+        spawn: { x: spawn.x, y: spawn.y, z: spawn.z },
+        spawnYaw: spawn.yaw,
+      }
+      this.onlineTeamSpawnReady = true
+      this.rebuildFallKillY()
     }
-    this.onlineTeamSpawnReady = true
-    this.rebuildFallKillY()
     this.playerHp = PLAYER.maxHp
     this.playerAlive = true
     this.kills = 0
@@ -419,11 +489,95 @@ export class GameEngine {
       this.teamColor,
       'map',
       w.mapId,
-      'teamSpawn',
-      spawn,
+      this.waitOnRange ? '(wait-room range)' : '',
       'firstTo',
       this.matchFirstTo,
     )
+  }
+
+  private onNetChat(msg: ChatBroadcastMessage) {
+    this.chatIdSeq += 1
+    const line: ChatLine = {
+      id: `c-${this.chatIdSeq}-${msg.t}`,
+      fromId: msg.fromId,
+      self: msg.fromId === this.localPlayerId,
+      text: msg.text,
+      t: msg.t,
+    }
+    this.chatLines = [...this.chatLines.slice(-49), line]
+    for (const fn of this.chatListeners) fn(this.chatLines)
+  }
+
+  /** Subscribe to in-match chat history (online only). */
+  onChat(fn: ChatListener): () => void {
+    this.chatListeners.add(fn)
+    fn(this.chatLines)
+    return () => this.chatListeners.delete(fn)
+  }
+
+  sendChat(text: string) {
+    if (!this.isOnline || !this.net) return
+    this.net.sendChat(text)
+  }
+
+  onVoiceUi(fn: VoiceUiListener): () => void {
+    this.voiceUiListeners.add(fn)
+    this.emitVoiceUi(fn)
+    return () => this.voiceUiListeners.delete(fn)
+  }
+
+  private emitVoiceUi(only?: VoiceUiListener) {
+    const state = {
+      status: this.voice?.getStatus() ?? ('idle' as VoicePeerStatus),
+      talking: this.voice?.isTalking() ?? false,
+      micReady: this.voice?.isMicReady() ?? false,
+      speakerEnabled: this.voice?.isSpeakerEnabled() ?? true,
+      remoteSpeaking: this.voice?.isRemoteSpeaking() ?? false,
+    }
+    if (only) {
+      only(state)
+      return
+    }
+    for (const fn of this.voiceUiListeners) fn(state)
+  }
+
+  /** Push-to-talk: hold true while speaking. First press asks for mic permission. */
+  async setVoiceTalking(talking: boolean) {
+    if (!this.voice) return
+    await this.voice.setTalking(talking)
+    this.emitVoiceUi()
+  }
+
+  /** Warm up mic permission without transmitting (optional). */
+  async prepareVoiceMic() {
+    if (!this.voice) return false
+    const ok = await this.voice.prepareMic()
+    this.emitVoiceUi()
+    return ok
+  }
+
+  setVoiceSpeakerEnabled(enabled: boolean) {
+    if (!this.voice) return
+    this.voice.setSpeakerEnabled(enabled)
+    this.emitVoiceUi()
+  }
+
+  /** Remote voice chat level (0–1). */
+  setVoiceVolume(volume: number) {
+    if (!this.voice) return
+    this.voice.setVoiceVolume(volume)
+  }
+
+  /** Pull voice volume from live user settings (settings slider mid-match). */
+  syncVoiceFromUserSettings() {
+    this.voice?.syncFromUserSettings()
+  }
+
+  /** Wire opponent id into voice when both seats are filled. */
+  private syncVoicePeerFromSnapshot(snap: SnapshotMessage) {
+    if (!this.voice || !this.localPlayerId) return
+    const other = snap.players.find((p) => p.id !== this.localPlayerId)
+    if (other) this.voice.ensurePeer(other.id)
   }
 
   isOnlineMode() {
@@ -1288,8 +1442,13 @@ export class GameEngine {
 
   dispose() {
     this.stop()
+    this.voice?.dispose()
+    this.voice = null
     this.net?.disconnect()
     this.net = null
+    this.chatListeners.clear()
+    this.voiceUiListeners.clear()
+    this.chatLines = []
     this.remotes.clear()
     this.prediction.clear()
     this.input.detach()
@@ -1692,6 +1851,12 @@ export class GameEngine {
 
     this.playerVisuals.updatePose(this.player, this.thirdPerson)
     this.remotes.update(dt)
+    // Host wait room: practice dummies while alone in lobby
+    if (this.dummiesEnabled) {
+      stepDummies(this.dummies, dt)
+      stepRespawns(this.dummies, this.respawns, dt)
+      this.dummiesSys.update(dt, this.dummies, false)
+    }
     this.combatFx.update(dt)
     this.barrierVisuals.update(this.player.position)
 
@@ -1713,7 +1878,9 @@ export class GameEngine {
     }
 
     // Latest only for local combat HUD / respawn
-    this.applyLocalSnapshot(snaps[snaps.length - 1])
+    const latest = snaps[snaps.length - 1]
+    this.applyLocalSnapshot(latest)
+    this.syncVoicePeerFromSnapshot(latest)
   }
 
   private pushRemoteSnapshots(snap: SnapshotMessage) {

@@ -1,9 +1,11 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { gameAudio } from '@/game/audio'
+import type { GameEngine } from '@/game/engine/GameEngine'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
 import { SNIPER } from '@/game/core/config'
 import { ScopeOverlay } from './ScopeOverlay'
+import { InGameChat } from './InGameChat'
 import {
   formatKeyCode,
   getUserSettings,
@@ -12,6 +14,19 @@ import { fmtNum } from '@/game/maps'
 import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
+/** Lobby details for the online waiting / host chrome (from page state). */
+export type GameHudLobbyInfo = {
+  matchId: string
+  mapId: string
+  mapName: string
+  wager: number
+  /** Wall-clock ms when the lobby was created; null if unknown. */
+  createdAt: number | null
+  hostName?: string
+  /** Host is hanging on the practice range until someone joins. */
+  waitOnRange?: boolean
+}
+
 interface GameHudProps {
   hud: HudSnapshot | null
   onOpenSettings?: () => void
@@ -19,6 +34,13 @@ interface GameHudProps {
   onExit?: () => void
   /** Pregame ready toggle (online). */
   onReady?: (ready: boolean) => void
+  /** Online engine for in-match chat / voice (null offline). */
+  engine?: GameEngine | null
+  /** Chat composer open — parent pauses gameplay. */
+  chatOpen?: boolean
+  onChatOpenChange?: (open: boolean) => void
+  /** Open lobby metadata (waiting panel + host chrome). */
+  lobby?: GameHudLobbyInfo | null
 }
 
 /** Cartoon PNG from /public/icons — thick outline sticker set. */
@@ -123,6 +145,18 @@ function hpBarColor(hp: number): string {
   if (hp > 60) return 'bg-arena-ok'
   if (hp > 30) return 'bg-arena-heat'
   return 'bg-arena-danger'
+}
+
+/** Human lobby age from createdAt (e.g. 12s, 3m 04s). */
+function formatLobbyAge(createdAt: number, now: number): string {
+  const sec = Math.max(0, Math.floor((now - createdAt) / 1000))
+  if (sec < 60) return `${sec}s`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return `${h}h ${rm}m`
 }
 
 function formatMatchClock(seconds: number): string {
@@ -423,7 +457,20 @@ export function GameHud({
   onOpenSettings,
   onExit,
   onReady,
+  engine = null,
+  chatOpen = false,
+  onChatOpenChange,
+  lobby = null,
 }: GameHudProps) {
+  const [now, setNow] = useState(() => Date.now())
+
+  // Tick lobby age while waiting for an opponent
+  useEffect(() => {
+    if (!hud?.matchWaiting || !lobby?.createdAt) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [hud?.matchWaiting, lobby?.createdAt])
+
   if (!hud) return null
 
   const showHit = Boolean(hud.lastHit && hud.lastHitAge < HITMARKER_DURATION)
@@ -472,6 +519,8 @@ export function GameHud({
         Math.min(1, 1 - hud.phaseTimer / Math.max(0.001, SNIPER.reloadTime)),
       )
     : 0
+  const lobbyAge =
+    lobby?.createdAt != null ? formatLobbyAge(lobby.createdAt, now) : null
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 select-none text-arena-fg">
@@ -481,27 +530,90 @@ export function GameHud({
         reloadJiggleY={hud.reloadJiggleY}
       />
 
-      {/* Waiting for opponent */}
+      {/* Waiting for opponent — sits in the normal HUD (no full-screen dim) */}
       <AnimatePresence>
         {hud.matchWaiting && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/50"
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            className="pointer-events-none absolute bottom-24 left-1/2 z-40 w-[min(26rem,94vw)] -translate-x-1/2"
           >
-            <HudPanel className="px-8 py-6 text-center" accent="tech">
+            <HudPanel className="px-5 py-4 text-center" accent="tech">
               <div className="flex items-center justify-center gap-2">
-                <GameIcon src={icons.globe} className="size-6" />
-                <div className="text-xs font-extrabold tracking-wide text-arena-tech uppercase">
-                  Online 1v1
+                <GameIcon src={icons.globe} className="size-5" />
+                <div className="text-[11px] font-extrabold tracking-wide text-arena-tech uppercase">
+                  Lobby open
                 </div>
+                <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink/60 bg-arena-surface px-1.5 py-0.5 text-[9px] font-extrabold text-arena-ok uppercase">
+                  <span className="size-1.5 animate-pulse rounded-full bg-arena-ok" />
+                  Waiting
+                </span>
               </div>
-              <div className="mt-2 text-xl font-black tracking-tight">
+              <div className="mt-1.5 text-base font-black tracking-tight">
                 Waiting for opponent…
               </div>
-              <div className="mt-1 text-sm font-semibold text-arena-fg/55">
-                Share the same match id — first to {firstTo} wins.
+              {lobby?.waitOnRange && (
+                <div className="mt-0.5 text-[11px] font-semibold text-arena-fg/45">
+                  Warm up on the practice range — duel starts when they join.
+                </div>
+              )}
+
+              <div className="mt-3 grid grid-cols-2 gap-1.5 text-left">
+                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
+                    <GameIcon src={icons.map} className="size-3" />
+                    Map
+                  </div>
+                  <div className="mt-0.5 truncate text-xs font-extrabold text-arena-tech">
+                    {lobby?.mapName ?? '—'}
+                  </div>
+                </div>
+                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
+                    <GameIcon src={icons.coins} className="size-3" />
+                    Wager
+                  </div>
+                  <div className="mt-0.5 text-xs font-extrabold tabular-nums text-arena-heat">
+                    {lobby && lobby.wager > 0 ? `$${lobby.wager}` : 'Free'}
+                  </div>
+                </div>
+                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
+                    <GameIcon src={icons.trophy} className="size-3" />
+                    First to
+                  </div>
+                  <div className="mt-0.5 text-xs font-extrabold tabular-nums">
+                    {firstTo}
+                  </div>
+                </div>
+                <div className="rounded-lg border-[2px] border-arena-ink/50 bg-arena-surface/80 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1 text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
+                    <GameIcon src={icons.bolt} className="size-3" />
+                    Open for
+                  </div>
+                  <div className="mt-0.5 text-xs font-extrabold tabular-nums text-arena-fg/85">
+                    {lobbyAge ?? '—'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-semibold text-arena-fg/45">
+                <span className="inline-flex items-center gap-1">
+                  <GameIcon src={icons.link} className="size-3" />
+                  <span className="font-mono text-arena-fg/70">
+                    {lobby?.matchId ?? '—'}
+                  </span>
+                </span>
+                {lobby?.hostName && (
+                  <span className="inline-flex items-center gap-1">
+                    <GameIcon src={icons.friend} className="size-3" />
+                    {lobby.hostName}
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-[10px] font-semibold text-arena-fg/35">
+                Share the room code — it shows in Lobbies for others to join.
               </div>
             </HudPanel>
           </motion.div>
@@ -934,9 +1046,24 @@ export function GameHud({
         </AnimatePresence>
       </div>
 
+      {/*
+        In-match chat + voice — separate from bottom chrome so ADS fade
+        never hides it, and it mounts whenever an online engine is set
+        (not only after the first snapshot sets matchPhase).
+      */}
+      {engine && onChatOpenChange && (
+        <div className="pointer-events-none absolute bottom-[5.75rem] left-4 z-50">
+          <InGameChat
+            engine={engine}
+            open={chatOpen}
+            onOpenChange={onChatOpenChange}
+          />
+        </div>
+      )}
+
       {/* Bottom chrome — health left, mag bullets right */}
       <div
-        className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 transition-opacity duration-150"
+        className="absolute bottom-4 left-4 right-4 z-30 flex items-end justify-between gap-4 transition-opacity duration-150"
         style={{ opacity: chromeOpacity }}
       >
         {/* Health — compact row */}
@@ -1066,8 +1193,10 @@ export function GameHud({
         </div>
       )}
 
-      {/* Click to play — settings (keybinds) + prompt only; no reticle decoration */}
-      {!hud.pointerLocked && !(!hud.alive && hud.spectating) && (
+      {/* Click to play — hide while typing chat so the composer stays usable */}
+      {!hud.pointerLocked &&
+        !chatOpen &&
+        !(!hud.alive && hud.spectating) && (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-black/45">
           <HudPanel className="px-10 py-8 text-center" accent="heat">
             <div className="text-2xl font-black tracking-tight">

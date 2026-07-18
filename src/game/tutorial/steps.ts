@@ -157,10 +157,10 @@ export function buildTutorialSteps(): TutorialStep[] {
       id: 'audio',
       kind: 'settings',
       title: 'Audio',
-      body: 'Set master and SFX volume so gunshots and UI stay clear without blasting your ears. Mute is available if you need silence.',
+      body: 'Set master and SFX volume so gunshots and UI stay clear. Voice chat (online) has push-to-talk, open mic, or off — plus voice volume and rebind.',
       bullets: [
         `Press ${openKey} to open Audio settings`,
-        'Adjust master / SFX (or mute)',
+        'Adjust master / SFX, voice mode & volume',
         'Esc closes settings · Enter continues',
       ],
       objective: `Press ${openKey} for Audio, then Enter when ready`,

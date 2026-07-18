@@ -14,6 +14,10 @@ export type ActionId =
   | 'reload'
   | 'fire'
   | 'ads'
+  | 'voice'
+
+/** In-match mic transmit mode. */
+export type VoiceMode = 'push_to_talk' | 'open_mic' | 'off'
 
 /** One or more keyboard/mouse codes bound to an action. */
 export type Keybinds = Record<ActionId, string[]>
@@ -47,6 +51,15 @@ export interface UserSettings {
    * When false (default), hold to sprint.
    */
   toggleSprint: boolean
+  /**
+   * In-match voice chat mode.
+   * - push_to_talk: hold voice key / Speak button to transmit
+   * - open_mic: always transmit when in match
+   * - off: full disable — no send, no hear
+   */
+  voiceMode: VoiceMode
+  /** Remote voice chat level 0–1 (independent of SFX). */
+  voiceVolume: number
   keybinds: Keybinds
 }
 
@@ -64,6 +77,7 @@ export const ACTION_ORDER: ActionId[] = [
   'reload',
   'fire',
   'ads',
+  'voice',
 ]
 
 export const ACTION_LABELS: Record<ActionId, string> = {
@@ -77,6 +91,7 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   reload: 'Reload',
   fire: 'Fire',
   ads: 'Aim down sights',
+  voice: 'Push to talk',
 }
 
 export const DEFAULT_KEYBINDS: Keybinds = {
@@ -90,6 +105,34 @@ export const DEFAULT_KEYBINDS: Keybinds = {
   reload: ['KeyR'],
   fire: ['MouseLeft'],
   ads: ['MouseRight'],
+  voice: ['KeyV'],
+}
+
+export const VOICE_MODE_OPTIONS: {
+  id: VoiceMode
+  label: string
+  description: string
+}[] = [
+  {
+    id: 'push_to_talk',
+    label: 'Push to talk',
+    description: 'Hold the voice key or Speak button to transmit',
+  },
+  {
+    id: 'open_mic',
+    label: 'Always open',
+    description: 'Mic stays on while you are in a match',
+  },
+  {
+    id: 'off',
+    label: 'Voice off',
+    description: 'No voice chat — you neither send nor hear',
+  },
+]
+
+export function normalizeVoiceMode(v: unknown): VoiceMode {
+  if (v === 'open_mic' || v === 'off' || v === 'push_to_talk') return v
+  return 'push_to_talk'
 }
 
 export function cloneKeybinds(src: Keybinds): Keybinds {
@@ -110,6 +153,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   toggleAds: false,
   toggleCrouch: false,
   toggleSprint: false,
+  voiceMode: 'push_to_talk',
+  voiceVolume: 1,
   keybinds: cloneKeybinds(DEFAULT_KEYBINDS),
 }
 
@@ -134,6 +179,8 @@ export function applyUserSettings(next: UserSettings) {
     toggleAds: Boolean(next.toggleAds),
     toggleCrouch: Boolean(next.toggleCrouch),
     toggleSprint: Boolean(next.toggleSprint),
+    voiceMode: normalizeVoiceMode(next.voiceMode),
+    voiceVolume: clamp01(next.voiceVolume),
     keybinds: normalizeKeybinds(next.keybinds),
   }
 }

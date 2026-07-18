@@ -75,6 +75,11 @@ export interface MapDef {
   fallDeath: boolean
   /** Override DEATH.fallKillDepth for this map (meters below spawn Y). */
   fallKillDepth?: number
+  /**
+   * When false, map is training-only (practice range) and must never be
+   * selected as the ranked / hosted 1v1 arena.
+   */
+  duelEligible: boolean
 }
 
 const rangeDummies: MapDummyDef[] = WORLD.dummies.map((d) => ({
@@ -119,6 +124,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x87a0b8,
     loadEnvTextures: true,
     fallDeath: false,
+    duelEligible: false,
   },
   desert: {
     id: 'desert',
@@ -144,6 +150,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0xb8a070,
     loadEnvTextures: false,
     fallDeath: true,
+    duelEligible: true,
   },
   'desert-2': {
     id: 'desert-2',
@@ -167,6 +174,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0xb09060,
     loadEnvTextures: false,
     fallDeath: true,
+    duelEligible: true,
   },
   'arena-v3': {
     id: 'arena-v3',
@@ -192,6 +200,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x6a7a8a,
     loadEnvTextures: false,
     fallDeath: true,
+    duelEligible: true,
   },
   'arena-v4': {
     id: 'arena-v4',
@@ -216,6 +225,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x5a6a7a,
     loadEnvTextures: false,
     fallDeath: true,
+    duelEligible: true,
   },
   tdm: {
     id: 'tdm',
@@ -241,6 +251,7 @@ export const MAPS: Record<MapId, MapDef> = {
     bgColor: 0x7a8898,
     loadEnvTextures: false,
     fallDeath: true,
+    duelEligible: true,
   },
 }
 
@@ -253,7 +264,14 @@ export const MAP_LIST: MapDef[] = [
   MAPS.tdm,
 ]
 
-export const DEFAULT_MAP_ID: MapId = 'range'
+/** Maps allowed for hosted / joined 1v1 (excludes practice range). */
+export const DUEL_MAP_LIST: MapDef[] = MAP_LIST.filter((m) => m.duelEligible)
+
+/** Default picker / deploy selection — never the practice range. */
+export const DEFAULT_MAP_ID: MapId = 'desert'
+
+/** Fallback arena when a host tries to use the practice range. */
+export const DEFAULT_DUEL_MAP_ID: MapId = 'desert'
 
 export function getMap(id: string | null | undefined): MapDef {
   if (id && id in MAPS) return MAPS[id as MapId]
@@ -262,4 +280,15 @@ export function getMap(id: string | null | undefined): MapDef {
 
 export function isMapId(id: string): id is MapId {
   return id in MAPS
+}
+
+/** True for catalog maps that can be hosted as a 1v1 arena. */
+export function isDuelMapId(id: string): id is MapId {
+  return isMapId(id) && MAPS[id].duelEligible
+}
+
+/** Coerce any id to a duel-eligible map (practice range → default arena). */
+export function coerceDuelMapId(id: string | null | undefined): MapId {
+  if (id && isDuelMapId(id)) return id
+  return DEFAULT_DUEL_MAP_ID
 }
