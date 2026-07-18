@@ -23,6 +23,7 @@ import type { NetClient, RemotePlayerSystem } from '../../net'
 import {
   effectiveLook,
   eyePosition as eyePosShared,
+  resetPlayerLocomotion,
   SNIPER,
   spreadLookDirection,
   aimSpread as aimSpreadShared,
@@ -77,13 +78,11 @@ export function tickOnline(
       host.matchPhase == null)
 
   if (movementLocked) {
-    // Hold pad position; mouse look still updates yaw/pitch
-    host.player.velocity.x = 0
-    host.player.velocity.y = 0
-    host.player.velocity.z = 0
-    host.player.grounded = true
-    host.player.state = 'idle'
-    host.player.slideTimer = 0
+    // Hold pad pose; clear slide/crouch carry-over (stepPlayer is skipped).
+    // stopSlide is idempotent — covers snaps that changed state before SFX edge.
+    resetPlayerLocomotion(host.player)
+    gameAudio.stopSlide()
+    host.viewFeel.resetMoveFeel()
     host.player.yaw = input.yaw
     host.player.pitch = input.pitch
   } else {

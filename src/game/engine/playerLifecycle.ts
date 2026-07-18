@@ -9,7 +9,7 @@ import type { DeathReason, SniperState } from '../core/types'
 import { pickPlaySpawn, type MapDef, type MapSpawnLayout } from '../maps'
 import { computeFallKillY } from '../sim/death'
 import { eyePosition } from '../sim/player'
-import type { PlayerBody } from '@glint/shared'
+import { resetPlayerLocomotion, type PlayerBody } from '@glint/shared'
 import { createFreeCam, type FreeCamState } from '../sim/spectate'
 import { resetSniper } from '../sim/sniper'
 import type { ViewmodelSystem } from '../viewmodel/ViewmodelSystem'
@@ -76,16 +76,10 @@ export function applySpawn(
   // are preferred by the placer — raised Y still helps until gravity settles.
   player.position.y = Math.max(0, spawn.y)
   player.position.z = spawn.z
-  player.velocity.x = 0
-  player.velocity.y = 0
-  player.velocity.z = 0
   player.yaw = spawnYaw
   player.pitch = 0
-  player.grounded = true
-  player.state = 'idle'
-  player.slideTimer = 0
-  player.slideCd = 0
-  player.slideSpeed = 0
+  resetPlayerLocomotion(player)
+  gameAudio.stopSlide()
   input.setLook(spawnYaw, 0)
 }
 
@@ -252,9 +246,8 @@ export function setFreeCam(host: CameraHost, enabled: boolean) {
 
 /** Detach camera into free-fly from the current eye (idempotent). */
 export function enterFreeCam(host: CameraHost) {
-  host.player.velocity.x = 0
-  host.player.velocity.y = 0
-  host.player.velocity.z = 0
+  resetPlayerLocomotion(host.player)
+  gameAudio.stopSlide()
   host.sniper.ads = false
   host.sniper.adsBlend = 0
 

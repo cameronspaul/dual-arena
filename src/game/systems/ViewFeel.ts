@@ -75,6 +75,16 @@ export class ViewFeel {
     this.prevVelY = player.velocity.y
   }
 
+  /** Drop slide cant / sprint FOV after hard pose snap (round reset, countdown pin). */
+  resetMoveFeel() {
+    this.slideGunBlend = 0
+    this.sprintFovBlend = 0
+    this.runPoseBlend = 0
+    this.moveLeanFwd = 0
+    this.moveLeanRight = 0
+    this.bobAmount = 0
+  }
+
   /**
    * Landing / ADS / jump SFX + spring integration for land dip.
    * Returns whether grounded after step (for callers).

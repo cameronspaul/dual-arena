@@ -9,6 +9,7 @@ import type { ViewmodelSystem } from '../../viewmodel/ViewmodelSystem'
 import type { Prediction, RemotePlayerSystem, VoicePeer } from '../../net'
 import {
   eyePosition as eyePosShared,
+  resetPlayerLocomotion,
   type MatchPhase,
   type NetHitEvent,
   type NetShotEvent,
@@ -155,15 +156,14 @@ export function applyLocalSnapshot(host: NetApplyHost, snap: SnapshotMessage) {
         host.freeCam = null
         host.voluntaryFreeCam = false
         if (fullSnap) host.prediction.clear()
-        // Always pin feet/vel to server pad during countdown
+        // Always pin feet to server pad during countdown / respawn.
+        // Full locomotion reset so mid-slide round resets don't keep slide
+        // state, crouch height, or looping slide audio.
         host.player.position.x = p.x
         host.player.position.y = p.y
         host.player.position.z = p.z
-        host.player.velocity.x = 0
-        host.player.velocity.y = 0
-        host.player.velocity.z = 0
-        host.player.grounded = true
-        host.player.state = 'idle'
+        resetPlayerLocomotion(host.player)
+        gameAudio.stopSlide()
         host.playSpawn = {
           spawn: { x: p.x, y: p.y, z: p.z },
           spawnYaw: p.yaw,
