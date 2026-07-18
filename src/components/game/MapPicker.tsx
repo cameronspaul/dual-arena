@@ -48,32 +48,32 @@ const SKYBOX_OPTIONS: SkyboxPreference[] = [...SKYBOX_IDS, 'random']
 const COMMUNITY_LINKS = [
   {
     label: 'Discord',
-    href: 'https://discord.gg/',
+    href: 'https://discord.com/invite/KFTtqWbutQ',
     icon: SiDiscord,
     className: 'bg-[#5865F2] text-white',
   },
   {
     label: 'YouTube',
-    href: 'https://youtube.com/',
+    href: 'https://www.youtube.com/@muxlabs',
     icon: SiYoutube,
     className: 'bg-[#FF0000] text-white',
   },
   {
     label: 'Instagram',
-    href: 'https://instagram.com/',
+    href: 'https://www.instagram.com/muxlabs',
     icon: SiInstagram,
     className:
       'bg-gradient-to-br from-[#f9ce34] via-[#ee2a7b] to-[#6228d7] text-white',
   },
   {
     label: 'TikTok',
-    href: 'https://tiktok.com/',
+    href: 'https://www.tiktok.com/@muxlabs',
     icon: SiTiktok,
     className: 'bg-black text-white',
   },
   {
     label: 'X',
-    href: 'https://x.com/',
+    href: 'https://x.com/mux_labs',
     icon: SiX,
     className: 'bg-black text-white',
   },
@@ -276,7 +276,7 @@ function Chip({
       title={title}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 items-center justify-center gap-1 rounded-xl border-[2.5px] border-arena-ink px-2.5 text-[11px] font-extrabold transition-all',
+        'inline-flex h-9 items-center justify-center gap-1 rounded-xl border-[2.5px] border-arena-ink px-2.5 text-sm font-extrabold transition-all',
         active
           ? 'bg-arena-heat text-arena-ink shadow-[2px_3px_0_var(--arena-ink)]'
           : 'bg-arena-surface text-arena-fg/70 shadow-[1px_2px_0_var(--arena-ink)] hover:-translate-y-0.5 hover:bg-arena-hover hover:text-arena-fg',
@@ -344,7 +344,7 @@ function SectionLabel({
   return (
     <div className="mb-1.5 flex items-center gap-1.5">
       <GameIcon src={iconSrc} className="size-3.5" />
-      <span className="text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
+      <span className="text-xs font-extrabold tracking-wide text-arena-fg/45 uppercase">
         {children}
       </span>
     </div>
@@ -838,12 +838,12 @@ export function MapPicker({
           <button
             type="button"
             onClick={handleRejoin}
-            className="inline-flex h-9 items-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+            className="inline-flex h-9 items-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
             title={`Rejoin ${rejoinSession?.matchId ?? 'match'} — ${rejoinLeft}s left`}
           >
             <GameIcon src={icons.reberth} className="size-4" />
             Rejoin match
-            <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-ink/10 px-1.5 py-0.5 font-mono text-[10px] tabular-nums">
+            <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-ink/10 px-1.5 py-0.5 font-mono text-xs tabular-nums">
               {Math.floor(rejoinLeft / 60)}:
               {(rejoinLeft % 60).toString().padStart(2, '0')}
             </span>
@@ -898,11 +898,11 @@ export function MapPicker({
             <div className="flex items-center justify-between gap-1.5">
               <div className="flex items-center gap-1.5">
                 <SiSolana className="size-3.5 text-[#9945FF]" aria-hidden />
-                <h2 className="text-[10px] font-extrabold tracking-wide text-arena-fg/55 uppercase">
+                <h2 className="text-xs font-extrabold tracking-wide text-arena-fg/55 uppercase">
                   Balance
                 </h2>
               </div>
-              <span className="rounded-md border-[2px] border-arena-ink bg-arena-surface px-1.5 py-0.5 text-[8px] font-extrabold tracking-wide text-[#14F195]/80 uppercase">
+              <span className="rounded-md border-[2px] border-arena-ink bg-arena-surface px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide text-[#14F195]/80 uppercase">
                 Solana
               </span>
             </div>
@@ -912,12 +912,12 @@ export function MapPicker({
                 <SiSolana className="size-5 text-arena-fg" aria-hidden />
               </div>
               <div className="flex items-baseline justify-center gap-1">
-                <span className="text-2xl font-black tabular-nums tracking-tight text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)] sm:text-3xl">
+                <span className="text-3xl font-black tabular-nums tracking-tight text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)] sm:text-4xl">
                   {solBalanceLabel}
                 </span>
-                <span className="text-xs font-extrabold text-arena-fg/45">SOL</span>
+                <span className="text-sm font-extrabold text-arena-fg/45">SOL</span>
               </div>
-              <p className="mt-1 text-[10px] font-semibold text-arena-fg/40">
+              <p className="mt-1 text-xs font-semibold text-arena-fg/40">
                 Wallet not connected
               </p>
             </div>
@@ -925,7 +925,7 @@ export function MapPicker({
             <button
               type="button"
               onClick={() => gameAudio.uiClick()}
-              className="mt-3 inline-flex h-9 w-full shrink-0 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-2 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+              className="mt-3 inline-flex h-9 w-full shrink-0 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-2 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
               title="Connect Solana wallet — coming soon"
             >
               <SiSolana className="size-3.5" aria-hidden />
@@ -948,9 +948,9 @@ export function MapPicker({
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <GameIcon src={icons.flag} className="size-4" />
-                <span className="text-sm font-extrabold">Host duel</span>
+                <span className="text-base font-extrabold">Host duel</span>
               </div>
-              <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink bg-arena-ok/25 px-1.5 py-0.5 text-[9px] font-extrabold text-arena-ok uppercase">
+              <span className="inline-flex items-center gap-1 rounded-md border-[2px] border-arena-ink bg-arena-ok/25 px-1.5 py-0.5 text-[11px] font-extrabold text-arena-ok uppercase">
                 <GameIcon src={icons.fire} className="size-3" />
                 1v1
               </span>
@@ -963,7 +963,7 @@ export function MapPicker({
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
                 spellCheck={false}
-                className="w-full rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
+                className="w-full rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-sm text-arena-fg outline-none focus:border-arena-tech"
                 placeholder="ws://localhost:2567"
               />
             </div>
@@ -980,12 +980,12 @@ export function MapPicker({
                   )}
                 >
                   <GameIcon src={icons.location} className="size-3.5 shrink-0" />
-                  <span className="truncate text-xs font-extrabold text-arena-fg">
+                  <span className="truncate text-sm font-extrabold text-arena-fg">
                     {selected.name}
                   </span>
                   <span
                     className={cn(
-                      'ml-auto shrink-0 text-[9px] font-bold tracking-wide uppercase',
+                      'ml-auto shrink-0 text-[11px] font-bold tracking-wide uppercase',
                       canHostDuel
                         ? 'text-arena-fg/40'
                         : 'text-arena-danger',
@@ -995,7 +995,7 @@ export function MapPicker({
                   </span>
                 </div>
                 {!canHostDuel && (
-                  <p className="mt-1 text-[10px] font-semibold text-arena-danger/90">
+                  <p className="mt-1 text-xs font-semibold text-arena-danger/90">
                     Pick a duel arena below — Practice Range can&apos;t host 1v1.
                   </p>
                 )}
@@ -1049,7 +1049,7 @@ export function MapPicker({
               </div>
             </div>
 
-            <p className="mt-2 shrink-0 text-[10px] font-semibold text-arena-fg/40">
+            <p className="mt-2 shrink-0 text-xs font-semibold text-arena-fg/40">
               You wait on the practice range; the duel map loads when someone joins.
             </p>
 
@@ -1064,7 +1064,7 @@ export function MapPicker({
                   ? 'Select a 1v1 map — Practice Range is training only'
                   : undefined
               }
-              className="mt-2 inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-4 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+              className="mt-2 inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-4 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
             >
               <GameIcon src={icons.flag} className="size-5" />
               Host duel
@@ -1086,7 +1086,7 @@ export function MapPicker({
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <GameIcon src={icons.friend} className="size-4" />
-                <span className="text-sm font-extrabold">Lobbies</span>
+                <span className="text-base font-extrabold">Lobbies</span>
               </div>
               <button
                 type="button"
@@ -1094,7 +1094,7 @@ export function MapPicker({
                   gameAudio.uiClick()
                   void refreshLobbies()
                 }}
-                className="inline-flex h-7 items-center gap-1 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-extrabold text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover hover:text-arena-fg"
+                className="inline-flex h-7 items-center gap-1 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-xs font-extrabold text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover hover:text-arena-fg"
               >
                 <GameIcon src={icons.reberth} className="size-3" />
                 Refresh
@@ -1103,17 +1103,17 @@ export function MapPicker({
 
             <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-0.5">
               {lobbyStatus === 'loading' && lobbies.length === 0 && (
-                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-fg/45">
+                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-sm font-semibold text-arena-fg/45">
                   Loading lobbies…
                 </p>
               )}
               {lobbyStatus === 'error' && (
-                <p className="rounded-lg border-[2px] border-arena-danger/40 bg-arena-danger/10 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-danger">
+                <p className="rounded-lg border-[2px] border-arena-danger/40 bg-arena-danger/10 px-2.5 py-3 text-center text-sm font-semibold text-arena-danger">
                   {lobbyError ?? 'Could not reach server'}
                 </p>
               )}
               {lobbyStatus === 'ok' && lobbies.length === 0 && (
-                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-fg/45">
+                <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-sm font-semibold text-arena-fg/45">
                   No open lobbies — host one, or turn on Auto join below.
                 </p>
               )}
@@ -1129,14 +1129,14 @@ export function MapPicker({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="truncate text-xs font-extrabold text-arena-fg">
+                      <span className="truncate text-sm font-extrabold text-arena-fg">
                         {lobby.hostName || 'Host'}
                       </span>
-                      <span className="shrink-0 rounded border border-arena-ink/50 bg-arena-panel px-1 py-px text-[8px] font-bold text-arena-fg/50 uppercase">
+                      <span className="shrink-0 rounded border border-arena-ink/50 bg-arena-panel px-1 py-px text-[10px] font-bold text-arena-fg/50 uppercase">
                         {lobby.playerCount}/{lobby.maxPlayers}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-semibold text-arena-fg/50">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-semibold text-arena-fg/50">
                       <span className="truncate text-arena-tech">
                         {mapLabel(lobby.mapId)}
                       </span>
@@ -1146,7 +1146,7 @@ export function MapPicker({
                           {lobby.wager}
                         </span>
                       )}
-                      <span className="truncate font-mono text-[9px] text-arena-fg/35">
+                      <span className="truncate font-mono text-[11px] text-arena-fg/35">
                         {lobby.matchId}
                       </span>
                     </div>
@@ -1161,7 +1161,7 @@ export function MapPicker({
                         wager: lobby.wager,
                       })
                     }
-                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2.5 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-none"
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2.5 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-none"
                   >
                     Join
                   </button>
@@ -1183,7 +1183,7 @@ export function MapPicker({
                     key={opt.id}
                     active={lobbyWatchMode === opt.id}
                     onClick={() => setWatchMode(opt.id)}
-                    className="h-7 min-w-0 flex-1 px-1.5 text-[10px]"
+                    className="h-7 min-w-0 flex-1 px-1.5 text-xs"
                     title={
                       opt.id === 'off'
                         ? 'No alerts for new lobbies'
@@ -1198,21 +1198,21 @@ export function MapPicker({
               </div>
 
               {lobbyWatchMode === 'off' && (
-                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                <p className="text-xs font-semibold leading-snug text-arena-fg/40">
                   Silent list. Switch to Notify for a queue-pop sound, or Auto
                   to join in {AUTO_JOIN_SECONDS}s.
                 </p>
               )}
 
               {lobbyWatchMode === 'notify' && !notifiedLobby && !autoJoinTarget && (
-                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                <p className="text-xs font-semibold leading-snug text-arena-fg/40">
                   Live updates (even in background) — new lobbies play the
                   queue sting twice and show a banner.
                 </p>
               )}
 
               {lobbyWatchMode === 'auto' && !autoJoinTarget && (
-                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                <p className="text-xs font-semibold leading-snug text-arena-fg/40">
                   Live updates (even in background) — sting loops until join;
                   auto-joins after {AUTO_JOIN_SECONDS}s (cancel anytime).
                 </p>
@@ -1222,10 +1222,10 @@ export function MapPicker({
                 <div className="mt-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-heat/15 px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-[10px] font-black tracking-wide text-arena-heat uppercase">
+                      <p className="text-xs font-black tracking-wide text-arena-heat uppercase">
                         Queue pop · joining in {autoJoinLeft}s
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] font-extrabold text-arena-fg">
+                      <p className="mt-0.5 truncate text-sm font-extrabold text-arena-fg">
                         {autoJoinTarget.hostName || 'Host'} ·{' '}
                         <span className="text-arena-tech">
                           {mapLabel(autoJoinTarget.mapId)}
@@ -1235,7 +1235,7 @@ export function MapPicker({
                     <button
                       type="button"
                       onClick={cancelAutoJoin}
-                      className="inline-flex h-7 shrink-0 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-black tracking-wide text-arena-fg uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
+                      className="inline-flex h-7 shrink-0 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-xs font-black tracking-wide text-arena-fg uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
                     >
                       Cancel
                     </button>
@@ -1255,10 +1255,10 @@ export function MapPicker({
                 <div className="mt-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-ok/15 px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-[10px] font-black tracking-wide text-arena-ok uppercase">
+                      <p className="text-xs font-black tracking-wide text-arena-ok uppercase">
                         New lobby
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] font-extrabold text-arena-fg">
+                      <p className="mt-0.5 truncate text-sm font-extrabold text-arena-fg">
                         {notifiedLobby.hostName || 'Host'} ·{' '}
                         <span className="text-arena-tech">
                           {mapLabel(notifiedLobby.mapId)}
@@ -1275,7 +1275,7 @@ export function MapPicker({
                       <button
                         type="button"
                         onClick={dismissNotify}
-                        className="inline-flex h-7 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-black tracking-wide text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
+                        className="inline-flex h-7 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-xs font-black tracking-wide text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
                       >
                         Dismiss
                       </button>
@@ -1292,7 +1292,7 @@ export function MapPicker({
                             wager: notifiedLobby.wager,
                           })
                         }}
-                        className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40"
+                        className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40"
                       >
                         Join
                       </button>
@@ -1315,13 +1315,13 @@ export function MapPicker({
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <GameIcon src={icons.map} className="size-4" />
-                <h2 className="text-sm font-extrabold tracking-tight">Map</h2>
-                <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-surface px-1.5 py-0.5 text-[10px] font-extrabold text-arena-fg/50 tabular-nums">
+                <h2 className="text-base font-extrabold tracking-tight">Map</h2>
+                <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-surface px-1.5 py-0.5 text-xs font-extrabold text-arena-fg/50 tabular-nums">
                   {selectedIndex >= 0
                     ? `${selectedIndex + 1}/${PICKER_MAPS.length}`
                     : `${PICKER_MAPS.length} arenas`}
                 </span>
-                <span className="hidden text-[10px] font-semibold text-arena-fg/40 sm:inline">
+                <span className="hidden text-xs font-semibold text-arena-fg/40 sm:inline">
                   1v1 arenas
                 </span>
               </div>
@@ -1395,7 +1395,7 @@ export function MapPicker({
                       <div className="absolute inset-x-0 bottom-0 p-2">
                         <div
                           className={cn(
-                            'truncate text-xs font-extrabold text-white drop-shadow-[0_1px_0_rgba(0,0,0,0.8)] sm:text-sm',
+                            'truncate text-sm font-extrabold text-white drop-shadow-[0_1px_0_rgba(0,0,0,0.8)] sm:text-base',
                             active && 'text-arena-heat',
                           )}
                         >
@@ -1430,7 +1430,7 @@ export function MapPicker({
                 >
                   <div className="flex min-w-0 items-center gap-1.5">
                     <GameIcon src={icons.location} className="size-3.5 shrink-0" />
-                    <h3 className="truncate text-sm font-black tracking-tight">
+                    <h3 className="truncate text-base font-black tracking-tight">
                       {selected.name}
                     </h3>
                   </div>
@@ -1443,7 +1443,7 @@ export function MapPicker({
                   <Chip
                     key={id}
                     active={skybox === id}
-                    className="h-7 px-2 text-[10px]"
+                    className="h-7 px-2 text-xs"
                     onClick={() => {
                       gameAudio.uiClick()
                       onSkyboxChange(id)
@@ -1461,7 +1461,7 @@ export function MapPicker({
                       <button
                         type="button"
                         onClick={handlePracticeRange}
-                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-2.5 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
+                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-ok px-2.5 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
                         title="Free roam on the practice range — dummies, no match"
                       >
                         <GameIcon src={icons.aim} className="size-4" />
@@ -1472,7 +1472,7 @@ export function MapPicker({
                       <button
                         type="button"
                         onClick={handleTutorial}
-                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-2.5 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
+                        className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-2.5 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:flex-none sm:px-3"
                         title="Guided how-to-play on the practice range"
                       >
                         <GameIcon src={icons.star} className="size-4" />
@@ -1484,7 +1484,7 @@ export function MapPicker({
                 <button
                   type="button"
                   onClick={handlePlay}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:w-auto sm:px-5"
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 text-base font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:w-auto sm:px-5"
                 >
                   <GameIcon src={icons.rocket} className="size-5" />
                   Deploy
@@ -1508,11 +1508,11 @@ export function MapPicker({
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <GameIcon src={icons.cap} className="size-4" />
-                <span className="text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
+                <span className="text-xs font-extrabold tracking-wide text-arena-fg/45 uppercase">
                   Operator
                 </span>
               </div>
-              <span className="truncate text-[11px] font-extrabold text-arena-tech">
+              <span className="truncate text-sm font-extrabold text-arena-tech">
                 {displayName}
               </span>
             </div>
@@ -1532,7 +1532,7 @@ export function MapPicker({
                 }}
                 onBlur={commitName}
                 placeholder="Enter name"
-                className="mb-2 h-9 w-full shrink-0 rounded-xl border-[2.5px] border-arena-tech/50 bg-arena-surface px-3 text-sm font-bold text-arena-fg outline-none placeholder:text-arena-fg/35 focus:border-arena-tech"
+                className="mb-2 h-9 w-full shrink-0 rounded-xl border-[2.5px] border-arena-tech/50 bg-arena-surface px-3 text-base font-bold text-arena-fg outline-none placeholder:text-arena-fg/35 focus:border-arena-tech"
               />
             ) : (
               <button
@@ -1542,7 +1542,7 @@ export function MapPicker({
                   setNameDraft(username)
                   setEditingName(true)
                 }}
-                className="mb-2 flex h-9 w-full shrink-0 items-center justify-between rounded-xl border-[2.5px] border-arena-ink bg-arena-surface px-3 text-left text-sm transition-colors hover:bg-arena-hover"
+                className="mb-2 flex h-9 w-full shrink-0 items-center justify-between rounded-xl border-[2.5px] border-arena-ink bg-arena-surface px-3 text-left text-base transition-colors hover:bg-arena-hover"
               >
                 <span
                   className={cn(
@@ -1563,7 +1563,7 @@ export function MapPicker({
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border-[2.5px] border-arena-ink bg-gradient-to-b from-arena-surface/40 via-arena-surface to-arena-surface-strong">
               <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-1.5 pt-2">
                 <GameIcon src={icons.speed} className="size-3.5 opacity-80" />
-                <span className="text-[9px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
+                <span className="text-[11px] font-extrabold tracking-wide text-arena-fg/40 uppercase">
                   Live preview
                 </span>
               </div>
@@ -1587,7 +1587,7 @@ export function MapPicker({
                   setSettingsOpen(true)
                 }}
                 className={cn(
-                  'absolute bottom-2.5 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-3 py-1.5 text-[11px] font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all',
+                  'absolute bottom-2.5 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-3 py-1.5 text-sm font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all',
                   'hover:-translate-y-0.5 hover:bg-arena-hover active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]',
                 )}
               >
@@ -1599,7 +1599,7 @@ export function MapPicker({
 
           <HudPanel className="hidden shrink-0 px-3 py-2 min-[700px]:block" accent="none">
             <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wide text-arena-fg/45 uppercase">
+              <span className="inline-flex items-center gap-1.5 text-xs font-extrabold tracking-wide text-arena-fg/45 uppercase">
                 <GameIcon src={icons.friend} className="size-3.5" />
                 Community
               </span>

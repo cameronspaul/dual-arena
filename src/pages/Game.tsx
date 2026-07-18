@@ -354,8 +354,9 @@ export default function Game() {
     hud?.matchEndReason,
   ])
 
-  // Esc resume while unlocked: PauseMenu keydown handler + InputManager
-  // (suppresses the same Esc that exited pointer lock).
+  // Esc open/dismiss is owned by GameHud / PauseMenu (never requestPointerLock
+  // from Escape — browsers deny it and a failed request blocked the next click).
+  // Mouse resume / click-outside re-locks via InputManager document mousedown.
 
   // Live character colors from settings → third-person body
   useEffect(() => {

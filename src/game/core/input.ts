@@ -66,13 +66,6 @@ export class InputManager {
   /** When false, gameplay keys/mouse are ignored (UI / settings / viewmodel editor). */
   private gameplayEnabled = true
   private keyboardLocked = false
-  /** True while Escape is held (keydown without keyup). */
-  private escHeld = false
-  /**
-   * When true, ignore Escape-to-resume until keyup — set when the unlock was
-   * caused by Escape so the same press cannot immediately re-lock.
-   */
-  private suppressEscRelock = false
   /** Notified when pointer lock is acquired or released (for immediate HUD). */
   private onLockChange: ((locked: boolean) => void) | null = null
   /**
@@ -94,36 +87,11 @@ export class InputManager {
     return this.canvas != null && document.pointerLockElement === this.canvas
   }
 
-  private isTypingTarget(t: EventTarget | null) {
-    if (!(t instanceof HTMLElement)) return false
-    const tag = t.tagName
-    return (
-      tag === 'INPUT' ||
-      tag === 'TEXTAREA' ||
-      tag === 'SELECT' ||
-      t.isContentEditable
-    )
-  }
-
   private onKeyDown = (e: KeyboardEvent) => {
-    if (e.code === 'Escape') {
-      this.escHeld = true
-      // Esc while unlocked → try re-lock (pause menu owns dismiss via its own
-      // capture handler + stopPropagation; this runs only if that path didn't).
-      // Prefer keydown for a stronger user-activation signal than keyup.
-      if (
-        !e.repeat &&
-        this.gameplayEnabled &&
-        !this.liveLocked() &&
-        !this.suppressEscRelock &&
-        this.canvas &&
-        !this.isTypingTarget(e.target)
-      ) {
-        e.preventDefault()
-        this.tryRequestPointerLock()
-      }
-      return
-    }
+    // Escape: never request pointer lock here. Browsers deny it from Esc, and a
+    // failed request used to burn the re-lock debounce so Resume needed two clicks.
+    // Menu open/dismiss is owned entirely by React (GameHud / PauseMenu).
+    if (e.code === 'Escape') return
 
     // Always block tab-close / navigation combos while input is attached.
     // Ctrl is crouch; Ctrl+W would otherwise close the browser tab.
@@ -164,12 +132,6 @@ export class InputManager {
 
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys.delete(e.code)
-
-    if (e.code === 'Escape') {
-      this.escHeld = false
-      // Consume the Esc that exited pointer lock so it cannot re-lock.
-      this.suppressEscRelock = false
-    }
   }
 
   /**
@@ -238,17 +200,8 @@ export class InputManager {
   private onPointerLockChange = () => {
     const locked = this.liveLocked()
     if (locked) {
-      this.suppressEscRelock = false
       void this.lockKeyboard()
     } else {
-      // Block Esc-to-resume for the same press that unlocked. If unlock was not
-      // from Esc (settings / Alt-Tab), clear the block on the next frame.
-      this.suppressEscRelock = true
-      if (!this.escHeld) {
-        requestAnimationFrame(() => {
-          if (!this.escHeld) this.suppressEscRelock = false
-        })
-      }
       this.clearLatches()
       this.unlockKeyboard()
     }
@@ -286,7 +239,7 @@ export class InputManager {
 
   /**
    * @param opts.force — re-enable gameplay if needed (pause-menu resume).
-   *   Call only from a user-gesture stack (mousedown / click / keydown).
+   *   Call only from a user-gesture stack (mousedown / click).
    */
   private tryRequestPointerLock(opts?: { force?: boolean }) {
     if (opts?.force) this.gameplayEnabled = true
@@ -301,6 +254,8 @@ export class InputManager {
 
     const canvas = this.canvas
     try {
+      // Focus canvas before lock so keyboard (WASD / Esc) works immediately
+      // after lock without needing a second click into the page.
       canvas.focus({ preventScroll: true })
     } catch {
       // ignore
@@ -352,8 +307,6 @@ export class InputManager {
       document.exitPointerLock()
     }
     this.canvas = null
-    this.escHeld = false
-    this.suppressEscRelock = false
     this.onLockChange = null
     this.lockRequestAt = 0
   }

@@ -428,30 +428,38 @@ export function GameHud({
    * Pause menu visibility is an explicit UI state, not a raw mirror of pointer
    * lock. That split is what makes dismiss reliable:
    *
-   *  - open: unlocked + not dismissed (start of play, or Esc while looking)
+   *  - open: unlocked + not dismissed (start of play, or Esc / alt-tab unlock)
    *  - dismissed: user hit Resume / Esc / backdrop → hide immediately
    *  - playing: pointer locked → menu always hidden regardless of dismissed
    *
    * requestPointerLock can flap (grant then cancel) when the menu unmounts on
    * the same click. A short post-resume window keeps the menu closed through
-   * that flap so one click / one Esc always dismisses.
+   * that flap so one click always dismisses.
+   *
+   * Esc never requests lock (browsers deny it). Mouse resume / backdrop /
+   * document click request lock on the same user gesture.
    */
   const [menuDismissed, setMenuDismissed] = useState(false)
   const wasPointerLocked = useRef(false)
   const resumeAtRef = useRef(0)
+  const menuDismissedRef = useRef(menuDismissed)
+  menuDismissedRef.current = menuDismissed
 
   useEffect(() => {
     if (!hud) return
     const locked = hud.pointerLocked
     const wasLocked = wasPointerLocked.current
 
-    if (wasLocked && !locked) {
+    if (locked) {
+      // Fully in control — clear dismiss so a later unlock re-opens the menu.
+      setMenuDismissed(false)
+    } else if (wasLocked && !locked) {
       // Unlock edge only — never re-open from a failed re-lock right after resume.
       const msSinceResume = performance.now() - resumeAtRef.current
       if (msSinceResume < 500) {
         setMenuDismissed(true)
       } else {
-        // Genuine unlock while playing (Esc, focus loss, etc.).
+        // Genuine unlock while playing (Esc, alt-tab / focus loss, etc.).
         setMenuDismissed(false)
       }
     }
@@ -459,14 +467,56 @@ export function GameHud({
     wasPointerLocked.current = locked
   }, [hud?.pointerLocked])
 
+  /**
+   * Mouse resume (Resume button / backdrop / click-to-look):
+   * request pointer lock while the menu is still mounted, then hide.
+   * Defer unmount one frame so Chromium does not cancel lock when the
+   * button that owned the gesture is removed from the DOM.
+   */
   const handleResume = useCallback(() => {
     resumeAtRef.current = performance.now()
-    // Request lock while the menu (and its click target) is still mounted.
     onResume?.()
-    // Always hide on the first press — even when the browser denies lock
-    // (Esc is almost always denied; flaky click locks are covered by the window above).
-    setMenuDismissed(true)
+    requestAnimationFrame(() => {
+      setMenuDismissed(true)
+    })
   }, [onResume])
+
+  /** Esc while menu is open: hide only (no lock request). */
+  const handleDismiss = useCallback(() => {
+    resumeAtRef.current = performance.now()
+    setMenuDismissed(true)
+  }, [])
+
+  /**
+   * Esc while unlocked + menu already dismissed ("Click to look"):
+   * re-open the menu so Esc is always a reliable toggle into the pause UI.
+   */
+  useEffect(() => {
+    if (!hud || hud.pointerLocked || settingsOpen || chatOpen || tutorialOpen) {
+      return
+    }
+    const deathFreeCam = !hud.alive && hud.spectating
+    if (deathFreeCam) return
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Escape' || e.repeat) return
+      // PauseMenu (when open) registers first and stopPropagates — this path
+      // only runs when the menu is dismissed and Esc would otherwise do nothing.
+      if (!menuDismissedRef.current) return
+      e.preventDefault()
+      e.stopPropagation()
+      setMenuDismissed(false)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [
+    hud?.pointerLocked,
+    hud?.alive,
+    hud?.spectating,
+    settingsOpen,
+    chatOpen,
+    tutorialOpen,
+  ])
 
   if (!hud) return null
 
@@ -853,6 +903,7 @@ export function GameHud({
         <PauseMenu
           spectating={hud.spectating}
           onResume={handleResume}
+          onDismiss={handleDismiss}
           onOpenSettings={onOpenSettings}
           onOpenHelp={onOpenHelp}
           onExit={onExit}

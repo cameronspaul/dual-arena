@@ -12,7 +12,13 @@ import { cn } from '@/lib/utils'
 
 export interface PauseMenuProps {
   spectating: boolean
+  /** Mouse resume: request pointer lock + hide menu (user gesture). */
   onResume?: () => void
+  /**
+   * Esc / cancel: hide menu only. Browsers refuse pointer lock from Escape,
+   * so this must not call requestPointerLock (that burns the re-lock debounce).
+   */
+  onDismiss?: () => void
   onOpenSettings?: () => void
   onOpenHelp?: () => void
   onExit?: () => void
@@ -34,17 +40,21 @@ export interface PauseMenuProps {
 }
 
 /**
- * Full-screen pause menu when pointer lock is released (Esc).
+ * Full-screen pause menu when pointer lock is released (Esc / alt-tab).
  *
  * Must use `pointer-events-auto` — GameHud root is `pointer-events-none`.
  *
  * Resume / backdrop intentionally do NOT use `data-no-pointer-lock` so the
  * InputManager document mousedown handler can request pointer lock on the
  * same user gesture. Only non-resume controls are marked no-lock.
+ *
+ * The panel chrome itself is also free of `data-no-pointer-lock` so Resume
+ * is not blocked by a parent closest() match.
  */
 export function PauseMenu({
   spectating,
   onResume,
+  onDismiss,
   onOpenSettings,
   onOpenHelp,
   onExit,
@@ -52,18 +62,20 @@ export function PauseMenu({
 }: PauseMenuProps) {
   const [confirmSurrender, setConfirmSurrender] = useState(false)
 
-  // Stable ref so Esc listener is registered once (HUD re-renders every frame).
+  // Stable refs so Esc listener is registered once (HUD re-renders every frame).
+  const onDismissRef = useRef(onDismiss)
+  onDismissRef.current = onDismiss
   const onResumeRef = useRef(onResume)
   onResumeRef.current = onResume
 
-  // Esc → dismiss menu. Browsers usually refuse pointer lock from Escape;
-  // parent still hides the menu and shows "Click to look".
+  // Esc → dismiss menu only (no pointer-lock request — browsers deny it and
+  // a failed request used to block the next real click for ~120ms).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'Escape' || e.repeat) return
       e.preventDefault()
       e.stopPropagation()
-      onResumeRef.current?.()
+      onDismissRef.current?.()
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
@@ -75,7 +87,8 @@ export function PauseMenu({
    */
   const resumeFromPointer = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
-    e.preventDefault()
+    // Do not preventDefault — some Chromium builds treat that as canceling
+    // the user activation needed for requestPointerLock.
     onResumeRef.current?.()
   }
 
@@ -91,10 +104,12 @@ export function PauseMenu({
         resumeFromPointer(e)
       }}
     >
-      <div
-        data-no-pointer-lock
-        className="relative w-[min(92vw,22rem)] rounded-2xl border-[3px] border-arena-ink bg-arena-panel px-6 py-6 text-center shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/50"
-      >
+      {/*
+        No data-no-pointer-lock on the panel — Resume lives inside and must be
+        reachable by InputManager's document capture handler (closest check).
+        Non-resume buttons set data-no-pointer-lock individually.
+      */}
+      <div className="relative w-[min(92vw,22rem)] rounded-2xl border-[3px] border-arena-ink bg-arena-panel px-6 py-6 text-center shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/50">
         <div className="pointer-events-none absolute inset-x-3 top-0 h-2 rounded-b-full bg-arena-sheen" />
 
         <div className="text-2xl font-black tracking-tight text-arena-fg">
