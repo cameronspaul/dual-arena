@@ -558,11 +558,20 @@ export function GameHud({
       </AnimatePresence>
 
       {/* Top chrome — lobby/score center; utilities right */}
-      <div
-        className="pointer-events-none absolute top-3 left-3 right-3 z-30 transition-opacity duration-150"
-        style={{ opacity: chromeOpacity }}
-      >
-        <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2">
+      <div className="pointer-events-none absolute top-3 left-3 right-3 z-30">
+        {/*
+          Lobby HUD fully hides on ADS (not dimmed) so scope stays clean.
+          Fade out as soon as zoom starts, not only at full scope.
+        */}
+        <div
+          className={cn(
+            'pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 transition-opacity duration-100',
+            hud.adsBlend > 0.12
+              ? 'invisible opacity-0'
+              : 'visible opacity-100',
+          )}
+          aria-hidden={hud.adsBlend > 0.12}
+        >
           <LobbyHud
             hud={hud}
             lobby={lobby}
@@ -572,8 +581,11 @@ export function GameHud({
           />
         </div>
 
-        {/* Top-right utilities */}
-        <div className="pointer-events-auto absolute top-0 right-0 flex items-start gap-2">
+        {/* Top-right utilities — still soft-fade under scope */}
+        <div
+          className="pointer-events-auto absolute top-0 right-0 flex items-start gap-2 transition-opacity duration-150"
+          style={{ opacity: chromeOpacity }}
+        >
           <HudPanel className="px-2.5 py-1.5 text-xs" accent="tech">
             <div
               className="flex items-baseline gap-2.5 font-extrabold tabular-nums"
