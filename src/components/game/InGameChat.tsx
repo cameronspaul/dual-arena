@@ -297,7 +297,7 @@ export function InGameChat({
         ) : (
           <button
             type="button"
-            title="Open chat (Enter / Y)"
+            title="Open chat (Enter)"
             onClick={() => {
               gameAudio.uiClick()
               onOpenChange(true)

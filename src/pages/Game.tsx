@@ -242,8 +242,9 @@ export default function Game() {
     if (!onlineSession) setChatOpen(false)
   }, [onlineSession])
 
-  // In-match chat hotkeys (page-level so they work even before HUD mounts fully).
-  // Enter / Y open; Esc closes. Capture phase beats game InputManager.
+  // In-match chat + pregame ready hotkeys (page-level so they work even before HUD mounts fully).
+  // Enter always opens chat; Y ready-toggles in pregame. Esc closes chat.
+  // Capture phase beats game InputManager.
   useEffect(() => {
     if (!onlineSession || phase !== 'play' || settingsOpen || vmEdit || levelEdit) {
       return
@@ -272,11 +273,18 @@ export default function Game() {
 
       if (isTypingTarget(e.target)) return
 
-      if (
-        e.code === 'Enter' ||
-        e.code === 'NumpadEnter' ||
-        e.code === 'KeyY'
-      ) {
+      // Pregame: Y = ready / unready (same as the Ready up button)
+      const inPregame =
+        hud?.matchPhase === 'pregame' && !hud.matchWaiting
+      if (inPregame && e.code === 'KeyY') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (engine?.toggleReady()) gameAudio.uiConfirm()
+        return
+      }
+
+      // Enter always opens chat
+      if (e.code === 'Enter' || e.code === 'NumpadEnter') {
         e.preventDefault()
         e.stopPropagation()
         // Drop pointer lock / WASD immediately (don't wait for React effect)
@@ -294,6 +302,8 @@ export default function Game() {
     vmEdit,
     levelEdit,
     engine,
+    hud?.matchPhase,
+    hud?.matchWaiting,
   ])
 
   // Live character colors from settings → third-person body
@@ -688,7 +698,7 @@ export default function Game() {
             setSettingsOpen(true)
           }}
           onExit={backToPicker}
-          onReady={(ready) => engine?.setReady(ready)}
+          onReady={(ready) => engine?.setReady(ready) ?? false}
           lobby={
             isOnline && onlineSession
               ? {

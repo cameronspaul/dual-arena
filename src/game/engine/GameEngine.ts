@@ -226,6 +226,9 @@ export class GameEngine {
   private matchFirstTo: number = MATCH.firstTo
   private localReady = false
   private enemyReady = false
+  /** performance.now() of last successful ready toggle — anti-spam. */
+  private lastReadyToggleAt = 0
+  private static readonly READY_COOLDOWN_MS = 500
   private enemyKills = 0
   private teamColor: 'blue' | 'red' | null = null
   private serverRespawnIn = 0
@@ -475,6 +478,7 @@ export class GameEngine {
     this.enemyKills = 0
     this.localReady = false
     this.enemyReady = false
+    this.lastReadyToggleAt = 0
     this.prediction.clear()
     // Clean weapon FSM after rejoin — snapshots will authoritatively fill ammo/phase
     resetSniper(this.sniper)
@@ -592,17 +596,27 @@ export class GameEngine {
     return this.matchEnd
   }
 
-  /** Pregame ready toggle — both players must ready to start the countdown. */
-  setReady(ready: boolean) {
-    if (!this.isOnline || !this.net) return
-    if (this.matchPhase !== 'pregame' && this.matchPhase !== 'waiting') return
+  /**
+   * Pregame ready toggle — both players must ready to start the countdown.
+   * 0.5s cooldown between changes so ready/unready can't be spammed.
+   * @returns true if the state actually changed.
+   */
+  setReady(ready: boolean): boolean {
+    if (!this.isOnline || !this.net) return false
+    if (this.matchPhase !== 'pregame' && this.matchPhase !== 'waiting') return false
+    if (this.localReady === ready) return false
+    const now = performance.now()
+    if (now - this.lastReadyToggleAt < GameEngine.READY_COOLDOWN_MS) return false
+    this.lastReadyToggleAt = now
     this.localReady = ready
     this.net.sendReady(ready)
     this.emitHud()
+    return true
   }
 
-  toggleReady() {
-    this.setReady(!this.localReady)
+  /** Toggle ready; returns true if the state changed. */
+  toggleReady(): boolean {
+    return this.setReady(!this.localReady)
   }
 
   isLocalReady() {

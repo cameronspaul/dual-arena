@@ -9,6 +9,8 @@ import {
   buildTutorialSteps,
   createTutorialProgress,
   isStepComplete,
+  TUTORIAL_CONTINUE_CODE,
+  TUTORIAL_CONTINUE_LABEL,
   TUTORIAL_OPEN_SETTINGS_CODE,
   TUTORIAL_OPEN_SETTINGS_LABEL,
   type TutorialProgress,
@@ -50,7 +52,7 @@ interface TutorialOverlayProps {
    * Called from settings steps via O (or the step’s open hotkey).
    */
   onOpenSettings?: (section: SettingsSection) => void
-  /** When true, Enter does not advance (user is in the settings dialog). */
+  /** When true, Y does not advance (user is in the settings dialog). */
   settingsOpen?: boolean
 }
 
@@ -152,7 +154,7 @@ export function TutorialOverlay({
   )
 
   const advanceManual = useCallback(() => {
-    // Don't steal Enter while the user is in Settings (keybind capture, sliders).
+    // Don't steal Y while the user is in Settings (keybind capture, sliders).
     if (settingsOpenRef.current) return
     const now = performance.now()
     if (now - lastAdvanceAtRef.current < ADVANCE_COOLDOWN_MS) return
@@ -217,8 +219,9 @@ export function TutorialOverlay({
 
   /**
    * Keyboard while tutorial is open (capture phase, works with pointer lock):
-   * - Enter → continue / skip step (blocked while settings dialog is open)
+   * - Y → continue / skip step (blocked while settings dialog is open)
    * - Space is never continue — reserved for jump
+   * - Enter is never continue — reserved for chat in online matches
    * - O → open the settings tab for settings steps
    */
   useEffect(() => {
@@ -238,8 +241,7 @@ export function TutorialOverlay({
         return
       }
 
-      const isEnter = e.code === 'Enter' || e.code === 'NumpadEnter'
-      if (!isEnter) return
+      if (e.code !== TUTORIAL_CONTINUE_CODE) return
 
       // While settings are open, leave keys to the dialog (keybind capture, etc.)
       if (settingsOpenRef.current) return
@@ -255,7 +257,7 @@ export function TutorialOverlay({
   if (!open) return null
 
   const isSettingsStep = step.kind === 'settings'
-  const continueKeys = ['Enter']
+  const continueKeys = [TUTORIAL_CONTINUE_LABEL]
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40 select-none">
@@ -353,7 +355,8 @@ export function TutorialOverlay({
 
               {settingsOpen && isSettingsStep && (
                 <p className="mt-2 text-sm font-bold text-arena-tech">
-                  Settings open — Esc to close, then Enter to continue.
+                  Settings open — Esc to close, then {TUTORIAL_CONTINUE_LABEL}{' '}
+                  to continue.
                 </p>
               )}
 
@@ -379,10 +382,10 @@ export function TutorialOverlay({
                     settingsOpen
                       ? 'Close settings (Esc) first, then continue'
                       : step.kind === 'action'
-                        ? 'Press Enter to skip, or complete the objective'
+                        ? `Press ${TUTORIAL_CONTINUE_LABEL} to skip, or complete the objective`
                         : isSettingsStep
-                          ? `Press ${TUTORIAL_OPEN_SETTINGS_LABEL} for settings, Enter to continue`
-                          : 'Press Enter to continue'
+                          ? `Press ${TUTORIAL_OPEN_SETTINGS_LABEL} for settings, ${TUTORIAL_CONTINUE_LABEL} to continue`
+                          : `Press ${TUTORIAL_CONTINUE_LABEL} to continue`
                   }
                 >
                   {isLast ? (

@@ -32,8 +32,8 @@ interface GameHudProps {
   onOpenSettings?: () => void
   /** Return to map select (main page). */
   onExit?: () => void
-  /** Pregame ready toggle (online). */
-  onReady?: (ready: boolean) => void
+  /** Pregame ready toggle (online). Returns false if ignored (cooldown / invalid). */
+  onReady?: (ready: boolean) => boolean | void
   /** Online engine for in-match chat / voice (null offline). */
   engine?: GameEngine | null
   /** Chat composer open — parent pauses gameplay. */
@@ -702,9 +702,15 @@ export function GameHud({
               {onReady && (
                 <button
                   type="button"
+                  title={
+                    hud.localReady
+                      ? 'Unready (Y)'
+                      : 'Ready up (Y)'
+                  }
                   onClick={() => {
-                    gameAudio.uiConfirm()
-                    onReady(!hud.localReady)
+                    if (onReady(!hud.localReady) !== false) {
+                      gameAudio.uiConfirm()
+                    }
                   }}
                   className={cn(
                     'pointer-events-auto mt-3 inline-flex items-center gap-2 rounded-xl border-[3px] border-arena-ink px-5 py-2 text-xs font-extrabold tracking-wide uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]',
@@ -718,6 +724,9 @@ export function GameHud({
                     className="size-4"
                   />
                   {hud.localReady ? 'Unready' : 'Ready up'}
+                  <kbd className="ml-0.5 rounded border-2 border-arena-ink/40 bg-black/15 px-1.5 py-0.5 text-[10px] font-black tracking-normal normal-case opacity-80">
+                    Y
+                  </kbd>
                 </button>
               )}
             </HudPanel>

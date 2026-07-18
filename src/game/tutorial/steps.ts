@@ -62,7 +62,7 @@ export interface TutorialStep {
     | 'trophy'
   /**
    * Settings-tab steps: open this section with the open hotkey (O).
-   * Continue with Enter after adjusting.
+   * Continue with Y after adjusting.
    */
   settingsSection?: TutorialSettingsSection
   /** Keyboard code that opens settings for this step (default KeyO). */
@@ -72,6 +72,10 @@ export interface TutorialStep {
 /** Hotkey shown / bound for “open this settings page”. */
 export const TUTORIAL_OPEN_SETTINGS_CODE = 'KeyO'
 export const TUTORIAL_OPEN_SETTINGS_LABEL = 'O'
+
+/** Hotkey for continue / ready-up (“yes”) across tutorial + pregame. */
+export const TUTORIAL_CONTINUE_CODE = 'KeyY'
+export const TUTORIAL_CONTINUE_LABEL = 'Y'
 
 /** Format the first bound key for an action (live user settings). */
 export function keyLabel(action: ActionId): string {
@@ -97,6 +101,7 @@ export function buildTutorialSteps(): TutorialStep[] {
   const fire = keyLabels('fire')
   const reload = keyLabels('reload')
   const openKey = TUTORIAL_OPEN_SETTINGS_LABEL
+  const yesKey = TUTORIAL_CONTINUE_LABEL
 
   const grace = MATCH.disconnectGraceByLeave
   const firstGrace = grace[0] ?? MATCH.disconnectForfeit
@@ -111,7 +116,7 @@ export function buildTutorialSteps(): TutorialStep[] {
       bullets: [
         'Click the game to capture the mouse',
         'Esc releases the mouse anytime',
-        `Press ${openKey} on settings steps · Enter to continue`,
+        `Press ${openKey} on settings steps · ${yesKey} to continue`,
       ],
       icon: 'star',
     },
@@ -131,9 +136,9 @@ export function buildTutorialSteps(): TutorialStep[] {
       bullets: [
         `Press ${openKey} to open Mouse settings`,
         'Tweak hip / ADS sensitivity while you look around',
-        'Esc closes settings · Enter continues the tutorial',
+        `Esc closes settings · ${yesKey} continues the tutorial`,
       ],
-      objective: `Press ${openKey} for Mouse settings, then Enter when ready`,
+      objective: `Press ${openKey} for Mouse settings, then ${yesKey} when ready`,
       icon: 'aim',
       settingsSection: 'mouse',
       openSettingsCode: TUTORIAL_OPEN_SETTINGS_CODE,
@@ -146,9 +151,9 @@ export function buildTutorialSteps(): TutorialStep[] {
       bullets: [
         `Press ${openKey} to open Keybinds`,
         'Click an action, then press the new key',
-        'Esc cancels capture · Enter continues when you are set',
+        `Esc cancels capture · ${yesKey} continues when you are set`,
       ],
-      objective: `Press ${openKey} for Keybinds, then Enter when ready`,
+      objective: `Press ${openKey} for Keybinds, then ${yesKey} when ready`,
       icon: 'settings',
       settingsSection: 'keybinds',
       openSettingsCode: TUTORIAL_OPEN_SETTINGS_CODE,
@@ -161,9 +166,9 @@ export function buildTutorialSteps(): TutorialStep[] {
       bullets: [
         `Press ${openKey} to open Audio settings`,
         'Adjust master / SFX, voice mode & volume',
-        'Esc closes settings · Enter continues',
+        `Esc closes settings · ${yesKey} continues`,
       ],
-      objective: `Press ${openKey} for Audio, then Enter when ready`,
+      objective: `Press ${openKey} for Audio, then ${yesKey} when ready`,
       icon: 'bolt',
       settingsSection: 'audio',
       openSettingsCode: TUTORIAL_OPEN_SETTINGS_CODE,
@@ -266,7 +271,7 @@ export function buildTutorialSteps(): TutorialStep[] {
         `First to ${MATCH.firstTo} kills wins the match`,
         'Live rounds last until a kill (no round clock)',
         `Brief spawn invuln (${MATCH.spawnInvuln}s) after each reset`,
-        'Ready up in pregame when both players are set',
+        `Press ${yesKey} to ready up in pregame when both players are set`,
       ],
       icon: 'trophy',
     },
