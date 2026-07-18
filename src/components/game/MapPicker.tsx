@@ -83,6 +83,8 @@ interface MapPickerProps {
   onHostOnline?: () => void
   /** Join an existing lobby by match id (optional map from browser). */
   onJoinOnline?: (lobby: OnlineLobbyJoin) => void
+  /** Rejoin a mid-match lobby after disconnect/leave (same seat token). */
+  onRejoinOnline?: () => void
 }
 
 type LobbyRow = {
@@ -296,6 +298,7 @@ export function MapPicker({
   onPlay,
   onHostOnline,
   onJoinOnline,
+  onRejoinOnline,
 }: MapPickerProps) {
   const {
     theme,
@@ -312,6 +315,8 @@ export function MapPicker({
     setServerUrl,
     matchId,
     setMatchId,
+    rejoinSession,
+    clearRejoinSession,
   } = useAppStore()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -328,6 +333,8 @@ export function MapPicker({
   )
   const [lobbyError, setLobbyError] = useState<string | null>(null)
   const [joinCode, setJoinCode] = useState(matchId)
+  /** Seconds left on the homepage rejoin CTA (ticks every 250ms). */
+  const [rejoinLeft, setRejoinLeft] = useState(0)
 
   const selected = MAP_LIST.find((m) => m.id === selectedId) ?? MAP_LIST[0]
   const displayName = username.trim() || 'Operator'
@@ -419,6 +426,35 @@ export function MapPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poll target is serverUrl
   }, [serverUrl])
 
+  // Tick rejoin countdown; drop stale sessions when the window ends.
+  useEffect(() => {
+    const tick = () => {
+      const exp = rejoinSession?.expiresAt
+      if (exp == null) {
+        setRejoinLeft(0)
+        return
+      }
+      const left = Math.max(0, Math.ceil((exp - Date.now()) / 1000))
+      setRejoinLeft(left)
+      if (left <= 0) clearRejoinSession()
+    }
+    tick()
+    const id = window.setInterval(tick, 250)
+    return () => window.clearInterval(id)
+  }, [rejoinSession, clearRejoinSession])
+
+  const canRejoin =
+    Boolean(onRejoinOnline) &&
+    rejoinSession != null &&
+    rejoinSession.expiresAt != null &&
+    rejoinLeft > 0
+
+  const handleRejoin = () => {
+    if (!canRejoin) return
+    gameAudio.uiConfirm()
+    onRejoinOnline?.()
+  }
+
   const solBalanceLabel = balance.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
@@ -451,6 +487,21 @@ export function MapPicker({
 
       {/* ── Top bar (utilities only) ── */}
       <header className="relative z-20 flex shrink-0 items-center justify-end gap-2 px-3 pt-3 sm:px-5">
+        {canRejoin && (
+          <button
+            type="button"
+            onClick={handleRejoin}
+            className="inline-flex h-9 items-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+            title={`Rejoin ${rejoinSession?.matchId ?? 'match'} — ${rejoinLeft}s left`}
+          >
+            <GameIcon src={icons.reberth} className="size-4" />
+            Rejoin match
+            <span className="rounded-md border-[2px] border-arena-ink/60 bg-arena-ink/10 px-1.5 py-0.5 font-mono text-[10px] tabular-nums">
+              {Math.floor(rejoinLeft / 60)}:
+              {(rejoinLeft % 60).toString().padStart(2, '0')}
+            </span>
+          </button>
+        )}
         <span className="hidden items-center gap-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-panel px-2.5 py-1.5 text-[10px] font-extrabold tracking-wide text-arena-tech uppercase shadow-[2px_2px_0_var(--arena-ink)] sm:inline-flex">
           <GameIcon src={icons.bolt} className="size-3.5" />
           Practice

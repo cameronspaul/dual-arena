@@ -161,7 +161,8 @@ export class RemotePlayerSystem {
   }
 
   /**
-   * Face + nudge along the shot before freezing a kill ghost of the live pose.
+   * Face + nudge along the shot so the Death clip falls away from impact.
+   * Call after spawnKillGhost if the silhouette should stay at the hit pose.
    */
   alignDeath(
     id: string,

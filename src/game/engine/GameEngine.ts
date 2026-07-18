@@ -360,6 +360,18 @@ export class GameEngine {
         },
         onError: (e) => {
           console.warn('[net] error', e.code, e.message)
+          // Forfeit closed the lobby — surface as match end so HUD / rejoin clear
+          if (
+            (e.code === 'match_ended' || e.code === 'lobby_closed') &&
+            !this.matchEnd
+          ) {
+            this.matchEnd = {
+              type: 'match_end',
+              winnerId: null,
+              scores: {},
+              reason: 'disconnect',
+            }
+          }
         },
       },
     })
@@ -392,6 +404,13 @@ export class GameEngine {
     this.localReady = false
     this.enemyReady = false
     this.prediction.clear()
+    // Clean weapon FSM after rejoin — snapshots will authoritatively fill ammo/phase
+    resetSniper(this.sniper)
+    this.prevSniperPhase = 'ready'
+    this.matchEnd = null
+    this.deathReason = null
+    this.freeCam = null
+    this.voluntaryFreeCam = false
     console.info(
       '[net] welcome',
       w.playerId,
@@ -1550,8 +1569,9 @@ export class GameEngine {
     this.viewFeel.samplePreStep(this.player)
     const prevMoveState = this.player.state
 
-    // Countdown: freeze feet on team pad — look only until go.
-    const movementLocked = this.matchPhase === 'countdown'
+    // Countdown / rejoin pause: freeze feet — look only.
+    const movementLocked =
+      this.matchPhase === 'countdown' || this.matchPhase === 'rejoin'
     const fireAllowed =
       this.playerAlive &&
       !movementLocked &&
@@ -1725,6 +1745,7 @@ export class GameEngine {
       snap.phase === 'countdown' &&
       (prevPhase === 'round_reset' ||
         prevPhase === 'pregame' ||
+        prevPhase === 'rejoin' ||
         prevPhase === null)
 
     this.lastMatchPhase = snap.phase
@@ -1732,7 +1753,7 @@ export class GameEngine {
     for (const p of snap.players) {
       if (selfId && p.id === selfId) {
         const wasAlive = this.playerAlive
-        // Authoritative combat state only — never local pose
+        // Authoritative combat state only — never local pose / ADS feel
         this.playerHp = p.hp
         this.playerAlive = p.alive
         this.kills = p.kills
@@ -1744,8 +1765,9 @@ export class GameEngine {
           this.sniper.phase = p.phase
           if (p.phase === 'ready') this.sniper.phaseTimer = 0
         }
-        this.sniper.ads = p.ads
-        this.sniper.adsBlend = p.adsBlend
+        // ADS is pure local feel. Server ads lag RTT behind input and
+        // overwriting every snapshot made zoom stutter (esp. after rejoin).
+        // Server still gets ads on each input packet for hit spread.
 
         const respawning = Boolean(wasAlive === false && p.alive)
         // Whole countdown: pin feet to server team pad (movement locked)
@@ -1852,15 +1874,15 @@ export class GameEngine {
     if (ev.targetId !== this.localPlayerId) {
       const shotDir = this.estimateShotDir(ev)
       if (ev.killed) {
-        // Align live pose → freeze red silhouette (our kills only) → death anim.
-        // Align once before the ghost so the silhouette matches the fall direction.
-        if (shotDir) this.remotes.alignDeath(ev.targetId, shotDir)
+        // Freeze red silhouette at the actual hit pose (our kills only), then
+        // re-yaw / knock for the Death fall along the shot — ghost stays put.
         if (ev.shooterId === this.localPlayerId) {
           const victim = this.remotes.getRoot(ev.targetId)
           if (victim) {
             this.combatFx.spawnKillGhost(victim, { permanent: true })
           }
         }
+        if (shotDir) this.remotes.alignDeath(ev.targetId, shotDir)
         // Already aligned above — don't knock again.
         this.remotes.onDeath(ev.targetId)
       } else {

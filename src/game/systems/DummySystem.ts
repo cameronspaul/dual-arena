@@ -337,8 +337,8 @@ export class DummySystem {
    * Kill reaction: optional re-yaw / knockback from shot direction, then Death.
    * `shotDir` is world-space bullet direction (origin → impact).
    *
-   * Call `alignDeath` first if you need a kill ghost of the live pose under
-   * the new root orientation before the Death clip begins.
+   * Call after freezing a kill ghost if you want the silhouette at the actual
+   * hit pose; align only affects the live body for the Death fall.
    */
   alignDeath(
     ownerId: string,

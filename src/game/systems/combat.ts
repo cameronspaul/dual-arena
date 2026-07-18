@@ -145,12 +145,12 @@ export function fireShot(opts: {
     gameAudio.playHitConfirm({ zone, killed: result.killed })
     if (result.killed) {
       killsDelta = 1
-      // 1) Face / nudge along the bullet so Death falls away from the shot.
-      // 2) Freeze a red ghost of the live pose under that root.
-      // 3) Play the Death clip on the real dummy.
-      dummiesSys.alignDeath(ownerId, dir)
+      // 1) Freeze red ghost at the actual hit pose/position.
+      // 2) Face / nudge along the bullet so Death falls away from the shot.
+      // 3) Play the Death clip on the real dummy (ghost stays where they were shot).
       const victim = dummiesSys.meshes.get(ownerId)
       if (victim) fx.spawnKillGhost(victim)
+      dummiesSys.alignDeath(ownerId, dir)
       dummiesSys.onDeath(ownerId)
       queueRespawn(respawns, ownerId)
     } else if (result.hp > 0) {

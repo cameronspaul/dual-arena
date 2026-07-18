@@ -127,8 +127,12 @@ export default function Game() {
   const matchIdStore = useAppStore((s) => s.matchId)
   const setMatchIdStore = useAppStore((s) => s.setMatchId)
   const username = useAppStore((s) => s.username)
+  const playerToken = useAppStore((s) => s.playerToken)
   const wagerAmount = useAppStore((s) => s.wagerAmount)
   const characterAppearance = useAppStore((s) => s.characterAppearance)
+  const setRejoinSession = useAppStore((s) => s.setRejoinSession)
+  const armRejoinWindow = useAppStore((s) => s.armRejoinWindow)
+  const clearRejoinSession = useAppStore((s) => s.clearRejoinSession)
 
   const [phase, setPhase] = useState<'pick' | 'play'>(() =>
     searchParams.get('map') && isMapId(searchParams.get('map')!)
@@ -284,6 +288,28 @@ export default function Game() {
     [setSearchParams],
   )
 
+  /** Persist seat credentials; homepage CTA stays hidden until armRejoinWindow. */
+  const rememberRejoin = useCallback(
+    (session: OnlineSessionOpts, playMap: MapId) => {
+      const token = session.token?.trim() || playerToken
+      const prev = useAppStore.getState().rejoinSession
+      // Keep leaveCount when rejoining the same match; reset for a new room
+      const sameMatch =
+        prev &&
+        prev.matchId === session.matchId &&
+        prev.serverUrl === session.serverUrl
+      setRejoinSession({
+        matchId: session.matchId,
+        serverUrl: session.serverUrl,
+        token,
+        mapId: playMap,
+        expiresAt: null,
+        leaveCount: sameMatch ? prev.leaveCount : 0,
+      })
+    },
+    [playerToken, setRejoinSession],
+  )
+
   /** Host: mint a fresh room code and open a joinable lobby. */
   const startHostOnline = useCallback(() => {
     const code = `duel-${Math.random().toString(36).slice(2, 8)}`
@@ -291,19 +317,22 @@ export default function Game() {
     const session: OnlineSessionOpts = {
       serverUrl: serverUrl.trim() || 'ws://localhost:2567',
       matchId: code,
-      token: username.trim() || undefined,
+      token: playerToken,
       hostName: username.trim() || 'Host',
       wager: wagerAmount,
     }
+    rememberRejoin(session, mapId)
     startPlay(mapId, skyboxPref, session)
   }, [
     serverUrl,
     username,
+    playerToken,
     wagerAmount,
     mapId,
     skyboxPref,
     startPlay,
     setMatchIdStore,
+    rememberRejoin,
   ])
 
   /** Join: use listed lobby (or manual code) — map comes from host when known. */
@@ -316,23 +345,70 @@ export default function Game() {
       const session: OnlineSessionOpts = {
         serverUrl: serverUrl.trim() || 'ws://localhost:2567',
         matchId: mid,
-        token: username.trim() || undefined,
+        token: playerToken,
       }
+      rememberRejoin(session, playMap)
       startPlay(playMap, skyboxPref, session)
     },
     [
       serverUrl,
       matchIdStore,
-      username,
+      playerToken,
       mapId,
       skyboxPref,
       startPlay,
       setMatchIdStore,
+      rememberRejoin,
     ],
   )
 
+  /** Homepage one-click rejoin after disconnect / leave mid-match. */
+  const startRejoinOnline = useCallback(() => {
+    const session = useAppStore.getState().rejoinSession
+    const exp = session?.expiresAt
+    if (!session || exp == null || exp <= Date.now()) {
+      clearRejoinSession()
+      return
+    }
+    const playMap = isMapId(session.mapId) ? session.mapId : mapId
+    setMatchIdStore(session.matchId)
+    const online: OnlineSessionOpts = {
+      serverUrl: session.serverUrl,
+      matchId: session.matchId,
+      token: session.token || playerToken,
+    }
+    // Stay on the armed CTA while reconnecting; clear on match end
+    setRejoinSession({
+      ...session,
+      expiresAt: session.expiresAt,
+    })
+    startPlay(playMap, skyboxPref, online)
+  }, [
+    mapId,
+    playerToken,
+    skyboxPref,
+    startPlay,
+    setMatchIdStore,
+    setRejoinSession,
+    clearRejoinSession,
+  ])
+
   const backToPicker = useCallback(() => {
     gameAudio.uiClick()
+    // Competitive phases keep the seat on the server for 60s rejoin
+    const phase = hud?.matchPhase
+    const midMatch =
+      Boolean(onlineSession) &&
+      !hud?.matchEndReason &&
+      (phase === 'countdown' ||
+        phase === 'live' ||
+        phase === 'round_reset' ||
+        phase === 'rejoin')
+    if (midMatch) {
+      armRejoinWindow()
+    } else {
+      clearRejoinSession()
+    }
     setPhase('pick')
     setEngine(null)
     setHud(null)
@@ -352,7 +428,15 @@ export default function Game() {
       },
       { replace: true },
     )
-  }, [setSearchParams, sessionSkybox])
+  }, [
+    setSearchParams,
+    sessionSkybox,
+    onlineSession,
+    hud?.matchEndReason,
+    hud?.matchPhase,
+    armRejoinWindow,
+    clearRejoinSession,
+  ])
 
   const toggleThirdPerson = useCallback(() => {
     if (!engine) return
@@ -376,6 +460,22 @@ export default function Game() {
     setDummiesEnabled(next)
   }, [engine])
 
+  // Drop rejoin CTA once the match fully ends while still in play view
+  useEffect(() => {
+    if (hud?.matchEndReason) clearRejoinSession()
+  }, [hud?.matchEndReason, clearRejoinSession])
+
+  // Tab close / refresh mid-match: arm the next leave's rejoin window
+  useEffect(() => {
+    if (!onlineSession) return
+    const onPageHide = () => {
+      if (!useAppStore.getState().rejoinSession) return
+      armRejoinWindow()
+    }
+    window.addEventListener('pagehide', onPageHide)
+    return () => window.removeEventListener('pagehide', onPageHide)
+  }, [onlineSession, armRejoinWindow])
+
   if (phase === 'pick') {
     return (
       <MapPicker
@@ -386,6 +486,7 @@ export default function Game() {
         onPlay={() => startPlay(mapId, skyboxPref)}
         onHostOnline={startHostOnline}
         onJoinOnline={startJoinOnline}
+        onRejoinOnline={startRejoinOnline}
       />
     )
   }

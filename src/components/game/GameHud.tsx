@@ -462,6 +462,7 @@ export function GameHud({
   const inPregame = hud.matchPhase === 'pregame'
   const inCountdown = hud.matchPhase === 'countdown'
   const inRoundReset = hud.matchPhase === 'round_reset'
+  const inRejoin = hud.matchPhase === 'rejoin'
   const countdownN = Math.max(0, Math.ceil(hud.matchPhaseTimer))
   const firstTo = hud.matchFirstTo || 7
   const reloading = hud.phase === 'reloading' && !hud.spectating
@@ -501,6 +502,41 @@ export function GameHud({
               </div>
               <div className="mt-1 text-sm font-semibold text-arena-fg/55">
                 Share the same match id — first to {firstTo} wins.
+              </div>
+            </HudPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Opponent left / disconnect — match paused for rejoin */}
+      <AnimatePresence>
+        {inRejoin && !hud.matchWaiting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-black/55"
+          >
+            <HudPanel className="px-8 py-6 text-center" accent="danger">
+              <div className="flex items-center justify-center gap-2">
+                <GameIcon src={icons.globe} className="size-6" />
+                <div className="text-xs font-extrabold tracking-wide text-arena-danger uppercase">
+                  Match paused
+                </div>
+              </div>
+              <div className="mt-2 text-xl font-black tracking-tight">
+                Opponent reconnecting…
+              </div>
+              <div className="mt-1 text-sm font-semibold text-arena-fg/55">
+                They lost the round. Forfeit in{' '}
+                <span className="font-black tabular-nums text-arena-heat">
+                  {formatMatchClock(countdownN)}
+                </span>
+                .
+              </div>
+              <div className="mt-2 text-[11px] font-semibold text-arena-fg/40">
+                1st leave 60s · 2nd leave 30s · 3rd leave auto-forfeit. Use{' '}
+                <span className="text-arena-fg/70">Rejoin match</span> on the homepage.
               </div>
             </HudPanel>
           </motion.div>
