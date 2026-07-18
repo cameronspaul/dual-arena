@@ -83,6 +83,8 @@ export type OnlineLobbyJoin = {
   matchId: string
   /** Prefer the host's map when joining a listed lobby. */
   mapId?: MapId
+  /** Soft stake from the lobby listing (display-only). */
+  wager?: number
 }
 
 interface MapPickerProps {
@@ -760,6 +762,7 @@ export function MapPicker({
       handleJoinOnline({
         matchId: target.matchId,
         mapId: isMapId(target.mapId) ? target.mapId : undefined,
+        wager: target.wager,
       })
       return
     }
@@ -1155,6 +1158,7 @@ export function MapPicker({
                       handleJoinOnline({
                         matchId: lobby.matchId,
                         mapId: isMapId(lobby.mapId) ? lobby.mapId : undefined,
+                        wager: lobby.wager,
                       })
                     }
                     className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2.5 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-none"
@@ -1285,6 +1289,7 @@ export function MapPicker({
                             mapId: isMapId(notifiedLobby.mapId)
                               ? notifiedLobby.mapId
                               : undefined,
+                            wager: notifiedLobby.wager,
                           })
                         }}
                         className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40"

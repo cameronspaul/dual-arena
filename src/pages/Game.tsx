@@ -75,6 +75,9 @@ function hudKey(s: HudSnapshot): string {
     s.matchFirstTo ?? 0,
     s.localReady ? 1 : 0,
     s.enemyReady ? 1 : 0,
+    s.localRematchReady ? 1 : 0,
+    s.enemyRematchReady ? 1 : 0,
+    s.rematchAvailable ? 1 : 0,
     s.enemyKills ?? 0,
     s.teamColor ?? '',
     // Throttle perf panel: ~4 Hz on timings, integer draw/col counts
@@ -246,6 +249,7 @@ export default function Game() {
     if (settingsOpen) return
     // force: ensure InputManager accepts the lock even if a panel left it disabled.
     // Must stay synchronous inside the click/keydown stack for user-activation.
+    // Menu visibility is owned by GameHud (dismiss on first press even if lock is denied).
     engine?.requestPointerLock({ force: true })
   }, [engine, settingsOpen])
 
@@ -501,7 +505,7 @@ export default function Game() {
 
   /** Join: use listed lobby (or manual code) — map comes from host when known. */
   const startJoinOnline = useCallback(
-    (lobby: { matchId: string; mapId?: MapId }) => {
+    (lobby: { matchId: string; mapId?: MapId; wager?: number }) => {
       const mid = lobby.matchId.trim() || matchIdStore.trim() || 'duel-1'
       setMatchIdStore(mid)
       // Never load practice range as a 1v1 arena
@@ -513,6 +517,10 @@ export default function Game() {
         matchId: mid,
         token: playerToken,
         mapId: playMap,
+        wager:
+          typeof lobby.wager === 'number' && Number.isFinite(lobby.wager)
+            ? Math.max(0, lobby.wager)
+            : undefined,
         createdAt: Date.now(),
       }
       rememberRejoin(session, playMap)

@@ -13,6 +13,8 @@ import type {
   PlayerBody,
   PlayerInput,
   PongMessage,
+  RematchStartMessage,
+  RematchUpdateMessage,
   ServerMessage,
   SnapshotMessage,
   VoiceSignal,
@@ -33,6 +35,8 @@ export type NetClientHandlers = {
   onSnapshot?: (msg: SnapshotMessage) => void
   onMatchEnd?: (msg: MatchEndMessage) => void
   onDrawUpdate?: (msg: DrawUpdateMessage) => void
+  onRematchUpdate?: (msg: RematchUpdateMessage) => void
+  onRematchStart?: (msg: RematchStartMessage) => void
   onError?: (msg: ErrorMessage) => void
   onStatus?: (status: NetClientStatus, detail?: string) => void
   onPong?: (rttMs: number) => void
@@ -182,6 +186,13 @@ export class NetClient {
       case 'draw_update':
         this.handlers.onDrawUpdate?.(msg)
         break
+      case 'rematch_update':
+        this.handlers.onRematchUpdate?.(msg)
+        break
+      case 'rematch_start':
+        this.matchEnd = null
+        this.handlers.onRematchStart?.(msg)
+        break
       case 'pong':
         this.onPong(msg)
         break
@@ -243,6 +254,11 @@ export class NetClient {
   /** Cancel your own pending draw offer. */
   sendDrawCancel() {
     this.send({ type: 'draw_cancel' })
+  }
+
+  /** Post-match rematch vote (same room / map / stake). */
+  sendRematch(ready: boolean) {
+    this.send({ type: 'rematch', ready })
   }
 
   private send(msg: ClientMessage) {

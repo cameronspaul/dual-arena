@@ -103,6 +103,8 @@ import {
   type MatchPhase,
   type NetHitEvent,
   type NetShotEvent,
+  type RematchStartMessage,
+  type RematchUpdateMessage,
   type SnapshotMessage,
   type WelcomeMessage,
 } from '@duel/shared'
@@ -232,6 +234,14 @@ export class GameEngine {
   /** performance.now() of last successful ready toggle — anti-spam. */
   private lastReadyToggleAt = 0
   private static readonly READY_COOLDOWN_MS = 500
+  /** Post-match rematch votes (server-authoritative via rematch_update). */
+  private localRematchReady = false
+  private enemyRematchReady = false
+  /** Both seats still present on the post-match screen. */
+  private rematchAvailable = false
+  /** performance.now() of last rematch toggle — anti-spam. */
+  private lastRematchToggleAt = 0
+  private static readonly REMATCH_COOLDOWN_MS = 500
   private enemyKills = 0
   private teamColor: 'blue' | 'red' | null = null
   private serverRespawnIn = 0
@@ -426,9 +436,20 @@ export class GameEngine {
         onMatchEnd: (m) => {
           this.matchEnd = m
           this.pendingDrawFromId = null
+          this.localRematchReady = false
+          this.enemyRematchReady = false
+          // Eligible until snapshot shows opponent left
+          this.rematchAvailable = m.reason !== 'disconnect'
+          this.emitHud()
         },
         onDrawUpdate: (m) => {
           this.onDrawUpdate(m)
+        },
+        onRematchUpdate: (m) => {
+          this.onRematchUpdate(m)
+        },
+        onRematchStart: (m) => {
+          this.onRematchStart(m)
         },
         onPong: (rtt) => {
           this.pingMs = rtt
@@ -491,6 +512,10 @@ export class GameEngine {
     this.localReady = false
     this.enemyReady = false
     this.lastReadyToggleAt = 0
+    this.localRematchReady = false
+    this.enemyRematchReady = false
+    this.rematchAvailable = false
+    this.lastRematchToggleAt = 0
     this.prediction.clear()
     // Clean weapon FSM after rejoin — snapshots will authoritatively fill ammo/phase
     resetSniper(this.sniper)
@@ -675,6 +700,57 @@ export class GameEngine {
       this.pendingDrawFromId = null
     }
     this.emitHud()
+  }
+
+  private onRematchUpdate(m: RematchUpdateMessage) {
+    const self = this.localPlayerId
+    const ready = new Set(m.readyIds)
+    this.localRematchReady = self ? ready.has(self) : false
+    this.enemyRematchReady = [...ready].some((id) => id !== self)
+    this.emitHud()
+  }
+
+  private onRematchStart(_m: RematchStartMessage) {
+    this.clearMatchEndForRematch()
+    this.emitHud()
+  }
+
+  /** Clear post-match state when the room restarts for another duel. */
+  private clearMatchEndForRematch() {
+    this.matchEnd = null
+    this.localRematchReady = false
+    this.enemyRematchReady = false
+    this.rematchAvailable = false
+    this.pendingDrawFromId = null
+    this.kills = 0
+    this.enemyKills = 0
+    this.localReady = false
+    this.enemyReady = false
+  }
+
+  /**
+   * Post-match rematch vote. Both players must vote for the server to reset.
+   * @returns true if the request was sent.
+   */
+  setRematch(ready: boolean): boolean {
+    if (!this.isOnline || !this.net || !this.matchEnd) return false
+    if (!this.rematchAvailable) return false
+    if (this.matchEnd.reason === 'disconnect') return false
+    if (this.localRematchReady === ready) return false
+    const now = performance.now()
+    if (now - this.lastRematchToggleAt < GameEngine.REMATCH_COOLDOWN_MS) {
+      return false
+    }
+    this.lastRematchToggleAt = now
+    this.localRematchReady = ready
+    this.net.sendRematch(ready)
+    this.emitHud()
+    return true
+  }
+
+  /** Toggle rematch vote on the post-match screen. */
+  toggleRematch(): boolean {
+    return this.setRematch(!this.localRematchReady)
   }
 
   /**
@@ -2003,6 +2079,28 @@ export class GameEngine {
     this.matchPhaseTimer = snap.phaseTimer ?? 0
     this.matchFirstTo = snap.firstTo ?? this.matchFirstTo
 
+    // Rematch restart: server returned to pregame after match_end
+    if (
+      this.matchEnd &&
+      snap.phase === 'pregame' &&
+      (prevPhase === 'ended' || prevPhase === null)
+    ) {
+      this.clearMatchEndForRematch()
+    }
+
+    // Post-match: rematch only if opponent seat still present
+    if (this.matchEnd && snap.phase === 'ended') {
+      const hasEnemy = snap.players.some(
+        (p) => !selfId || p.id !== selfId,
+      )
+      this.rematchAvailable =
+        hasEnemy && this.matchEnd.reason !== 'disconnect'
+      if (!hasEnemy) {
+        this.localRematchReady = false
+        this.enemyRematchReady = false
+      }
+    }
+
     // Clear kill tracers + silhouettes when a new round starts
     if (
       snap.phase === 'countdown' &&
@@ -2349,6 +2447,12 @@ export class GameEngine {
       matchFirstTo: this.isOnline ? this.matchFirstTo : MATCH.firstTo,
       localReady: this.isOnline && this.localReady,
       enemyReady: this.isOnline && this.enemyReady,
+      localRematchReady: this.isOnline && this.localRematchReady,
+      enemyRematchReady: this.isOnline && this.enemyRematchReady,
+      rematchAvailable:
+        this.isOnline &&
+        Boolean(this.matchEnd) &&
+        this.rematchAvailable,
       enemyKills: this.isOnline ? this.enemyKills : 0,
       teamColor: this.isOnline ? this.teamColor : null,
     }

@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { gameAudio } from '@/game/audio'
 import type { GameEngine } from '@/game/engine/GameEngine'
 import type { HudSnapshot, HitEvent, PerfHud } from '@/game/types'
 import { SNIPER } from '@/game/core/config'
@@ -11,6 +16,7 @@ import {
   LobbyHud,
   type GameHudLobbyInfo,
 } from './LobbyHud'
+import { PostMatchScreen } from './PostMatchScreen'
 import { fmtNum } from '@/game/maps'
 import { icons } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -143,13 +149,6 @@ function hpBarColor(hp: number): string {
   if (hp > 60) return 'bg-arena-ok'
   if (hp > 30) return 'bg-arena-heat'
   return 'bg-arena-danger'
-}
-
-function matchEndTitle(reason: HudSnapshot['matchEndReason']): string {
-  if (reason === 'forfeit' || reason === 'disconnect') return 'Forfeit'
-  if (reason === 'draw') return 'Agreed draw'
-  if (reason === 'time') return 'Time'
-  return 'Match over'
 }
 
 /**
@@ -426,34 +425,66 @@ export function GameHud({
   lobby = null,
 }: GameHudProps) {
   /**
-   * Optimistic hide so Resume / Esc / backdrop close the menu on the first
-   * press even if the browser is slow or flaky about granting pointer lock.
-   * Re-shown when pointer lock is released again (Esc while playing).
+   * Pause menu visibility is an explicit UI state, not a raw mirror of pointer
+   * lock. That split is what makes dismiss reliable:
+   *
+   *  - open: unlocked + not dismissed (start of play, or Esc while looking)
+   *  - dismissed: user hit Resume / Esc / backdrop → hide immediately
+   *  - playing: pointer locked → menu always hidden regardless of dismissed
+   *
+   * requestPointerLock can flap (grant then cancel) when the menu unmounts on
+   * the same click. A short post-resume window keeps the menu closed through
+   * that flap so one click / one Esc always dismisses.
    */
-  const [pauseDismissed, setPauseDismissed] = useState(false)
-  const prevPointerLocked = useRef(false)
+  const [menuDismissed, setMenuDismissed] = useState(false)
+  const wasPointerLocked = useRef(false)
+  const resumeAtRef = useRef(0)
 
   useEffect(() => {
     if (!hud) return
     const locked = hud.pointerLocked
-    if (prevPointerLocked.current && !locked) {
-      // Just unlocked → show pause menu again
-      setPauseDismissed(false)
-    }
-    if (locked) {
-      setPauseDismissed(false)
-    }
-    prevPointerLocked.current = locked
-  }, [hud, hud?.pointerLocked])
+    const wasLocked = wasPointerLocked.current
 
-  const handleResume = () => {
-    // Request pointer lock FIRST (still inside the user-gesture stack), then
-    // dismiss the menu. Reversing this can drop transient activation in some browsers.
+    if (wasLocked && !locked) {
+      // Unlock edge only — never re-open from a failed re-lock right after resume.
+      const msSinceResume = performance.now() - resumeAtRef.current
+      if (msSinceResume < 500) {
+        setMenuDismissed(true)
+      } else {
+        // Genuine unlock while playing (Esc, focus loss, etc.).
+        setMenuDismissed(false)
+      }
+    }
+
+    wasPointerLocked.current = locked
+  }, [hud?.pointerLocked])
+
+  const handleResume = useCallback(() => {
+    resumeAtRef.current = performance.now()
+    // Request lock while the menu (and its click target) is still mounted.
     onResume?.()
-    setPauseDismissed(true)
-  }
+    // Always hide on the first press — even when the browser denies lock
+    // (Esc is almost always denied; flaky click locks are covered by the window above).
+    setMenuDismissed(true)
+  }, [onResume])
 
   if (!hud) return null
+
+  const deathFreeCam = !hud.alive && hud.spectating
+  const pauseMenuOpen =
+    !hud.pointerLocked &&
+    !menuDismissed &&
+    !chatOpen &&
+    !settingsOpen &&
+    !tutorialOpen &&
+    !deathFreeCam
+  const showClickToLook =
+    !hud.pointerLocked &&
+    menuDismissed &&
+    !chatOpen &&
+    !settingsOpen &&
+    !tutorialOpen &&
+    !deathFreeCam
 
   const showHit = Boolean(hud.lastHit && hud.lastHitAge < HITMARKER_DURATION)
   const fullyScoped = hud.adsBlend > 0.55
@@ -488,7 +519,6 @@ export function GameHud({
   const lowAmmo = hud.ammo <= 1
   const emptyMag = hud.ammo === 0
   const online = hud.matchPhase != null
-  const firstTo = hud.matchFirstTo || 7
   const reloading = hud.phase === 'reloading' && !hud.spectating
   const reloadProgress = reloading
     ? Math.max(
@@ -505,55 +535,16 @@ export function GameHud({
         reloadJiggleY={hud.reloadJiggleY}
       />
 
-      {/* Match end — full-screen moment (kept out of compact LobbyHud) */}
+      {/* Match end — full post-match (rematch / stake / leave) */}
       <AnimatePresence>
         {hud.matchEndReason && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-black/60"
-          >
-            <HudPanel className="min-w-[17rem] px-8 py-7 text-center" accent="heat">
-              <GameIcon
-                src={
-                  hud.matchEndReason === 'draw' ? icons.trade : icons.trophy
-                }
-                className="mx-auto size-14"
-              />
-              <div className="mt-2 text-xs font-extrabold tracking-wide text-arena-fg/50 uppercase">
-                {matchEndTitle(hud.matchEndReason)}
-              </div>
-              <div className="mt-1 text-3xl font-black text-arena-heat drop-shadow-[0_2px_0_var(--arena-ink)]">
-                {!hud.matchWinnerId
-                  ? 'Draw'
-                  : hud.matchWinnerId === engine?.getLocalPlayerId()
-                    ? 'You win!'
-                    : 'You lose'}
-              </div>
-              <div className="mt-2 text-lg font-extrabold tabular-nums text-arena-fg/85">
-                {hud.kills}
-                <span className="mx-1.5 text-arena-fg/30">–</span>
-                {hud.enemyKills}
-                <span className="ml-2 text-xs font-bold text-arena-fg/40">
-                  (first to {firstTo})
-                </span>
-              </div>
-              {onExit && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    gameAudio.uiConfirm()
-                    onExit()
-                  }}
-                  className="mt-5 inline-flex items-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 py-2.5 text-xs font-extrabold tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
-                >
-                  <GameIcon src={icons.map} className="size-5" />
-                  Back to maps
-                </button>
-              )}
-            </HudPanel>
-          </motion.div>
+          <PostMatchScreen
+            hud={hud}
+            engine={engine}
+            wager={lobby?.wager ?? 0}
+            onLeave={onExit}
+            onChangeMap={onExit}
+          />
         )}
       </AnimatePresence>
 
@@ -845,65 +836,55 @@ export function GameHud({
         Click-to-look when menu was dismissed but browser denied pointer lock
         (common after Esc — many browsers require a mouse gesture to re-lock).
       */}
-      {!hud.pointerLocked &&
-        pauseDismissed &&
-        !chatOpen &&
-        !settingsOpen &&
-        !tutorialOpen &&
-        !(!hud.alive && hud.spectating) && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-28 z-40 flex justify-center">
-            <div className="rounded-xl border-[3px] border-arena-ink bg-arena-panel px-4 py-2 text-xs font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)]">
-              Click to look
-            </div>
+      {showClickToLook && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-28 z-40 flex justify-center">
+          <div className="rounded-xl border-[3px] border-arena-ink bg-arena-panel px-4 py-2 text-xs font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)]">
+            Click to look
           </div>
-        )}
+        </div>
+      )}
 
       {/*
         Pause / unlock menu — Esc or lost pointer lock.
-        Hide while chat, settings, tutorial, death free-cam, or optimistic dismiss.
+        Hide while chat, settings, tutorial, death free-cam, or after dismiss.
         Eliminated / free-cam status lives in LobbyHud (top score strip).
       */}
-      {!hud.pointerLocked &&
-        !pauseDismissed &&
-        !chatOpen &&
-        !settingsOpen &&
-        !tutorialOpen &&
-        !(!hud.alive && hud.spectating) && (
-          <PauseMenu
-            spectating={hud.spectating}
-            onResume={handleResume}
-            onOpenSettings={onOpenSettings}
-            onOpenHelp={onOpenHelp}
-            onExit={onExit}
-            onlineAgreement={
-              online && engine?.canOfferAgreement()
-                ? {
-                    drawOfferedBySelf:
-                      Boolean(hud.pendingDrawFromId) &&
-                      hud.pendingDrawFromId === engine.getLocalPlayerId(),
-                    drawOfferedByOpponent:
-                      Boolean(hud.pendingDrawFromId) &&
-                      hud.pendingDrawFromId !== engine.getLocalPlayerId(),
-                    onOfferDraw: () => {
-                      engine.offerDraw()
-                    },
-                    onCancelDraw: () => {
-                      engine.cancelDraw()
-                    },
-                    onAcceptDraw: () => {
-                      engine.acceptDraw()
-                    },
-                    onDeclineDraw: () => {
-                      engine.declineDraw()
-                    },
-                    onSurrender: () => {
-                      engine.surrender()
-                    },
-                  }
-                : null
-            }
-          />
-        )}
+      {pauseMenuOpen && (
+        <PauseMenu
+          spectating={hud.spectating}
+          onResume={handleResume}
+          onOpenSettings={onOpenSettings}
+          onOpenHelp={onOpenHelp}
+          onExit={onExit}
+          onlineAgreement={
+            online && engine?.canOfferAgreement()
+              ? {
+                  drawOfferedBySelf:
+                    Boolean(hud.pendingDrawFromId) &&
+                    hud.pendingDrawFromId === engine.getLocalPlayerId(),
+                  drawOfferedByOpponent:
+                    Boolean(hud.pendingDrawFromId) &&
+                    hud.pendingDrawFromId !== engine.getLocalPlayerId(),
+                  onOfferDraw: () => {
+                    engine.offerDraw()
+                  },
+                  onCancelDraw: () => {
+                    engine.cancelDraw()
+                  },
+                  onAcceptDraw: () => {
+                    engine.acceptDraw()
+                  },
+                  onDeclineDraw: () => {
+                    engine.declineDraw()
+                  },
+                  onSurrender: () => {
+                    engine.surrender()
+                  },
+                }
+              : null
+          }
+        />
+      )}
     </div>
   )
 }

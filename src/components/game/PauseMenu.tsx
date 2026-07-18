@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -51,27 +52,31 @@ export function PauseMenu({
 }: PauseMenuProps) {
   const [confirmSurrender, setConfirmSurrender] = useState(false)
 
-  // Esc → resume. Many browsers refuse pointer lock from Escape after it was
-  // used to exit lock; onResume still dismisses the menu and a click re-locks.
+  // Stable ref so Esc listener is registered once (HUD re-renders every frame).
+  const onResumeRef = useRef(onResume)
+  onResumeRef.current = onResume
+
+  // Esc → dismiss menu. Browsers usually refuse pointer lock from Escape;
+  // parent still hides the menu and shows "Click to look".
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'Escape' || e.repeat) return
       e.preventDefault()
       e.stopPropagation()
-      onResume?.()
+      onResumeRef.current?.()
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [onResume])
+  }, [])
 
   /**
    * Prefer mousedown — pointer lock needs a live user gesture.
-   * Document capture also requests lock on this same click; InputManager
-   * coalesces the duplicate so we only call requestPointerLock once.
+   * Keep the handler sync so lock is requested before React unmounts the menu.
    */
   const resumeFromPointer = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
-    onResume?.()
+    e.preventDefault()
+    onResumeRef.current?.()
   }
 
   return (
@@ -80,13 +85,16 @@ export function PauseMenu({
       role="dialog"
       aria-modal="true"
       aria-label="Game menu"
-      // Backdrop: let document capture request lock, then dismiss via onResume.
       onMouseDown={(e) => {
+        // Backdrop only — panel chrome is not a dismiss target.
         if (e.target !== e.currentTarget) return
         resumeFromPointer(e)
       }}
     >
-      <div className="relative w-[min(92vw,22rem)] rounded-2xl border-[3px] border-arena-ink bg-arena-panel px-6 py-6 text-center shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/50">
+      <div
+        data-no-pointer-lock
+        className="relative w-[min(92vw,22rem)] rounded-2xl border-[3px] border-arena-ink bg-arena-panel px-6 py-6 text-center shadow-[3px_4px_0_var(--arena-ink)] ring-2 ring-arena-heat/50"
+      >
         <div className="pointer-events-none absolute inset-x-3 top-0 h-2 rounded-b-full bg-arena-sheen" />
 
         <div className="text-2xl font-black tracking-tight text-arena-fg">

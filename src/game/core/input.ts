@@ -108,8 +108,9 @@ export class InputManager {
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'Escape') {
       this.escHeld = true
-      // Esc while unlocked → resume (pause menu). Prefer keydown for a stronger
-      // user-activation signal than keyup.
+      // Esc while unlocked → try re-lock (pause menu owns dismiss via its own
+      // capture handler + stopPropagation; this runs only if that path didn't).
+      // Prefer keydown for a stronger user-activation signal than keyup.
       if (
         !e.repeat &&
         this.gameplayEnabled &&
@@ -295,7 +296,7 @@ export class InputManager {
     // One request per gesture. Doc capture + Resume mousedown both fire in the
     // same click; a second requestPointerLock often fails and can cancel the first.
     const now = performance.now()
-    if (now - this.lockRequestAt < 80) return
+    if (now - this.lockRequestAt < 120) return
     this.lockRequestAt = now
 
     const canvas = this.canvas
