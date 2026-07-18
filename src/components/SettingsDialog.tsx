@@ -9,6 +9,9 @@ import {
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  Check,
+  ClipboardPaste,
+  Copy,
   Keyboard,
   Mic,
   Mouse,
@@ -21,7 +24,12 @@ import {
 } from 'lucide-react'
 
 import { gameAudio } from '@/game/audio'
-import { APPEARANCE_PARTS } from '@/game/character/appearance'
+import {
+  APPEARANCE_PARTS,
+  DEFAULT_CHARACTER_APPEARANCE,
+  normalizeAppearance,
+  type CharacterAppearance,
+} from '@/game/character/appearance'
 import {
   ACTION_LABELS,
   ACTION_ORDER,
@@ -485,6 +493,7 @@ export function SettingsDialog({
 
   const characterAppearance = useAppStore((s) => s.characterAppearance)
   const setAppearancePart = useAppStore((s) => s.setAppearancePart)
+  const setCharacterAppearance = useAppStore((s) => s.setCharacterAppearance)
   const resetCharacterAppearance = useAppStore(
     (s) => s.resetCharacterAppearance,
   )
@@ -495,6 +504,17 @@ export function SettingsDialog({
   /** Action waiting for a new bind (add mode). */
   const [listening, setListening] = useState<ActionId | null>(null)
   const wasOpenRef = useRef(false)
+
+  /** Character appearance JSON export / import UI. */
+  const [appearanceJsonOpen, setAppearanceJsonOpen] = useState(false)
+  const [appearanceJsonDraft, setAppearanceJsonDraft] = useState('')
+  const [appearanceJsonError, setAppearanceJsonError] = useState<string | null>(
+    null,
+  )
+  const [appearanceExportCopied, setAppearanceExportCopied] = useState(false)
+  const appearanceExportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
 
   const cancelListen = useCallback(() => setListening(null), [])
 
@@ -512,9 +532,84 @@ export function SettingsDialog({
     } else if (open && initialSection) {
       setSection(initialSection)
     }
-    if (!open) setListening(null)
+    if (!open) {
+      setListening(null)
+      setAppearanceJsonOpen(false)
+      setAppearanceJsonError(null)
+      setAppearanceExportCopied(false)
+    }
     wasOpenRef.current = open
   }, [open, initialSection])
+
+  // Clear export "Copied!" timer on unmount
+  useEffect(() => {
+    return () => {
+      if (appearanceExportTimerRef.current != null) {
+        clearTimeout(appearanceExportTimerRef.current)
+      }
+    }
+  }, [])
+
+  const formatAppearanceJson = useCallback((a: CharacterAppearance) => {
+    return JSON.stringify(normalizeAppearance(a), null, 2)
+  }, [])
+
+  const handleExportAppearance = useCallback(async () => {
+    const json = formatAppearanceJson(characterAppearance)
+    setAppearanceJsonDraft(json)
+    setAppearanceJsonError(null)
+    setAppearanceJsonOpen(true)
+    try {
+      await navigator.clipboard.writeText(json)
+      setAppearanceExportCopied(true)
+      if (appearanceExportTimerRef.current != null) {
+        clearTimeout(appearanceExportTimerRef.current)
+      }
+      appearanceExportTimerRef.current = setTimeout(() => {
+        setAppearanceExportCopied(false)
+        appearanceExportTimerRef.current = null
+      }, 1600)
+      gameAudio.uiConfirm()
+    } catch {
+      // Clipboard blocked — panel still shows JSON to copy manually
+      setAppearanceExportCopied(false)
+      gameAudio.uiClick()
+    }
+  }, [characterAppearance, formatAppearanceJson])
+
+  const handleOpenImportAppearance = useCallback(() => {
+    setAppearanceJsonDraft('')
+    setAppearanceJsonError(null)
+    setAppearanceExportCopied(false)
+    setAppearanceJsonOpen(true)
+    gameAudio.uiClick()
+  }, [])
+
+  const handleApplyAppearanceJson = useCallback(() => {
+    const raw = appearanceJsonDraft.trim()
+    if (!raw) {
+      setAppearanceJsonError('Paste appearance JSON first.')
+      return
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setAppearanceJsonError('JSON must be an object with color fields.')
+        return
+      }
+      const next = normalizeAppearance(parsed as Partial<CharacterAppearance>)
+      setCharacterAppearance(next)
+      setAppearanceJsonDraft(formatAppearanceJson(next))
+      setAppearanceJsonError(null)
+      gameAudio.uiConfirm()
+    } catch {
+      setAppearanceJsonError('Invalid JSON — check braces and quotes.')
+    }
+  }, [
+    appearanceJsonDraft,
+    formatAppearanceJson,
+    setCharacterAppearance,
+  ])
 
   // Body scroll lock while open
   useEffect(() => {
@@ -723,6 +818,10 @@ export function SettingsDialog({
                       onClick={() => {
                         setSection(id)
                         cancelListen()
+                        if (id !== 'character') {
+                          setAppearanceJsonOpen(false)
+                          setAppearanceJsonError(null)
+                        }
                         gameAudio.uiClick()
                       }}
                       className={cn(
@@ -1117,55 +1216,171 @@ export function SettingsDialog({
                 )}
 
                 {section === 'character' && (
-                  <div className="space-y-4">
-                    <div className="flex items-start justify-between gap-3">
+                  <div className="flex h-full min-h-0 flex-col gap-4">
+                    <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <p className="text-xs leading-relaxed font-semibold text-muted-foreground">
                         Drag the preview to spin. Colors save locally and apply
-                        to your third-person body.
+                        to your third-person body. Export / import as JSON to
+                        share looks.
                       </p>
-                      <StickerBtn
-                        className="shrink-0"
-                        onClick={() => {
-                          resetCharacterAppearance()
-                          gameAudio.uiClick()
-                        }}
-                      >
-                        <RotateCcw className="size-3.5" strokeWidth={2.5} />
-                        Defaults
-                      </StickerBtn>
-                    </div>
-
-                    <div
-                      className={cn(
-                        'relative h-44 overflow-hidden rounded-xl border-[2.5px] bg-gradient-to-b from-muted/40 via-muted/20 to-muted/50 sm:h-52',
-                        inkBorder,
-                        inkShadowSm,
-                      )}
-                    >
-                      <CharacterPreview
-                        appearance={characterAppearance}
-                        animation="idle"
-                        spin={false}
-                        className="absolute inset-0 h-full w-full"
-                      />
-                      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center gap-1.5 pt-2">
-                        <GameIcon src={icons.brush} className="size-3.5 opacity-80" />
-                        <span className="text-[9px] font-extrabold tracking-wide text-muted-foreground uppercase">
-                          Live preview
-                        </span>
+                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        <StickerBtn
+                          className="shrink-0"
+                          title="Copy appearance JSON"
+                          onClick={() => {
+                            void handleExportAppearance()
+                          }}
+                        >
+                          {appearanceExportCopied ? (
+                            <Check className="size-3.5" strokeWidth={2.5} />
+                          ) : (
+                            <Copy className="size-3.5" strokeWidth={2.5} />
+                          )}
+                          {appearanceExportCopied ? 'Copied' : 'Export'}
+                        </StickerBtn>
+                        <StickerBtn
+                          className="shrink-0"
+                          title="Paste appearance JSON"
+                          onClick={handleOpenImportAppearance}
+                        >
+                          <ClipboardPaste
+                            className="size-3.5"
+                            strokeWidth={2.5}
+                          />
+                          Import
+                        </StickerBtn>
+                        <StickerBtn
+                          className="shrink-0"
+                          onClick={() => {
+                            resetCharacterAppearance()
+                            setAppearanceJsonError(null)
+                            if (appearanceJsonOpen) {
+                              setAppearanceJsonDraft(
+                                formatAppearanceJson(
+                                  DEFAULT_CHARACTER_APPEARANCE,
+                                ),
+                              )
+                            }
+                            gameAudio.uiClick()
+                          }}
+                        >
+                          <RotateCcw className="size-3.5" strokeWidth={2.5} />
+                          Defaults
+                        </StickerBtn>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {APPEARANCE_PARTS.map(({ id, label, description }) => (
-                        <DebouncedColorPicker
-                          key={id}
-                          label={label}
-                          description={description}
-                          value={characterAppearance[id]}
-                          onChange={(hex) => setAppearancePart(id, hex)}
+                    {appearanceJsonOpen && (
+                      <div
+                        className={cn(
+                          'shrink-0 space-y-2 rounded-xl border-[2.5px] bg-muted/30 p-3 dark:bg-muted/20',
+                          'border-border dark:border-foreground/20',
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold tracking-wide text-foreground uppercase">
+                              Appearance JSON
+                            </div>
+                            <p className="text-[10px] font-semibold text-muted-foreground">
+                              Paste a look and apply, or copy the exported
+                              colors.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label="Close JSON panel"
+                            onClick={() => {
+                              setAppearanceJsonOpen(false)
+                              setAppearanceJsonError(null)
+                              gameAudio.uiClick()
+                            }}
+                            className={cn(
+                              'inline-flex size-8 shrink-0 items-center justify-center rounded-lg border-[2px] bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                              'border-foreground/40 dark:border-foreground/30',
+                            )}
+                          >
+                            <X className="size-3.5" strokeWidth={2.75} />
+                          </button>
+                        </div>
+                        <textarea
+                          value={appearanceJsonDraft}
+                          onChange={(e) => {
+                            setAppearanceJsonDraft(e.target.value)
+                            if (appearanceJsonError) {
+                              setAppearanceJsonError(null)
+                            }
+                          }}
+                          spellCheck={false}
+                          rows={8}
+                          placeholder={`{\n  "face": "#ba9c79",\n  "hair": "#412914",\n  "suit": "#1d2329",\n  ...\n}`}
+                          className={cn(
+                            'w-full resize-y rounded-lg border-[2px] bg-card px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground outline-none',
+                            'border-foreground/40 placeholder:text-muted-foreground/60 focus:border-primary dark:border-foreground/30',
+                          )}
                         />
-                      ))}
+                        {appearanceJsonError && (
+                          <p className="text-[11px] font-bold text-destructive">
+                            {appearanceJsonError}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StickerBtn
+                            onClick={() => {
+                              void handleExportAppearance()
+                            }}
+                          >
+                            {appearanceExportCopied ? (
+                              <Check
+                                className="size-3.5"
+                                strokeWidth={2.5}
+                              />
+                            ) : (
+                              <Copy className="size-3.5" strokeWidth={2.5} />
+                            )}
+                            {appearanceExportCopied
+                              ? 'Copied'
+                              : 'Copy current'}
+                          </StickerBtn>
+                          <StickerBtn onClick={handleApplyAppearanceJson}>
+                            <ClipboardPaste
+                              className="size-3.5"
+                              strokeWidth={2.5}
+                            />
+                            Apply paste
+                          </StickerBtn>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Two columns: colors · live preview */}
+                    <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+                      <div className="flex min-h-0 flex-col gap-2 overflow-y-auto lg:pr-0.5">
+                        {APPEARANCE_PARTS.map(({ id, label, description }) => (
+                          <DebouncedColorPicker
+                            key={id}
+                            label={label}
+                            description={description}
+                            value={characterAppearance[id]}
+                            onChange={(hex) => setAppearancePart(id, hex)}
+                          />
+                        ))}
+                      </div>
+
+                      <div
+                        className={cn(
+                          'relative h-52 shrink-0 overflow-hidden rounded-xl border-[2.5px] bg-gradient-to-b from-muted/40 via-muted/20 to-muted/50 sm:h-64 lg:h-auto lg:min-h-[280px]',
+                          inkBorder,
+                          inkShadowSm,
+                        )}
+                      >
+                        <CharacterPreview
+                          appearance={characterAppearance}
+                          animation="idle"
+                          spin={false}
+                          className="absolute inset-0 h-full w-full"
+                        />
+                      </div>
                     </div>
                   </div>
                 )}
