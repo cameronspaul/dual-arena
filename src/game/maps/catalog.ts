@@ -101,8 +101,8 @@ export const MAPS: Record<MapId, MapDef> = {
     id: 'range',
     name: 'Practice Range',
     blurb:
-      'Enclosed live-fire facility — firing bays, distance markers, peek cover, and roaming dummies.',
-    tags: ['official', 'training'],
+      'Enclosed live-fire facility — firing bays, distance markers, peek cover, and roaming dummies. Start Tutorial from the lobby for a guided how-to-play.',
+    tags: ['official', 'training', 'tutorial'],
     kind: 'range',
     scale: 1,
     rotateY: 0,

@@ -200,6 +200,8 @@ export class GameEngine {
   private lastHit: HitEvent | null = null
   private lastHitAge = 999
   private lastHitId = 0
+  /** Last sampled input — exposed on HUD for tutorial / debug. */
+  private lastInput: import('../core/types').PlayerInput | null = null
   private kills = 0
   private playerHp: number = PLAYER.maxHp
   private playerAlive = true
@@ -1374,6 +1376,7 @@ export class GameEngine {
 
   private tick(dt: number) {
     const input = this.input.sample()
+    this.lastInput = input
     this.input.setAdsBlend(this.sniper.adsBlend)
 
     if (this.levelEditorActive) {
@@ -2045,6 +2048,13 @@ export class GameEngine {
       moveState:
         this.playerAlive && !freecam ? this.player.state : 'idle',
       speed,
+      sprintHeld: Boolean(this.lastInput?.sprint),
+      crouchHeld: Boolean(this.lastInput?.crouch),
+      moving: Boolean(
+        this.lastInput &&
+          (Math.abs(this.lastInput.forward) > 0 ||
+            Math.abs(this.lastInput.right) > 0),
+      ),
       pointerLocked: this.input.isPointerLocked(),
       kills: this.kills,
       lastHit: this.lastHit,

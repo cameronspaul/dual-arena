@@ -496,11 +496,14 @@ export function SettingsDialog({
     onOpenChange(false)
   }, [cancelListen, onOpenChange])
 
-  // Apply initialSection each time the dialog opens
+  // Apply initialSection when the dialog opens, and when the parent jumps
+  // tabs while already open (e.g. tutorial O hotkey → mouse / keybinds / audio).
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setSection(initialSection ?? 'audio')
       setListening(null)
+    } else if (open && initialSection) {
+      setSection(initialSection)
     }
     if (!open) setListening(null)
     wasOpenRef.current = open

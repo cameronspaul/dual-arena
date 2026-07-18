@@ -14,4 +14,5 @@ export {
   WORLD,
   DUMMY,
   DEBUG,
+  MATCH,
 } from '@duel/shared'

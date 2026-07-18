@@ -5,8 +5,12 @@ import { GameCanvas } from '@/components/game/GameCanvas'
 import { GameHud, HITMARKER_DURATION } from '@/components/game/GameHud'
 import { LevelEditor } from '@/components/game/LevelEditor'
 import { MapPicker } from '@/components/game/MapPicker'
+import { TutorialOverlay } from '@/components/game/TutorialOverlay'
 import { ViewmodelEditor } from '@/components/game/ViewmodelEditor'
-import { SettingsDialog } from '@/components/SettingsDialog'
+import {
+  SettingsDialog,
+  type SettingsSection,
+} from '@/components/SettingsDialog'
 import type { GameEngine } from '@/game/engine'
 import {
   DEFAULT_MAP_ID,
@@ -43,6 +47,9 @@ function hudKey(s: HudSnapshot): string {
     Math.round(s.aimSpread * 400),
     s.moveState,
     Math.round(s.speed * 2),
+    s.sprintHeld ? 1 : 0,
+    s.crouchHeld ? 1 : 0,
+    s.moving ? 1 : 0,
     s.pointerLocked ? 1 : 0,
     s.kills,
     // Serial id so consecutive same-zone hits still re-render the hitmarker
@@ -174,9 +181,20 @@ export default function Game() {
     return new URLSearchParams(window.location.search).has('level-edit')
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<
+    SettingsSection | undefined
+  >(undefined)
   const [thirdPerson, setThirdPerson] = useState(false)
   const [freeCam, setFreeCam] = useState(false)
   const [dummiesEnabled, setDummiesEnabled] = useState(true)
+  /**
+   * Guided how-to-play on the practice range.
+   * URL `tutorial=1` or MapPicker "Tutorial" starts it offline.
+   */
+  const [tutorialOpen, setTutorialOpen] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return new URLSearchParams(window.location.search).get('tutorial') === '1'
+  })
   /** Bottom-left admin strip — localhost only, toggled with L. */
   const [adminOpen, setAdminOpen] = useState(false)
   const isLocalhost = isLocalhostHost()
@@ -256,13 +274,20 @@ export default function Game() {
   }, [])
 
   const startPlay = useCallback(
-    (id: MapId, pref: SkyboxPreference, online?: OnlineSessionOpts | null) => {
+    (
+      id: MapId,
+      pref: SkyboxPreference,
+      online?: OnlineSessionOpts | null,
+      opts?: { tutorial?: boolean },
+    ) => {
       // Resolve random once so all clients with the same URL share one sky.
       const sky = resolveSkyboxId(pref)
+      const tutorial = Boolean(opts?.tutorial) && !online
       setMapId(id)
       setSkyboxPref(pref === 'random' ? sky : pref)
       setSessionSkybox(sky)
       setOnlineSession(online ?? null)
+      setTutorialOpen(tutorial)
       setPhase('play')
       setHud(null)
       lastKey.current = ''
@@ -275,10 +300,13 @@ export default function Game() {
             next.set('online', '1')
             next.set('match', online.matchId)
             next.set('server', online.serverUrl)
+            next.delete('tutorial')
           } else {
             next.delete('online')
             next.delete('match')
             next.delete('server')
+            if (tutorial) next.set('tutorial', '1')
+            else next.delete('tutorial')
           }
           return next
         },
@@ -287,6 +315,11 @@ export default function Game() {
     },
     [setSearchParams],
   )
+
+  /** Offline guided course on the practice range. */
+  const startTutorial = useCallback(() => {
+    startPlay('range', skyboxPref, null, { tutorial: true })
+  }, [startPlay, skyboxPref])
 
   /** Persist seat credentials; homepage CTA stays hidden until armRejoinWindow. */
   const rememberRejoin = useCallback(
@@ -413,6 +446,7 @@ export default function Game() {
     setEngine(null)
     setHud(null)
     setOnlineSession(null)
+    setTutorialOpen(false)
     // Keep last concrete sky selected in the picker (not random)
     setSkyboxPref(sessionSkybox)
     setSearchParams(
@@ -422,6 +456,7 @@ export default function Game() {
         next.delete('online')
         next.delete('match')
         next.delete('server')
+        next.delete('tutorial')
         // Leave sky so re-enter can reuse the same sky if desired
         if (sessionSkybox) next.set('sky', sessionSkybox)
         return next
@@ -484,6 +519,7 @@ export default function Game() {
         skybox={skyboxPref}
         onSkyboxChange={setSkyboxPref}
         onPlay={() => startPlay(mapId, skyboxPref)}
+        onTutorial={startTutorial}
         onHostOnline={startHostOnline}
         onJoinOnline={startJoinOnline}
         onRejoinOnline={startRejoinOnline}
@@ -506,39 +542,96 @@ export default function Game() {
       {!vmEdit && !levelEdit && (
         <GameHud
           hud={hud}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => {
+            setSettingsSection(undefined)
+            setSettingsOpen(true)
+          }}
           onExit={backToPicker}
           onReady={(ready) => engine?.setReady(ready)}
         />
       )}
 
-      {/* Map + sky badge — top-left so center scoreboard owns the middle */}
-      {!vmEdit && !levelEdit && (
-        <div className="pointer-events-none absolute top-3 left-3 z-30 flex max-w-[40vw] items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)]">
-          <img
-            src={icons.map}
-            alt=""
-            aria-hidden
-            className="size-3.5 shrink-0 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
-          />
-          <span className="truncate text-arena-heat">{mapName}</span>
-          <span className="text-arena-fg/30">·</span>
-          <span className="truncate text-arena-tech">
-            {SKYBOX_LABELS[sessionSkybox]}
-          </span>
-          {isOnline && (
-            <>
-              <span className="text-arena-fg/30">·</span>
-              <span className="inline-flex shrink-0 items-center gap-1 text-arena-ok">
-                <img
-                  src={icons.globe}
-                  alt=""
-                  aria-hidden
-                  className="size-3 object-contain"
-                />
-                Online
-              </span>
-            </>
+      {/* Guided how-to-play (offline practice range only) */}
+      {!vmEdit && !levelEdit && !isOnline && mapId === 'range' && (
+        <TutorialOverlay
+          open={tutorialOpen}
+          hud={hud}
+          settingsOpen={settingsOpen}
+          onOpenSettings={(section) => {
+            setSettingsSection(section)
+            setSettingsOpen(true)
+          }}
+          onClose={() => {
+            setTutorialOpen(false)
+            setSearchParams(
+              (prev) => {
+                const next = new URLSearchParams(prev)
+                next.delete('tutorial')
+                return next
+              },
+              { replace: true },
+            )
+          }}
+        />
+      )}
+
+      {/* Map + sky badge (+ offline Help) — top-left; hide badge while tutorial owns that corner */}
+      {!vmEdit && !levelEdit && !tutorialOpen && (
+        <div className="absolute top-3 left-3 z-30 flex max-w-[min(50vw,22rem)] flex-col items-start gap-1.5">
+          <div className="pointer-events-none flex max-w-full items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 py-1 text-[10px] font-extrabold tracking-wide text-arena-fg shadow-[2px_3px_0_var(--arena-ink)]">
+            <img
+              src={icons.map}
+              alt=""
+              aria-hidden
+              className="size-3.5 shrink-0 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
+            />
+            <span className="truncate text-arena-heat">{mapName}</span>
+            <span className="text-arena-fg/30">·</span>
+            <span className="truncate text-arena-tech">
+              {SKYBOX_LABELS[sessionSkybox]}
+            </span>
+            {isOnline && (
+              <>
+                <span className="text-arena-fg/30">·</span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-arena-ok">
+                  <img
+                    src={icons.globe}
+                    alt=""
+                    aria-hidden
+                    className="size-3 object-contain"
+                  />
+                  Online
+                </span>
+              </>
+            )}
+          </div>
+          {/* Tutorial lives on the practice range only */}
+          {!isOnline && mapId === 'range' && (
+            <button
+              type="button"
+              onClick={() => {
+                gameAudio.uiClick()
+                setTutorialOpen(true)
+                setSearchParams(
+                  (prev) => {
+                    const next = new URLSearchParams(prev)
+                    next.set('tutorial', '1')
+                    return next
+                  },
+                  { replace: true },
+                )
+              }}
+              className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-panel px-2.5 text-[10px] font-extrabold tracking-wide text-arena-fg uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+              title="Open how-to-play tutorial"
+            >
+              <img
+                src={icons.star}
+                alt=""
+                aria-hidden
+                className="size-3.5 object-contain drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]"
+              />
+              Help
+            </button>
           )}
         </div>
       )}
@@ -640,7 +733,11 @@ export default function Game() {
         )
       )}
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialSection={settingsSection}
+      />
     </div>
   )
 }

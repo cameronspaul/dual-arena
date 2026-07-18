@@ -79,6 +79,8 @@ interface MapPickerProps {
   skybox: SkyboxPreference
   onSkyboxChange: (sky: SkyboxPreference) => void
   onPlay: () => void
+  /** Offline guided course on the practice range. */
+  onTutorial?: () => void
   /** Host a new open lobby (map/region/stake from picker). */
   onHostOnline?: () => void
   /** Join an existing lobby by match id (optional map from browser). */
@@ -296,6 +298,7 @@ export function MapPicker({
   skybox,
   onSkyboxChange,
   onPlay,
+  onTutorial,
   onHostOnline,
   onJoinOnline,
   onRejoinOnline,
@@ -379,6 +382,11 @@ export function MapPicker({
   const handlePlay = () => {
     gameAudio.uiConfirm()
     onPlay()
+  }
+
+  const handleTutorial = () => {
+    gameAudio.uiConfirm()
+    onTutorial?.()
   }
 
   const handleHostOnline = () => {
@@ -506,6 +514,17 @@ export function MapPicker({
           <GameIcon src={icons.bolt} className="size-3.5" />
           Practice
         </span>
+        {onTutorial && (
+          <button
+            type="button"
+            onClick={handleTutorial}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
+            title="Guided how-to-play on the practice range"
+          >
+            <GameIcon src={icons.star} className="size-4" />
+            Tutorial
+          </button>
+        )}
         <ChromeBtn
           onClick={() => {
             gameAudio.uiClick()
@@ -983,14 +1002,27 @@ export function MapPicker({
                 ))}
               </div>
 
-              <button
-                type="button"
-                onClick={handlePlay}
-                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:w-auto sm:px-5"
-              >
-                <GameIcon src={icons.rocket} className="size-5" />
-                Deploy
-              </button>
+              <div className="flex w-full shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row">
+                {onTutorial && (
+                  <button
+                    type="button"
+                    onClick={handleTutorial}
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border-[3px] border-arena-ink bg-arena-tech px-3 text-xs font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:px-3.5"
+                    title="Learn movement, ammo, damage zones, and match rules"
+                  >
+                    <GameIcon src={icons.star} className="size-4" />
+                    Tutorial
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handlePlay}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-4 text-sm font-black tracking-wide text-arena-ink uppercase shadow-[3px_4px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[3px_5px_0_var(--arena-ink)] active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)] sm:h-11 sm:w-auto sm:px-5"
+                >
+                  <GameIcon src={icons.rocket} className="size-5" />
+                  Deploy
+                </button>
+              </div>
             </div>
           </HudPanel>
         </motion.div>
