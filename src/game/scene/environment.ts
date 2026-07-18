@@ -1,15 +1,16 @@
 /**
  * Practice range geometry, lights, and Kenney env textures.
  *
- * Layout (player faces -Z from the firing line):
- *  - Firing bays with dividers + overhead canopy (z ≈ 6–14)
- *  - Range floor with painted lanes + distance markers (10–40 m)
- *  - Mid-range peek cover
- *  - Tall sand berm / backstop at the far end
- *  - Side walls + rear wall so the facility feels enclosed
+ * Horizontal-row aim corridor (player faces −Z from spawn):
+ *  - Single hall with tall side walls
+ *  - Rainbow floor bands at each distance (close → far)
+ *  - Dummy row left/right on each band
+ *  - Spawn platform + control wall behind spawn
+ *  - No parallel lane dividers / scattered cover
  */
 import * as THREE from 'three'
 import type { AABB } from '../core/types'
+import { RANGE, rangeColX, rangeRowZ } from '../core/config'
 import {
   isSkyboxId,
   skyboxUrl,
@@ -27,26 +28,42 @@ export {
   isSkyboxPreference,
 } from './skyboxes'
 
+/** Actions fired when the player activates a control-wall button. */
+export type RangeControlAction =
+  | 'mode_stationary'
+  | 'mode_moving'
+  | 'mode_strafing'
+  | 'reset'
+  | 'count'
+
+export type RangeControlButton = {
+  id: RangeControlAction
+  mesh: THREE.Mesh
+  /** World-space center for proximity checks. */
+  position: THREE.Vector3
+  label: string
+}
+
 export type RangeBuildResult = {
   floorMat: THREE.MeshStandardMaterial
   coverMat: THREE.MeshStandardMaterial
   coverMeshes: THREE.Mesh[]
-  /** Extra colliders added for walls (e.g. far backstop). */
+  /** Extra colliders added for walls / berm. */
   extraColliders: AABB[]
+  /** Interactable control-wall buttons (look + fire). */
+  controlButtons: RangeControlButton[]
+  spawn: { x: number; y: number; z: number }
+  spawnYaw: number
 }
 
-// ── Range layout constants (meters) ──────────────────────────────────────────
-/** Firing-line Z — player stands just behind this, looking toward -Z. */
-const FIRE_LINE_Z = 6
-/** Outer half-width of the enclosed range. */
-const HALF_W = 14
-/** Far berm face (inner). */
-const BERM_Z = -42
-/** Rear wall behind the bays. */
-const REAR_Z = 14
-/** Floor plane extent. */
-const FLOOR_W = 36
-const FLOOR_D = 64
+// ── Layout aliases ───────────────────────────────────────────────────────────
+const FIRE_LINE_Z = RANGE.fireLineZ
+const HALF_W = RANGE.halfW
+const BERM_Z = RANGE.bermZ
+const REAR_Z = RANGE.rearZ
+const WALL_H = RANGE.wallH
+const FLOOR_W = HALF_W * 2 + 2
+const FLOOR_D = REAR_Z - BERM_Z + 6
 
 type BoxSpec = {
   x: number
@@ -56,7 +73,6 @@ type BoxSpec = {
   h: number
   d: number
   mat: THREE.Material
-  /** When false, visual only (lane paint, signs, etc.). Default true. */
   solid?: boolean
   castShadow?: boolean
   receiveShadow?: boolean
@@ -77,7 +93,6 @@ function aabbFromBox(b: {
   }
 }
 
-/** Canvas texture for distance placards ("10m", "20m", …). */
 function makeDistanceLabel(text: string): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = 256
@@ -89,7 +104,7 @@ function makeDistanceLabel(text: string): THREE.CanvasTexture {
   ctx.lineWidth = 8
   ctx.strokeRect(6, 6, 244, 116)
   ctx.fillStyle = '#f5f0e0'
-  ctx.font = 'bold 72px system-ui, sans-serif'
+  ctx.font = 'bold 64px system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, 128, 68)
@@ -99,7 +114,6 @@ function makeDistanceLabel(text: string): THREE.CanvasTexture {
   return tex
 }
 
-/** "PRACTICE RANGE" / bay number style placard. */
 function makeFacilityLabel(
   text: string,
   opts?: { sub?: string; bg?: string; fg?: string },
@@ -130,49 +144,79 @@ function makeFacilityLabel(
   return tex
 }
 
-/** Lights, floor, cover boxes, facility structure, spawn pad. */
+function makeButtonLabel(
+  title: string,
+  sub?: string,
+  accent = '#7ec8f0',
+): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 256
+  c.height = 128
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#121820'
+  ctx.fillRect(0, 0, 256, 128)
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 6
+  ctx.strokeRect(4, 4, 248, 120)
+  ctx.fillStyle = '#f0f4f8'
+  ctx.font = 'bold 36px system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  if (sub) {
+    ctx.fillText(title, 128, 48)
+    ctx.font = '22px system-ui, sans-serif'
+    ctx.fillStyle = accent
+    ctx.fillText(sub, 128, 88)
+  } else {
+    ctx.fillText(title, 128, 64)
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** Lights, rainbow corridor floor, side walls, berm, spawn, control wall. */
 export function buildRange(
   scene: THREE.Scene,
   colliders: AABB[],
 ): RangeBuildResult {
   // ── Lighting ─────────────────────────────────────────────────────────────
-  const hemi = new THREE.HemisphereLight(0xb8d0e8, 0x3a3028, 0.85)
+  const hemi = new THREE.HemisphereLight(0xd0dce8, 0x4a4844, 0.95)
   scene.add(hemi)
-  const sun = new THREE.DirectionalLight(0xfff2dd, 1.15)
-  sun.position.set(18, 36, 14)
+  const sun = new THREE.DirectionalLight(0xfff5e8, 1.05)
+  sun.position.set(8, 28, 10)
   sun.castShadow = true
   sun.shadow.mapSize.set(2048, 2048)
   sun.shadow.camera.near = 1
   sun.shadow.camera.far = 100
-  sun.shadow.camera.left = -45
-  sun.shadow.camera.right = 45
-  sun.shadow.camera.top = 45
-  sun.shadow.camera.bottom = -45
+  sun.shadow.camera.left = -30
+  sun.shadow.camera.right = 30
+  sun.shadow.camera.top = 50
+  sun.shadow.camera.bottom = -50
   sun.shadow.bias = -0.0003
   sun.shadow.normalBias = 0.03
   scene.add(sun)
 
-  // Soft fill so the berm / bays aren't pure black
-  const fill = new THREE.DirectionalLight(0xa8c4e8, 0.28)
-  fill.position.set(-12, 18, -20)
+  const fill = new THREE.DirectionalLight(0xb0c4e0, 0.35)
+  fill.position.set(-10, 16, -18)
   scene.add(fill)
 
   // ── Materials ────────────────────────────────────────────────────────────
   const floorMat = new THREE.MeshStandardMaterial({
-    color: 0x6a6a6a,
+    color: 0x8a8a8a,
     roughness: 0.92,
     metalness: 0.05,
   })
-  /** Primary solid (walls, cover) — may get check.png from env load. */
   const coverMat = new THREE.MeshStandardMaterial({
     color: 0x7a7a78,
     roughness: 0.88,
     metalness: 0.05,
   })
-  const concreteMat = new THREE.MeshStandardMaterial({
-    color: 0x6e6c68,
-    roughness: 0.94,
-    metalness: 0.02,
+  // Light grid walls (aim-trainer hall feel)
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: 0xc8cdd4,
+    roughness: 0.88,
+    metalness: 0.04,
   })
   const darkConcreteMat = new THREE.MeshStandardMaterial({
     color: 0x4a4844,
@@ -189,45 +233,10 @@ export function buildRange(
     roughness: 0.5,
     metalness: 0.4,
   })
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: 0xc9a227,
-    roughness: 0.55,
-    metalness: 0.15,
-  })
   const hazardMat = new THREE.MeshStandardMaterial({
     color: 0xd4a017,
     roughness: 0.7,
     metalness: 0.05,
-  })
-  const paintMat = new THREE.MeshStandardMaterial({
-    color: 0xe8d48a,
-    roughness: 0.85,
-    metalness: 0,
-  })
-  const laneMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.9,
-    metalness: 0,
-  })
-  const bermMat = new THREE.MeshStandardMaterial({
-    color: 0x5a6a48,
-    roughness: 0.98,
-    metalness: 0,
-  })
-  const bermTopMat = new THREE.MeshStandardMaterial({
-    color: 0x6b7a52,
-    roughness: 0.97,
-    metalness: 0,
-  })
-  const woodMat = new THREE.MeshStandardMaterial({
-    color: 0x6b4e32,
-    roughness: 0.9,
-    metalness: 0,
-  })
-  const rubberMat = new THREE.MeshStandardMaterial({
-    color: 0x2c2c2c,
-    roughness: 0.95,
-    metalness: 0,
   })
   const padMat = new THREE.MeshStandardMaterial({
     color: 0x3a6ea5,
@@ -235,13 +244,29 @@ export function buildRange(
     metalness: 0.15,
   })
   const impactMat = new THREE.MeshStandardMaterial({
-    color: 0x3d342c,
+    color: 0x2a2a2e,
     roughness: 0.98,
     metalness: 0.02,
+  })
+  const bermMat = new THREE.MeshStandardMaterial({
+    color: 0x3d3d42,
+    roughness: 0.95,
+    metalness: 0,
+  })
+  const podiumMat = new THREE.MeshStandardMaterial({
+    color: 0x3a4048,
+    roughness: 0.7,
+    metalness: 0.2,
+  })
+  const gridLineMat = new THREE.MeshStandardMaterial({
+    color: 0xa8b0ba,
+    roughness: 0.9,
+    metalness: 0,
   })
 
   const coverMeshes: THREE.Mesh[] = []
   const extraColliders: AABB[] = []
+  const controlButtons: RangeControlButton[] = []
   const root = new THREE.Group()
   root.name = 'practice-range'
   scene.add(root)
@@ -263,379 +288,213 @@ export function buildRange(
     return mesh
   }
 
-  // ── Floor ────────────────────────────────────────────────────────────────
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR_W, FLOOR_D), floorMat)
+  // Catalog cover (normally empty)
+  for (const c of colliders) {
+    const w = c.max.x - c.min.x
+    const h = c.max.y - c.min.y
+    const d = c.max.z - c.min.z
+    const x = (c.min.x + c.max.x) / 2
+    const y = (c.min.y + c.max.y) / 2
+    const z = (c.min.z + c.max.z) / 2
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), coverMat)
+    mesh.position.set(x, y, z)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    root.add(mesh)
+    coverMeshes.push(mesh)
+  }
+
+  // ── Base floor (under rainbow bands) ─────────────────────────────────────
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(FLOOR_W, FLOOR_D),
+    floorMat,
+  )
   floor.rotation.x = -Math.PI / 2
   floor.position.set(0, 0, (REAR_Z + BERM_Z) / 2)
   floor.receiveShadow = true
   floor.name = 'range-floor'
   root.add(floor)
 
-  // Slightly raised bay slab under the firing line (visual only —
-  // solid wide floor AABBs fight the capsule resolver; range uses y=0 floor).
-  addBox({
-    x: 0,
-    y: 0.04,
-    z: (FIRE_LINE_Z + REAR_Z) / 2,
-    w: HALF_W * 2 - 0.4,
-    h: 0.08,
-    d: REAR_Z - FIRE_LINE_Z + 0.4,
-    mat: darkConcreteMat,
-    solid: false,
-    castShadow: false,
-    name: 'bay-slab',
-  })
+  // ── Rainbow horizontal distance bands ────────────────────────────────────
+  // Band edges along Z: fire line → midpoints between rows → berm
+  const rowZs = RANGE.rowDist.map((_, i) => rangeRowZ(i))
+  const bandEdges: number[] = [FIRE_LINE_Z]
+  for (let i = 0; i < rowZs.length - 1; i++) {
+    bandEdges.push((rowZs[i] + rowZs[i + 1]) / 2)
+  }
+  // Last dummy band ends halfway to berm; final dark band fills to berm
+  const lastRow = rowZs[rowZs.length - 1]
+  bandEdges.push((lastRow + BERM_Z) / 2)
+  bandEdges.push(BERM_Z + 1.5)
 
-  // ── Perimeter walls ──────────────────────────────────────────────────────
-  const wallH = 3.2
-  const wallT = 0.45
-  // Left
+  for (let i = 0; i < bandEdges.length - 1; i++) {
+    const zNear = bandEdges[i]
+    const zFar = bandEdges[i + 1]
+    const depth = Math.abs(zNear - zFar)
+    const zMid = (zNear + zFar) / 2
+    const color =
+      RANGE.bandColors[i] ??
+      RANGE.bandColors[RANGE.bandColors.length - 1]
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.88,
+      metalness: 0.02,
+    })
+    addBox({
+      x: 0,
+      y: 0.015,
+      z: zMid,
+      w: HALF_W * 2 - 0.35,
+      h: 0.03,
+      d: depth,
+      mat,
+      solid: false,
+      castShadow: false,
+      name: `band-${i}`,
+    })
+    // Subtle grid lines on each band (stud-like feel)
+    const step = 1.5
+    for (let gx = -HALF_W + 1.5; gx < HALF_W - 1; gx += step) {
+      addBox({
+        x: gx,
+        y: 0.028,
+        z: zMid,
+        w: 0.04,
+        h: 0.01,
+        d: depth * 0.96,
+        mat: gridLineMat,
+        solid: false,
+        castShadow: false,
+        receiveShadow: false,
+        name: `band-grid-x-${i}-${gx}`,
+      })
+    }
+  }
+
+  // ── Tall corridor side walls ──────────────────────────────────────────────
+  const wallT = 0.4
+  const rangeMidZ = (REAR_Z + BERM_Z) / 2
+  const rangeDepth = REAR_Z - BERM_Z + 1
+
   addBox({
     x: -HALF_W,
-    y: wallH / 2,
-    z: (REAR_Z + BERM_Z) / 2,
+    y: WALL_H / 2,
+    z: rangeMidZ,
     w: wallT,
-    h: wallH,
-    d: REAR_Z - BERM_Z + 1,
-    mat: concreteMat,
+    h: WALL_H,
+    d: rangeDepth,
+    mat: wallMat,
     name: 'wall-left',
   })
-  // Right
   addBox({
     x: HALF_W,
-    y: wallH / 2,
-    z: (REAR_Z + BERM_Z) / 2,
+    y: WALL_H / 2,
+    z: rangeMidZ,
     w: wallT,
-    h: wallH,
-    d: REAR_Z - BERM_Z + 1,
-    mat: concreteMat,
+    h: WALL_H,
+    d: rangeDepth,
+    mat: wallMat,
     name: 'wall-right',
   })
-  // Rear (behind bays)
   addBox({
     x: 0,
-    y: wallH / 2,
+    y: WALL_H / 2,
     z: REAR_Z,
     w: HALF_W * 2 + wallT,
-    h: wallH,
+    h: WALL_H,
     d: wallT,
-    mat: concreteMat,
+    mat: wallMat,
     name: 'wall-rear',
   })
 
-  // Side rail caps (visual accent on walls)
+  // Wall grid accents (vertical seams)
   for (const side of [-1, 1] as const) {
-    addBox({
-      x: side * HALF_W,
-      y: wallH + 0.08,
-      z: (REAR_Z + BERM_Z) / 2,
-      w: 0.55,
-      h: 0.16,
-      d: REAR_Z - BERM_Z + 1.1,
-      mat: accentMat,
-      solid: false,
-      castShadow: false,
-      name: `rail-cap-${side > 0 ? 'r' : 'l'}`,
-    })
+    for (let i = 0; i < 8; i++) {
+      const z = FIRE_LINE_Z - 2 - i * 5.5
+      if (z < BERM_Z + 2) break
+      addBox({
+        x: side * (HALF_W - wallT / 2 - 0.02),
+        y: WALL_H / 2,
+        z,
+        w: 0.04,
+        h: WALL_H - 0.2,
+        d: 0.06,
+        mat: gridLineMat,
+        solid: false,
+        castShadow: false,
+        name: `wall-seam-${side > 0 ? 'r' : 'l'}-${i}`,
+      })
+    }
   }
 
-  // ── Backstop berm ────────────────────────────────────────────────────────
-  // Stepped sand berm + rubber impact face
+  // ── Backstop ─────────────────────────────────────────────────────────────
   addBox({
     x: 0,
-    y: 2.6,
-    z: BERM_Z - 1.2,
-    w: HALF_W * 2 - 0.5,
-    h: 5.2,
-    d: 3.2,
+    y: WALL_H / 2,
+    z: BERM_Z - 0.3,
+    w: HALF_W * 2 - 0.2,
+    h: WALL_H,
+    d: 1.2,
     mat: bermMat,
     name: 'berm-body',
   })
   addBox({
     x: 0,
-    y: 5.4,
-    z: BERM_Z - 0.4,
-    w: HALF_W * 2 - 0.8,
-    h: 0.5,
-    d: 2.4,
-    mat: bermTopMat,
-    name: 'berm-top',
-  })
-  // Dark impact face (bullet sponge)
-  addBox({
-    x: 0,
-    y: 2.4,
-    z: BERM_Z + 0.35,
-    w: HALF_W * 2 - 1.2,
-    h: 4.6,
-    d: 0.35,
+    y: WALL_H / 2,
+    z: BERM_Z + 0.4,
+    w: HALF_W * 2 - 0.6,
+    h: WALL_H - 0.4,
+    d: 0.25,
     mat: impactMat,
     name: 'berm-impact',
   })
-  // Low sand lip at base
-  addBox({
-    x: 0,
-    y: 0.35,
-    z: BERM_Z + 1.4,
-    w: HALF_W * 2 - 1,
-    h: 0.7,
-    d: 1.6,
-    mat: bermTopMat,
-    name: 'berm-lip',
-  })
 
-  // ── Firing bays ──────────────────────────────────────────────────────────
-  const bayCount = 5
-  const bayPitch = (HALF_W * 2 - 2) / bayCount
-  const bayStartX = -HALF_W + 1 + bayPitch / 2
-  const dividerH = 1.55
-  const dividerZ = (FIRE_LINE_Z + REAR_Z) / 2
-  const dividerD = REAR_Z - FIRE_LINE_Z - 0.6
-
-  // Firing rest / sandbag wall across the line
+  // ── Fire line ────────────────────────────────────────────────────────────
   addBox({
     x: 0,
-    y: 0.45,
+    y: 0.03,
     z: FIRE_LINE_Z,
-    w: HALF_W * 2 - 1.2,
-    h: 0.9,
-    d: 0.55,
-    mat: rubberMat,
-    name: 'firing-rest',
-  })
-  // Yellow hazard stripe on the rest
-  addBox({
-    x: 0,
-    y: 0.92,
-    z: FIRE_LINE_Z,
-    w: HALF_W * 2 - 1.4,
-    h: 0.06,
-    d: 0.58,
+    w: HALF_W * 2 - 0.5,
+    h: 0.04,
+    d: 0.22,
     mat: hazardMat,
     solid: false,
     castShadow: false,
-    name: 'firing-rest-stripe',
+    name: 'fire-line',
   })
 
-  for (let i = 0; i <= bayCount; i++) {
-    const x = bayStartX - bayPitch / 2 + i * bayPitch
-    // Vertical divider panels between bays
-    addBox({
-      x,
-      y: dividerH / 2,
-      z: dividerZ,
-      w: 0.12,
-      h: dividerH,
-      d: dividerD,
-      mat: metalMat,
-      name: `bay-div-${i}`,
-    })
-    // Post at fire line
-    addBox({
-      x,
-      y: 1.1,
-      z: FIRE_LINE_Z + 0.05,
-      w: 0.18,
-      h: 2.2,
-      d: 0.18,
-      mat: railMat,
-      name: `bay-post-${i}`,
-    })
-  }
+  // ── Distance markers + dummy pads on each horizontal row ─────────────────
+  for (let row = 0; row < RANGE.rowDist.length; row++) {
+    const m = RANGE.rowDist[row]
+    const z = rangeRowZ(row)
 
-  // Bay numbers on fire-line posts (center of each bay)
-  for (let i = 0; i < bayCount; i++) {
-    const x = bayStartX + i * bayPitch
-    const tex = makeFacilityLabel(`${i + 1}`, {
-      bg: '#1a2430',
-      fg: '#f0c040',
-    })
-    const plate = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.55, 0.28),
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        roughness: 0.7,
-        metalness: 0.1,
-      }),
-    )
-    plate.position.set(x, 2.05, FIRE_LINE_Z + 0.16)
-    plate.castShadow = false
-    root.add(plate)
-  }
-
-  // Overhead canopy over the bays
-  addBox({
-    x: 0,
-    y: 3.35,
-    z: dividerZ,
-    w: HALF_W * 2 - 0.6,
-    h: 0.18,
-    d: dividerD + 1.2,
-    mat: metalMat,
-    name: 'canopy',
-  })
-  // Canopy support beams
-  for (const side of [-1, 1] as const) {
-    addBox({
-      x: side * (HALF_W - 0.9),
-      y: 2.4,
-      z: dividerZ,
-      w: 0.22,
-      h: 1.9,
-      d: 0.22,
-      mat: railMat,
-      name: `canopy-post-${side > 0 ? 'r' : 'l'}`,
-    })
-  }
-  // Cross beams under canopy
-  for (let i = 0; i < 3; i++) {
-    const z = FIRE_LINE_Z + 1.2 + i * 2.4
+    // Thin cross-line at dummy feet
     addBox({
       x: 0,
-      y: 3.18,
+      y: 0.032,
       z,
-      w: HALF_W * 2 - 1.2,
-      h: 0.12,
-      d: 0.14,
-      mat: railMat,
-      solid: false,
-      castShadow: true,
-      name: `canopy-beam-${i}`,
-    })
-  }
-
-  // Facility sign on rear wall
-  {
-    const tex = makeFacilityLabel('PRACTICE RANGE', {
-      sub: 'LIVE FIRE  ·  EYES & EARS',
-      bg: '#152028',
-      fg: '#7ec8f0',
-    })
-    const sign = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.2, 1.3),
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        roughness: 0.65,
-        metalness: 0.1,
-      }),
-    )
-    sign.position.set(0, 2.4, REAR_Z - 0.28)
-    sign.rotation.y = Math.PI
-    root.add(sign)
-  }
-
-  // Spawn pad — center bay
-  const pad = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15, 1.15, 0.1, 28),
-    padMat,
-  )
-  pad.position.set(0, 0.1, FIRE_LINE_Z + 2.4)
-  pad.receiveShadow = true
-  pad.name = 'spawn-pad'
-  root.add(pad)
-  // Inner ring
-  const padRing = new THREE.Mesh(
-    new THREE.TorusGeometry(1.05, 0.04, 8, 32),
-    new THREE.MeshStandardMaterial({
-      color: 0x7eb8e8,
-      roughness: 0.4,
-      metalness: 0.3,
-    }),
-  )
-  padRing.rotation.x = Math.PI / 2
-  padRing.position.set(0, 0.16, FIRE_LINE_Z + 2.4)
-  root.add(padRing)
-
-  // ── Lane paint + distance markers ────────────────────────────────────────
-  // Vertical lane lines downrange
-  for (let i = 0; i <= bayCount; i++) {
-    const x = bayStartX - bayPitch / 2 + i * bayPitch
-    addBox({
-      x,
-      y: 0.02,
-      z: (FIRE_LINE_Z + BERM_Z) / 2,
-      w: 0.08,
-      h: 0.03,
-      d: FIRE_LINE_Z - BERM_Z - 2,
-      mat: laneMat,
+      w: HALF_W * 2 - 0.8,
+      h: 0.025,
+      d: 0.1,
+      mat: hazardMat,
       solid: false,
       castShadow: false,
-      receiveShadow: false,
-      name: `lane-line-${i}`,
-    })
-  }
-
-  // Center dashed aim line
-  {
-    const z0 = FIRE_LINE_Z - 1
-    const z1 = BERM_Z + 3
-    const dash = 1.2
-    const gap = 0.8
-    let z = z0
-    let n = 0
-    while (z > z1) {
-      const len = Math.min(dash, z - z1)
-      addBox({
-        x: 0,
-        y: 0.025,
-        z: z - len / 2,
-        w: 0.12,
-        h: 0.03,
-        d: len,
-        mat: paintMat,
-        solid: false,
-        castShadow: false,
-        receiveShadow: false,
-        name: `center-dash-${n++}`,
-      })
-      z -= dash + gap
-    }
-  }
-
-  // Distance rings + placards at 10 / 20 / 30 / 40 m from fire line
-  const distances = [10, 20, 30, 40] as const
-  for (const m of distances) {
-    const z = FIRE_LINE_Z - m
-    // Painted cross-line
-    addBox({
-      x: 0,
-      y: 0.022,
-      z,
-      w: HALF_W * 2 - 1.5,
-      h: 0.03,
-      d: 0.14,
-      mat: m % 20 === 0 ? hazardMat : paintMat,
-      solid: false,
-      castShadow: false,
-      receiveShadow: false,
-      name: `dist-line-${m}`,
+      name: `row-line-${m}`,
     })
 
-    // Side posts + placards
+    // Side distance placards
     for (const side of [-1, 1] as const) {
-      const px = side * (HALF_W - 1.1)
+      const px = side * (HALF_W - 0.55)
       addBox({
         x: px,
-        y: 0.9,
+        y: 1.1,
         z,
-        w: 0.14,
-        h: 1.8,
-        d: 0.14,
+        w: 0.1,
+        h: 2.2,
+        d: 0.1,
         mat: railMat,
         name: `dist-post-${m}-${side > 0 ? 'r' : 'l'}`,
       })
-      // Small base
-      addBox({
-        x: px,
-        y: 0.08,
-        z,
-        w: 0.4,
-        h: 0.16,
-        d: 0.4,
-        mat: concreteMat,
-        name: `dist-base-${m}-${side > 0 ? 'r' : 'l'}`,
-      })
-
       const tex = makeDistanceLabel(`${m}m`)
       const plate = new THREE.Mesh(
         new THREE.PlaneGeometry(0.9, 0.45),
@@ -645,180 +504,245 @@ export function buildRange(
           metalness: 0.05,
         }),
       )
-      // Face toward firing line (+Z)
-      plate.position.set(px + side * 0.12, 1.55, z)
+      plate.position.set(px + side * 0.08, 1.85, z)
       plate.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
       root.add(plate)
     }
-  }
 
-  // ── Target stands (visual frames near dummy homes) ───────────────────────
-  const standPositions: { x: number; z: number }[] = [
-    { x: 0, z: FIRE_LINE_Z - 12 },
-    { x: -5.5, z: FIRE_LINE_Z - 18 },
-    { x: 5.5, z: FIRE_LINE_Z - 18 },
-    { x: -3.5, z: FIRE_LINE_Z - 28 },
-    { x: 4, z: FIRE_LINE_Z - 35 },
-  ]
-  for (let i = 0; i < standPositions.length; i++) {
-    const p = standPositions[i]
-    // Base plate
-    addBox({
-      x: p.x,
-      y: 0.06,
-      z: p.z + 0.35,
-      w: 0.9,
-      h: 0.12,
-      d: 0.55,
-      mat: metalMat,
-      name: `stand-base-${i}`,
-    })
-    // Uprights
-    for (const sx of [-0.32, 0.32]) {
+    // Target pads under each dummy in the row
+    for (let col = 0; col < RANGE.colsPerRow; col++) {
+      const x = rangeColX(col)
       addBox({
-        x: p.x + sx,
-        y: 0.95,
-        z: p.z + 0.35,
-        w: 0.08,
-        h: 1.8,
-        d: 0.08,
-        mat: woodMat,
-        name: `stand-post-${i}-${sx > 0 ? 'r' : 'l'}`,
-      })
-    }
-    // Top crossbar
-    addBox({
-      x: p.x,
-      y: 1.85,
-      z: p.z + 0.35,
-      w: 0.75,
-      h: 0.08,
-      d: 0.08,
-      mat: woodMat,
-      name: `stand-bar-${i}`,
-    })
-  }
-
-  // ── Mid-range peek cover (from catalog cover boxes + extras) ─────────────
-  // Convert catalog colliders into meshes with mixed materials
-  for (const c of colliders) {
-    const w = c.max.x - c.min.x
-    const h = c.max.y - c.min.y
-    const d = c.max.z - c.min.z
-    const x = (c.min.x + c.max.x) / 2
-    const y = (c.min.y + c.max.y) / 2
-    const z = (c.min.z + c.max.z) / 2
-    // Taller pieces look like walls; short ones like crates
-    const mat = h > 1.4 ? coverMat : h < 0.7 ? rubberMat : darkConcreteMat
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
-    mesh.position.set(x, y, z)
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    root.add(mesh)
-    coverMeshes.push(mesh)
-  }
-
-  // Extra low walls / sandbag rows for peek practice (solid)
-  const peekPieces: Omit<BoxSpec, 'mat'>[] = [
-    // Left peek wall mid
-    { x: -7, y: 0.7, z: FIRE_LINE_Z - 15, w: 0.4, h: 1.4, d: 2.4 },
-    // Right crate stack
-    { x: 7.5, y: 0.5, z: FIRE_LINE_Z - 14, w: 1.2, h: 1.0, d: 1.2 },
-    { x: 7.5, y: 1.35, z: FIRE_LINE_Z - 14, w: 0.9, h: 0.7, d: 0.9 },
-    // Center low barricade
-    { x: 0, y: 0.4, z: FIRE_LINE_Z - 22, w: 3.2, h: 0.8, d: 0.5 },
-    // Far left wall segment
-    { x: -8, y: 0.85, z: FIRE_LINE_Z - 30, w: 0.45, h: 1.7, d: 1.8 },
-    // Far right sandbag
-    { x: 6.5, y: 0.45, z: FIRE_LINE_Z - 26, w: 2.0, h: 0.9, d: 0.7 },
-  ]
-  for (let i = 0; i < peekPieces.length; i++) {
-    const p = peekPieces[i]
-    addBox({
-      ...p,
-      mat: i % 2 === 0 ? coverMat : rubberMat,
-      name: `peek-${i}`,
-    })
-  }
-
-  // Corner watch towers (short elevated platforms — visual + light cover)
-  for (const side of [-1, 1] as const) {
-    const x = side * (HALF_W - 2.2)
-    const z = FIRE_LINE_Z + 3.5
-    addBox({
-      x,
-      y: 0.75,
-      z,
-      w: 1.6,
-      h: 1.5,
-      d: 1.6,
-      mat: concreteMat,
-      name: `tower-base-${side > 0 ? 'r' : 'l'}`,
-    })
-    addBox({
-      x,
-      y: 1.62,
-      z,
-      w: 1.75,
-      h: 0.12,
-      d: 1.75,
-      mat: metalMat,
-      name: `tower-deck-${side > 0 ? 'r' : 'l'}`,
-    })
-    // Railings
-    for (const [ox, oz] of [
-      [0, 0.8],
-      [0, -0.8],
-      [0.8, 0],
-      [-0.8, 0],
-    ] as const) {
-      addBox({
-        x: x + ox * (Math.abs(ox) > Math.abs(oz) ? 1 : 0.55),
-        y: 2.0,
-        z: z + oz * (Math.abs(oz) > Math.abs(ox) ? 1 : 0.55),
-        w: Math.abs(ox) > Math.abs(oz) ? 0.08 : 1.5,
-        h: 0.55,
-        d: Math.abs(oz) > Math.abs(ox) ? 0.08 : 1.5,
-        mat: railMat,
+        x,
+        y: 0.035,
+        z,
+        w: 0.9,
+        h: 0.05,
+        d: 0.55,
+        mat: darkConcreteMat,
         solid: false,
-        castShadow: true,
-        name: `tower-rail-${side > 0 ? 'r' : 'l'}`,
+        castShadow: false,
+        name: `target-pad-c${col}-r${row}`,
       })
     }
   }
 
-  // Side benches along walls (decoration + light cover)
-  for (const side of [-1, 1] as const) {
-    for (let i = 0; i < 3; i++) {
-      const z = FIRE_LINE_Z - 8 - i * 10
-      addBox({
-        x: side * (HALF_W - 0.85),
-        y: 0.28,
-        z,
-        w: 0.55,
-        h: 0.55,
-        d: 1.8,
-        mat: woodMat,
-        name: `bench-${side > 0 ? 'r' : 'l'}-${i}`,
-      })
-    }
+  // ── Spawn platform ───────────────────────────────────────────────────────
+  const spawnX = RANGE.spawnX
+  const spawnZ = RANGE.spawnZ
+
+  addBox({
+    x: spawnX,
+    y: 0.06,
+    z: spawnZ,
+    w: 3.4,
+    h: 0.12,
+    d: 2.8,
+    mat: darkConcreteMat,
+    solid: false,
+    castShadow: false,
+    name: 'spawn-platform',
+  })
+  const pad = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.15, 1.15, 0.1, 28),
+    padMat,
+  )
+  pad.position.set(spawnX, 0.12, spawnZ)
+  pad.receiveShadow = true
+  pad.name = 'spawn-pad'
+  root.add(pad)
+  const padRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1.05, 0.04, 8, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0x7eb8e8,
+      roughness: 0.4,
+      metalness: 0.3,
+    }),
+  )
+  padRing.rotation.x = Math.PI / 2
+  padRing.position.set(spawnX, 0.18, spawnZ)
+  root.add(padRing)
+  // Chevron pointing downrange
+  addBox({
+    x: spawnX,
+    y: 0.14,
+    z: spawnZ - 0.75,
+    w: 0.32,
+    h: 0.04,
+    d: 0.5,
+    mat: hazardMat,
+    solid: false,
+    castShadow: false,
+    name: 'spawn-chevron',
+  })
+
+  // ── Control wall (behind spawn) ──────────────────────────────────────────
+  const wallZ = RANGE.controlWallZ
+  const btnY = RANGE.controlButtonY
+
+  addBox({
+    x: 0,
+    y: 0.45,
+    z: wallZ + 0.15,
+    w: 5.4,
+    h: 0.9,
+    d: 0.9,
+    mat: podiumMat,
+    name: 'control-podium',
+  })
+  addBox({
+    x: 0,
+    y: 1.55,
+    z: wallZ + 0.35,
+    w: 5.0,
+    h: 1.5,
+    d: 0.18,
+    mat: metalMat,
+    name: 'control-panel',
+  })
+  {
+    const tex = makeFacilityLabel('RANGE CONTROLS', {
+      sub: 'LOOK + FIRE TO TOGGLE',
+      bg: '#152028',
+      fg: '#7ec8f0',
+    })
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.4, 0.7),
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.65,
+        metalness: 0.1,
+      }),
+    )
+    sign.position.set(0, 2.15, wallZ + 0.24)
+    sign.rotation.y = Math.PI
+    root.add(sign)
   }
 
-  // ── Safety lights along side walls ───────────────────────────────────────
+  type BtnSpec = {
+    id: RangeControlAction
+    label: string
+    sub?: string
+    accent: string
+    x: number
+  }
+  const btnSpecs: BtnSpec[] = [
+    {
+      id: 'mode_stationary',
+      label: 'STILL',
+      sub: 'Stationary',
+      accent: '#6ecf8e',
+      x: -1.9,
+    },
+    {
+      id: 'mode_moving',
+      label: 'MOVE',
+      sub: 'Wander',
+      accent: '#7ec8f0',
+      x: -0.95,
+    },
+    {
+      id: 'mode_strafing',
+      label: 'STRAFE',
+      sub: 'Side step',
+      accent: '#e0a84a',
+      x: 0,
+    },
+    {
+      id: 'reset',
+      label: 'RESET',
+      sub: 'Heal & home',
+      accent: '#e07070',
+      x: 0.95,
+    },
+    {
+      id: 'count',
+      label: 'ROWS',
+      sub: `1–${RANGE.rowDist.length}`,
+      accent: '#c9a0e8',
+      x: 1.9,
+    },
+  ]
+
+  for (const spec of btnSpecs) {
+    const faceZ = wallZ + 0.24
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.52, 0.12),
+      new THREE.MeshStandardMaterial({
+        color: 0x1a222c,
+        roughness: 0.55,
+        metalness: 0.25,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
+      }),
+    )
+    body.position.set(spec.x, btnY, faceZ)
+    body.castShadow = true
+    body.name = `ctrl-${spec.id}`
+    body.userData.rangeAction = spec.id
+    root.add(body)
+    coverMeshes.push(body)
+
+    const tex = makeButtonLabel(spec.label, spec.sub, spec.accent)
+    const face = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.72, 0.46),
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.55,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+      }),
+    )
+    face.position.set(spec.x, btnY, faceZ - 0.065)
+    face.rotation.y = Math.PI
+    face.name = `ctrl-face-${spec.id}`
+    body.userData.face = face
+    body.userData.accent = parseInt(spec.accent.slice(1), 16)
+    root.add(face)
+
+    controlButtons.push({
+      id: spec.id,
+      mesh: body,
+      position: body.position.clone(),
+      label: spec.label,
+    })
+  }
+
+  // Facility title on rear wall
+  {
+    const tex = makeFacilityLabel('PRACTICE RANGE', {
+      sub: 'HORIZONTAL ROWS  ·  CLOSE → LONG',
+      bg: '#152028',
+      fg: '#7ec8f0',
+    })
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.8, 1.1),
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.65,
+        metalness: 0.1,
+      }),
+    )
+    sign.position.set(0, WALL_H - 1.2, REAR_Z - 0.28)
+    sign.rotation.y = Math.PI
+    root.add(sign)
+  }
+
+  // Soft lights along corridor
   for (const side of [-1, 1] as const) {
-    for (let i = 0; i < 5; i++) {
-      const z = FIRE_LINE_Z - 2 - i * 9
-      const lamp = new THREE.PointLight(0xffe8c0, 0.45, 12, 2)
-      lamp.position.set(side * (HALF_W - 0.55), 2.7, z)
+    for (let i = 0; i < 6; i++) {
+      const z = FIRE_LINE_Z - 1 - i * 7
+      if (z < BERM_Z + 3) break
+      const lamp = new THREE.PointLight(0xfff0d8, 0.35, 12, 2)
+      lamp.position.set(side * (HALF_W - 0.5), WALL_H - 0.8, z)
       root.add(lamp)
-      // Fixture housing
       addBox({
-        x: side * (HALF_W - 0.35),
-        y: 2.7,
+        x: side * (HALF_W - 0.28),
+        y: WALL_H - 0.8,
         z,
-        w: 0.25,
-        h: 0.18,
-        d: 0.35,
+        w: 0.2,
+        h: 0.14,
+        d: 0.28,
         mat: metalMat,
         solid: false,
         castShadow: false,
@@ -826,17 +750,23 @@ export function buildRange(
       })
     }
   }
+  const ctrlLight = new THREE.PointLight(0xc8e0ff, 0.6, 8, 2)
+  ctrlLight.position.set(0, 2.4, wallZ - 0.5)
+  root.add(ctrlLight)
 
-  return { floorMat, coverMat, coverMeshes, extraColliders }
+  return {
+    floorMat,
+    coverMat,
+    coverMeshes,
+    extraColliders,
+    controlButtons,
+    spawn: { x: spawnX, y: 0, z: spawnZ },
+    spawnYaw: 0,
+  }
 }
 
 /**
  * Kenney CC0 sky (equirect) + optional prototype floor/cover textures.
- * Falls back silently to solid materials if assets fail to load.
- *
- * @param skybox Concrete skybox for this match (default day). Resolve
- *   `"random"` once at session start so every client shares the same id.
- * @param loadFloorTextures Range-only grid/check materials; skip on GLB maps.
  */
 export async function loadEnvironmentTextures(opts: {
   scene: THREE.Scene
@@ -868,7 +798,6 @@ export async function loadEnvironmentTextures(opts: {
     sky.mapping = THREE.EquirectangularReflectionMapping
     sky.colorSpace = THREE.SRGBColorSpace
     scene.background = sky
-    // Soft fog under the equirect so horizon edges blend a bit
     if (scene.fog instanceof THREE.Fog) {
       scene.fog.color.setHex(SKYBOX_FOG[skyId])
     }
@@ -879,26 +808,8 @@ export async function loadEnvironmentTextures(opts: {
 
   if (!loadFloorTextures) return loaded
 
-  try {
-    const floorMap = await loadTex('/env/floor/grid.png')
-    floorMap.wrapS = THREE.RepeatWrapping
-    floorMap.wrapT = THREE.RepeatWrapping
-    floorMap.repeat.set(18, 32)
-    floorMap.anisotropy = Math.min(
-      8,
-      renderer.capabilities.getMaxAnisotropy(),
-    )
-    floorMap.colorSpace = THREE.SRGBColorSpace
-    if (floorMat) {
-      floorMat.map = floorMap
-      floorMat.color.set(0xffffff)
-      floorMat.needsUpdate = true
-    }
-    loaded.push(floorMap)
-  } catch {
-    // keep solid floor
-  }
-
+  // Corridor uses solid rainbow bands — skip grid texture on floor so colors
+  // stay clean. Cover texture still available if catalog boxes exist.
   try {
     const coverMap = await loadTex('/env/floor/check.png')
     coverMap.wrapS = THREE.RepeatWrapping
@@ -911,6 +822,8 @@ export async function loadEnvironmentTextures(opts: {
       coverMat.needsUpdate = true
     }
     loaded.push(coverMap)
+    void floorMat
+    void renderer
   } catch {
     // keep solid cover
   }

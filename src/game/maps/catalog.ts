@@ -106,17 +106,17 @@ export const MAPS: Record<MapId, MapDef> = {
     id: 'range',
     name: 'Practice Range',
     blurb:
-      'Enclosed live-fire facility — firing bays, distance markers, peek cover, and roaming dummies. Start Tutorial from the lobby for a guided how-to-play.',
+      'Horizontal distance rows in a rainbow corridor — left/right dummies at 8–38 m. Control wall: still / move / strafe, reset, and row count. Start Tutorial from the lobby for a guided how-to-play.',
     tags: ['official', 'training', 'tutorial'],
     kind: 'range',
     scale: 1,
     rotateY: 0,
     offset: { x: 0, y: 0, z: 0 },
-    spawn: { x: 0, y: 0, z: 8.4 },
+    spawn: { x: 0, y: 0, z: 5.5 },
     spawnYaw: 0,
     dummies: rangeDummies,
-    /** Long axis of the enclosed range (berm ~40 m downrange). */
-    dummyBounds: 36,
+    /** Long axis of the enclosed corridor (berm ~45 m downrange). */
+    dummyBounds: 48,
     cameraFar: 200,
     fogNear: 55,
     fogFar: 120,

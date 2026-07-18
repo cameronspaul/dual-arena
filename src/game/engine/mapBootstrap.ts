@@ -21,6 +21,7 @@ import type { LevelEditorSystem } from '../editor/LevelEditorSystem'
 import type { RemotePlayerSystem } from '../net'
 import type { DummySystem } from '../systems/DummySystem'
 import type { PlayerVisuals } from '../systems/PlayerVisuals'
+import type { RangeControls } from '../systems/RangeControls'
 import type { CharacterAppearance } from '../character/appearance'
 import type { MapSpawnLayout, MapBarrierLayout } from '../maps'
 import { useAppStore } from '@/stores/useAppStore'
@@ -49,6 +50,7 @@ export type MapBootstrapHost = {
   levelEditor: LevelEditorSystem
   dummiesSys: DummySystem
   playerVisuals: PlayerVisuals
+  rangeControls: RangeControls
   applyMapLoadSpawn(
     catalogSpawn: { x: number; y: number; z: number },
     catalogYaw: number,
@@ -76,7 +78,13 @@ export async function bootstrapMap(host: MapBootstrapHost) {
       host.dummies = createDummies({
         defs: built.dummies,
         bounds: built.dummyBounds,
+        practiceRange: true,
       })
+      host.rangeControls.attach(built.controlButtons ?? [])
+      host.rangeControls.setState(
+        host.rangeControls.mode,
+        host.rangeControls.rows,
+      )
       const textures = await loadEnvForMap(
         host.mapDef,
         host.scene,
@@ -101,6 +109,7 @@ export async function bootstrapMap(host: MapBootstrapHost) {
         defs: built.dummies,
         bounds: built.dummyBounds,
       })
+      host.rangeControls.clear()
       if (built.bounds) {
         const span = Math.hypot(built.bounds.size.x, built.bounds.size.z)
         host.camera.far = Math.max(host.mapDef.cameraFar, span * 1.2 + 40)

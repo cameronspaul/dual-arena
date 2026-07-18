@@ -144,7 +144,7 @@ ADS: independent hold state (FOV lerp)
 
 ### 5.5 Maps (Phase 0 = Range)
 
-**Range:** flat ground, cover boxes, 3–5 dummies at varying distances for aim practice.
+**Range:** aim-trainer corridor with rainbow horizontal distance bands; left/right dummies per band; spawn platform + control wall (stationary / moving / strafing, reset, row count).
 
 Later duel maps: Long Alley, Boxes, Pit (mid cover + long sightlines).
 

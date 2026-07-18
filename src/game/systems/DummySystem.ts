@@ -274,7 +274,7 @@ export class DummySystem {
 
     if (!paused) {
       for (const d of dummies) {
-        if (d.alive) this.syncLocomotion(d.id, dummies)
+        if (d.alive && d.active !== false) this.syncLocomotion(d.id, dummies)
       }
       for (const mixer of this.mixers.values()) {
         mixer.update(dt)
@@ -284,6 +284,13 @@ export class DummySystem {
     for (const d of dummies) {
       const mesh = this.meshes.get(d.id)
       if (!mesh) continue
+
+      // Parked by dummy-count control — fully hidden, no death pose
+      if (d.active === false) {
+        mesh.visible = false
+        mesh.userData.wasAlive = false
+        continue
+      }
 
       const wasAlive = mesh.userData.wasAlive !== false
       if (d.alive && !wasAlive) {

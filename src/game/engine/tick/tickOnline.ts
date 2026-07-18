@@ -15,6 +15,7 @@ import { stepDummies, stepRespawns, type RespawnTimer } from '../../sim/world'
 import type { CombatFx } from '../../systems/CombatFx'
 import type { DummySystem } from '../../systems/DummySystem'
 import type { PlayerVisuals } from '../../systems/PlayerVisuals'
+import type { RangeControls } from '../../systems/RangeControls'
 import type { ViewFeel } from '../../systems/ViewFeel'
 import { playSniperPhaseSfx } from '../../systems/combat'
 import type { ViewmodelSystem } from '../../viewmodel/ViewmodelSystem'
@@ -55,6 +56,7 @@ export type TickOnlineHost = {
   dummies: DummyTarget[]
   respawns: RespawnTimer[]
   dummiesSys: DummySystem
+  rangeControls: RangeControls
   emitHud(): void
 }
 
@@ -186,6 +188,14 @@ export function tickOnline(
     stepDummies(host.dummies, dt)
     stepRespawns(host.dummies, host.respawns, dt)
     host.dummiesSys.update(dt, host.dummies, false)
+    host.rangeControls.update({
+      camera: host.camera,
+      playerPos: host.player.position,
+      fire: input.fire,
+      dt,
+      dummies: host.dummies,
+      respawns: host.respawns,
+    })
   }
   host.combatFx.update(dt)
   host.barrierVisuals.update(host.player.position)

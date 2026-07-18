@@ -21,6 +21,7 @@ import { BarrierVisuals } from '../systems/BarrierVisuals'
 import { CombatFx } from '../systems/CombatFx'
 import { DummySystem } from '../systems/DummySystem'
 import { PlayerVisuals } from '../systems/PlayerVisuals'
+import { RangeControls } from '../systems/RangeControls'
 import { ViewFeel } from '../systems/ViewFeel'
 import { ViewmodelSystem } from '../viewmodel/ViewmodelSystem'
 import {
@@ -71,6 +72,8 @@ export abstract class EngineCore {
   /** @internal */ combatFx = new CombatFx()
   /** @internal */ barrierVisuals = new BarrierVisuals()
   /** @internal */ viewFeel = new ViewFeel()
+  /** @internal practice-range control wall (look + fire) */
+  rangeControls = new RangeControls()
 
   // --- online ----------------------------------------------------------------
   /** @internal */ isOnline = false

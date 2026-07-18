@@ -19,6 +19,7 @@ import { stepDummies, stepRespawns, type RespawnTimer } from '../../sim/world'
 import type { CombatFx } from '../../systems/CombatFx'
 import type { DummySystem } from '../../systems/DummySystem'
 import type { PlayerVisuals } from '../../systems/PlayerVisuals'
+import type { RangeControls } from '../../systems/RangeControls'
 import type { ViewFeel } from '../../systems/ViewFeel'
 import { fireShot, playSniperPhaseSfx } from '../../systems/combat'
 import type { ViewmodelSystem } from '../../viewmodel/ViewmodelSystem'
@@ -41,6 +42,7 @@ export type TickOfflineHost = {
   viewFeel: ViewFeel
   combatFx: CombatFx
   barrierVisuals: BarrierVisuals
+  rangeControls: RangeControls
   camera: THREE.PerspectiveCamera
   thirdPerson: boolean
   prevSniperPhase: SniperState['phase']
@@ -83,6 +85,16 @@ export function tickOffline(
     host.dummiesSys.update(dt, host.dummies, false)
   }
 
+  // Control wall: look + fire toggles mode / reset / row count (no ammo spend)
+  const controlConsumed = host.rangeControls.update({
+    camera: host.camera,
+    playerPos: host.player.position,
+    fire: input.fire,
+    dt,
+    dummies: host.dummies,
+    respawns: host.respawns,
+  })
+
   if (host.playerVisuals.isMan) {
     host.playerVisuals.syncLocomotion(host.player, input)
     host.playerVisuals.update(dt)
@@ -91,7 +103,8 @@ export function tickOffline(
   host.viewmodel.updateMixer(dt)
 
   const prevGrounded = host.viewFeel.wasGrounded
-  const fireResult = tryFire(host.sniper, input)
+  const fireInput = controlConsumed ? { ...input, fire: false } : input
+  const fireResult = tryFire(host.sniper, fireInput)
   if (fireResult === 'shot') {
     gameAudio.playFire()
     const result = fireShot({

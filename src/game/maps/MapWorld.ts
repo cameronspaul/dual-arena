@@ -9,6 +9,7 @@ import { aabbFromCenter } from '../core/math'
 import {
   buildRange as buildRangeScene,
   loadEnvironmentTextures,
+  type RangeControlButton,
 } from '../scene/environment'
 import type { SkyboxId } from '../scene/skyboxes'
 import type { MapDef, MapDummyDef } from './catalog'
@@ -46,6 +47,8 @@ export type MapLoadResult = {
   /** Wander half-extent from origin, derived from map size. */
   dummyBounds: number
   bounds: MapBounds | null
+  /** Practice-range control wall buttons (absent on GLB maps). */
+  controlButtons?: RangeControlButton[]
 }
 
 const _ray = new THREE.Raycaster()
@@ -54,7 +57,7 @@ const _down = new THREE.Vector3(0, -1, 0)
 const _up = new THREE.Vector3(0, 1, 0)
 
 /**
- * Build the procedural practice range (existing geometry + cover AABBs).
+ * Build the procedural practice range (4 lanes + control wall).
  */
 export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
   const colliders = WORLD.coverBoxes.map((b) =>
@@ -62,10 +65,10 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
   )
   const built = buildRangeScene(scene, colliders)
   colliders.push(...built.extraColliders)
-  // Enclosed facility: X ±14 walls, fire line z≈6, berm z≈-42, rear z≈14
-  const halfW = 14
-  const rearZ = 14
-  const bermZ = -42
+  // Enclosed corridor — keep in sync with RANGE in shared config
+  const halfW = 7
+  const rearZ = 11
+  const bermZ = -44
   return {
     root: null,
     colliders,
@@ -74,23 +77,23 @@ export function buildProceduralRange(scene: THREE.Scene): MapLoadResult {
     envTextures: [],
     hitMeshes: [],
     walkMeshes: [],
-    // Center bay, just behind the firing rest
-    spawn: { x: 0, y: 0, z: 8.4 },
-    spawnYaw: 0,
+    spawn: built.spawn,
+    spawnYaw: built.spawnYaw,
     dummies: WORLD.dummies.map((d) => ({
       id: d.id,
       x: d.x,
       z: d.z,
       yaw: d.yaw,
     })),
-    // Long-axis clamp so far-lane dummies aren't yanked to origin
-    dummyBounds: 36,
+    // Long-axis clamp so far-row dummies aren't yanked to origin
+    dummyBounds: 48,
     bounds: {
       min: { x: -halfW, y: 0, z: bermZ },
       max: { x: halfW, y: 6, z: rearZ },
       size: { x: halfW * 2, y: 6, z: rearZ - bermZ },
       center: { x: 0, y: 3, z: (rearZ + bermZ) / 2 },
     },
+    controlButtons: built.controlButtons,
   }
 }
 
