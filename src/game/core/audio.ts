@@ -17,6 +17,8 @@ export type SfxId =
   | 'adsOut'
   | 'uiClick'
   | 'uiConfirm'
+  /** Homepage lobby browser — queue-pop style new-lobby alert. */
+  | 'lobbyPop'
 
 type ClipDef = {
   src: string
@@ -107,9 +109,16 @@ const CLIPS: Record<SfxId, ClipDef> = {
     src: '/sounds/ui_confirm.ogg',
     volume: 0.5,
   },
+  lobbyPop: {
+    src: '/sounds/metal_latch.ogg',
+    volume: 0.9,
+  },
 }
 
 const DEFAULT_POOL = 4
+
+/** One full queue-sting phrase + short breath before the next pass. */
+const LOBBY_NOTIFY_PHRASE_MS = 1650
 
 export class GameAudio {
   private pools = new Map<SfxId, HTMLAudioElement[]>()
@@ -122,6 +131,9 @@ export class GameAudio {
   private lastDry = 0
   private reloadTimers: number[] = []
   private slideAudio: HTMLAudioElement | null = null
+  /** Timers for multi-pass lobby queue stings (double / loop). */
+  private lobbyNotifyTimers: number[] = []
+  private lobbyNotifyActive = false
 
   constructor() {
     for (const id of Object.keys(CLIPS) as SfxId[]) {
@@ -333,21 +345,202 @@ export class GameAudio {
   uiConfirm() {
     this.play('uiConfirm')
   }
+
+  /** Cancel a looping / multi-pass lobby notify (join, cancel, mode off). */
+  stopLobbyNotify() {
+    this.lobbyNotifyActive = false
+    for (const t of this.lobbyNotifyTimers) window.clearTimeout(t)
+    this.lobbyNotifyTimers = []
+  }
+
+  private scheduleLobbyNotifyTimer(fn: () => void, ms: number) {
+    const id = window.setTimeout(fn, ms)
+    this.lobbyNotifyTimers.push(id)
+    return id
+  }
+
+  /** One ~1.5s queue-ready phrase (samples + rising synth). */
+  private playLobbyNotifyPhrase() {
+    if (this.muted || !this.lobbyNotifyActive) return
+    const vol = this.scaleVolume(1)
+    if (vol <= 0) return
+
+    // Body: metallic latch + hammer so it has weight under the melody.
+    this.play('lobbyPop', { volume: 0.85, rate: 0.92 })
+    this.scheduleLobbyNotifyTimer(() => {
+      if (!this.lobbyNotifyActive) return
+      this.play('reloadDone', { volume: 0.55, rate: 1.15 })
+    }, 180)
+    this.scheduleLobbyNotifyTimer(() => {
+      if (!this.lobbyNotifyActive) return
+      this.play('uiConfirm', { volume: 0.5, rate: 1.05 })
+    }, 520)
+    this.scheduleLobbyNotifyTimer(() => {
+      if (!this.lobbyNotifyActive) return
+      this.play('lobbyPop', { volume: 0.7, rate: 1.2 })
+    }, 900)
+
+    playLobbyQueueSynth(vol)
+  }
+
+  /**
+   * Queue-ready alert when a new open lobby appears on the homepage.
+   * - Default / notify: plays the full sting **twice**
+   * - Auto (`loop: true`): keeps repeating until `stopLobbyNotify()`
+   */
+  lobbyNotify(opts?: { loop?: boolean; times?: number }) {
+    if (this.muted) return
+    this.unlock()
+    const vol = this.scaleVolume(1)
+    if (vol <= 0) return
+
+    this.stopLobbyNotify()
+    this.lobbyNotifyActive = true
+
+    const loop = opts?.loop === true
+    const times = loop ? Number.POSITIVE_INFINITY : Math.max(1, opts?.times ?? 2)
+    let pass = 0
+
+    const runPass = () => {
+      if (!this.lobbyNotifyActive) return
+      if (pass >= times) {
+        this.lobbyNotifyActive = false
+        return
+      }
+      pass += 1
+      this.playLobbyNotifyPhrase()
+      if (pass < times) {
+        this.scheduleLobbyNotifyTimer(runPass, LOBBY_NOTIFY_PHRASE_MS)
+      } else {
+        // Finite run finished after this phrase plays out.
+        this.scheduleLobbyNotifyTimer(() => {
+          this.lobbyNotifyActive = false
+          this.lobbyNotifyTimers = []
+        }, LOBBY_NOTIFY_PHRASE_MS)
+      }
+    }
+
+    runPass()
+  }
 }
 
 /** Shared instance for the client game session. */
 export const gameAudio = new GameAudio()
 
-// ─── Hitmarker synthesizer (COD-style metallic tick) ─────────────────────────
+// ─── Shared UI / combat synth context ────────────────────────────────────────
 
-let hitmarkerCtx: AudioContext | null = null
+let synthCtx: AudioContext | null = null
 
-function getHitmarkerCtx(): AudioContext {
-  if (!hitmarkerCtx || hitmarkerCtx.state === 'closed') {
-    hitmarkerCtx = new AudioContext()
+function getSynthCtx(): AudioContext {
+  if (!synthCtx || synthCtx.state === 'closed') {
+    synthCtx = new AudioContext()
   }
-  if (hitmarkerCtx.state === 'suspended') void hitmarkerCtx.resume()
-  return hitmarkerCtx
+  if (synthCtx.state === 'suspended') void synthCtx.resume()
+  return synthCtx
+}
+
+/** @deprecated alias — kept for hitmarker call sites below */
+function getHitmarkerCtx(): AudioContext {
+  return getSynthCtx()
+}
+
+/**
+ * Match-found / queue-pop sting (~1.4s).
+ * Rising triad + final ring, with soft sparkle ticks on each beat.
+ */
+function playLobbyQueueSynth(volume: number) {
+  const ctx = getSynthCtx()
+  const now = ctx.currentTime
+  const master = ctx.createGain()
+  master.gain.value = Math.min(1, volume * 0.85)
+  master.connect(ctx.destination)
+
+  // Ascending “ready” notes (Hz) — spaced so the whole phrase lands ~1.4s.
+  const notes: { freq: number; t: number; dur: number; gain: number }[] = [
+    { freq: 392, t: 0.0, dur: 0.22, gain: 0.38 }, // G4
+    { freq: 523.25, t: 0.22, dur: 0.22, gain: 0.42 }, // C5
+    { freq: 659.25, t: 0.44, dur: 0.24, gain: 0.48 }, // E5
+    { freq: 783.99, t: 0.68, dur: 0.28, gain: 0.52 }, // G5
+    { freq: 1046.5, t: 0.98, dur: 0.55, gain: 0.58 }, // C6 — long ring
+  ]
+
+  for (const n of notes) {
+    const start = now + n.t
+    const end = start + n.dur
+
+    // Soft square-ish lead (two detuned oscillators for thickness).
+    for (const detune of [-6, 0, 7]) {
+      const osc = ctx.createOscillator()
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(n.freq, start)
+      osc.detune.setValueAtTime(detune, start)
+
+      const env = ctx.createGain()
+      env.gain.setValueAtTime(0, start)
+      env.gain.linearRampToValueAtTime(
+        (n.gain * 0.55) / 3,
+        start + 0.018,
+      )
+      // Longer notes hold a bit then ease out.
+      env.gain.setValueAtTime((n.gain * 0.45) / 3, start + n.dur * 0.35)
+      env.gain.exponentialRampToValueAtTime(0.001, end)
+
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.setValueAtTime(2400 + n.freq * 0.4, start)
+      lp.Q.value = 0.8
+
+      osc.connect(lp).connect(env).connect(master)
+      osc.start(start)
+      osc.stop(end + 0.02)
+    }
+
+    // Harmonic “chime” sine an octave up for sparkle.
+    const chime = ctx.createOscillator()
+    chime.type = 'sine'
+    chime.frequency.setValueAtTime(n.freq * 2, start)
+    const chimeEnv = ctx.createGain()
+    chimeEnv.gain.setValueAtTime(0, start)
+    chimeEnv.gain.linearRampToValueAtTime(n.gain * 0.18, start + 0.01)
+    chimeEnv.gain.exponentialRampToValueAtTime(0.001, start + n.dur * 0.7)
+    chime.connect(chimeEnv).connect(master)
+    chime.start(start)
+    chime.stop(start + n.dur)
+
+    // Short metallic noise tick on each beat (queue “blip”).
+    const tickDur = 0.06
+    const bufLen = Math.ceil(ctx.sampleRate * tickDur)
+    const noiseBuf = ctx.createBuffer(1, bufLen, ctx.sampleRate)
+    const data = noiseBuf.getChannelData(0)
+    for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1
+    const noise = ctx.createBufferSource()
+    noise.buffer = noiseBuf
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 2800 + n.freq * 0.5
+    bp.Q.value = 4
+    const tickEnv = ctx.createGain()
+    tickEnv.gain.setValueAtTime(0, start)
+    tickEnv.gain.linearRampToValueAtTime(0.12, start + 0.004)
+    tickEnv.gain.exponentialRampToValueAtTime(0.001, start + tickDur)
+    noise.connect(bp).connect(tickEnv).connect(master)
+    noise.start(start)
+    noise.stop(start + tickDur)
+  }
+
+  // Final low thud under the last ring so it feels like a full “accept”.
+  const thudStart = now + 0.98
+  const thud = ctx.createOscillator()
+  thud.type = 'sine'
+  thud.frequency.setValueAtTime(110, thudStart)
+  thud.frequency.exponentialRampToValueAtTime(55, thudStart + 0.28)
+  const thudEnv = ctx.createGain()
+  thudEnv.gain.setValueAtTime(0, thudStart)
+  thudEnv.gain.linearRampToValueAtTime(0.28, thudStart + 0.012)
+  thudEnv.gain.exponentialRampToValueAtTime(0.001, thudStart + 0.3)
+  thud.connect(thudEnv).connect(master)
+  thud.start(thudStart)
+  thud.stop(thudStart + 0.32)
 }
 
 /**

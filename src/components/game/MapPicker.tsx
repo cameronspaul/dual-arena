@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -106,6 +112,46 @@ type LobbyRow = {
   hostName: string
   wager: number
   createdAt: number
+}
+
+/** Homepage lobby watch: silent / sound+banner / sound+auto-join. */
+type LobbyWatchMode = 'off' | 'notify' | 'auto'
+
+const LOBBY_WATCH_KEY = 'dual-arena-lobby-watch'
+const AUTO_JOIN_SECONDS = 5
+/** Idle list poll — light load when not queue-watching. */
+const LOBBY_POLL_IDLE_MS = 3000
+/** Notify / Auto poll — snappier so queue-pop lands within ~1–2s of host. */
+const LOBBY_POLL_WATCH_MS = 1500
+
+function loadLobbyWatchMode(): LobbyWatchMode {
+  try {
+    const v = localStorage.getItem(LOBBY_WATCH_KEY)
+    if (v === 'off' || v === 'notify' || v === 'auto') return v
+  } catch {
+    /* private mode / SSR */
+  }
+  return 'off'
+}
+
+function saveLobbyWatchMode(mode: LobbyWatchMode) {
+  try {
+    localStorage.setItem(LOBBY_WATCH_KEY, mode)
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function isJoinableLobby(lobby: LobbyRow): boolean {
+  return lobby.playerCount < lobby.maxPlayers
+}
+
+/** Newest open lobby first (for queue-pop / auto-join pick). */
+function pickNewestJoinable(list: LobbyRow[]): LobbyRow | null {
+  const open = list.filter(isJoinableLobby)
+  if (open.length === 0) return null
+  open.sort((a, b) => b.createdAt - a.createdAt)
+  return open[0] ?? null
 }
 
 /** ws(s)://host:port → http(s)://host:port for lobby HTTP polling. */
@@ -328,7 +374,6 @@ export function MapPicker({
     balance,
     serverUrl,
     setServerUrl,
-    matchId,
     setMatchId,
     rejoinSession,
     clearRejoinSession,
@@ -347,7 +392,25 @@ export function MapPicker({
     'idle',
   )
   const [lobbyError, setLobbyError] = useState<string | null>(null)
-  const [joinCode, setJoinCode] = useState(matchId)
+  /** off = silent list · notify = sound + banner · auto = sound + 5s join. */
+  const [lobbyWatchMode, setLobbyWatchMode] =
+    useState<LobbyWatchMode>(loadLobbyWatchMode)
+  /** Newest lobby that just appeared (notify mode banner). */
+  const [notifiedLobby, setNotifiedLobby] = useState<LobbyRow | null>(null)
+  /** Lobby waiting for auto-join countdown. */
+  const [autoJoinTarget, setAutoJoinTarget] = useState<LobbyRow | null>(null)
+  const [autoJoinLeft, setAutoJoinLeft] = useState(0)
+  /** Seeded after first successful poll so existing rooms don't fire alerts. */
+  const knownLobbyIdsRef = useRef<Set<string> | null>(null)
+  const lobbyWatchModeRef = useRef(lobbyWatchMode)
+  lobbyWatchModeRef.current = lobbyWatchMode
+  /** True while a countdown (or just-fired join) owns the auto-join slot. */
+  const autoJoinBusyRef = useRef(false)
+  /** Drop overlapping lobby polls (interval + visibility refresh). */
+  const lobbyFetchInFlightRef = useRef(false)
+  /** Latest server URL for the poll loop (avoids stale closures). */
+  const serverUrlRef = useRef(serverUrl)
+  serverUrlRef.current = serverUrl
   /** Seconds left on the homepage rejoin CTA (ticks every 250ms). */
   const [rejoinLeft, setRejoinLeft] = useState(0)
 
@@ -420,12 +483,142 @@ export function MapPicker({
   }
 
   const handleJoinOnline = (lobby: OnlineLobbyJoin) => {
+    gameAudio.stopLobbyNotify()
     gameAudio.uiConfirm()
     if (lobby.matchId) setMatchId(lobby.matchId)
     onJoinOnline?.(lobby)
   }
 
-  const refreshLobbies = async () => {
+  const clearAutoJoin = () => {
+    autoJoinBusyRef.current = false
+    setAutoJoinTarget(null)
+    setAutoJoinLeft(0)
+    gameAudio.stopLobbyNotify()
+  }
+
+  const setWatchMode = (mode: LobbyWatchMode) => {
+    gameAudio.uiClick()
+    setLobbyWatchMode(mode)
+    saveLobbyWatchMode(mode)
+    if (mode === 'off') {
+      setNotifiedLobby(null)
+      clearAutoJoin()
+    }
+  }
+
+  const cancelAutoJoin = () => {
+    gameAudio.uiClick()
+    clearAutoJoin()
+  }
+
+  const dismissNotify = () => {
+    gameAudio.uiClick()
+    setNotifiedLobby(null)
+  }
+
+  /**
+   * Apply a lobby list snapshot (from SSE push or HTTP poll).
+   * Detects newcomers for Notify / Auto queue alerts.
+   */
+  const applyLobbySnapshot = (next: LobbyRow[]) => {
+    setLobbies(next)
+    setLobbyStatus('ok')
+    setLobbyError(null)
+
+    const nextIds = new Set(next.map((l) => l.matchId))
+    const known = knownLobbyIdsRef.current
+    if (known == null) {
+      // First successful snapshot — don't alert for rooms already open.
+      knownLobbyIdsRef.current = nextIds
+      return
+    }
+
+    const newcomers = next.filter((l) => !known.has(l.matchId))
+    knownLobbyIdsRef.current = nextIds
+
+    // Drop stale auto-join / notify if the room closed.
+    setAutoJoinTarget((cur) => {
+      if (cur && !nextIds.has(cur.matchId)) {
+        autoJoinBusyRef.current = false
+        setAutoJoinLeft(0)
+        return null
+      }
+      return cur
+    })
+    setNotifiedLobby((cur) =>
+      cur && !nextIds.has(cur.matchId) ? null : cur,
+    )
+
+    const mode = lobbyWatchModeRef.current
+    if (mode === 'off' || newcomers.length === 0) return
+
+    const pick = pickNewestJoinable(newcomers)
+    if (!pick) return
+
+    if (mode === 'notify') {
+      gameAudio.lobbyNotify({ times: 2 })
+      setNotifiedLobby(pick)
+    } else if (mode === 'auto' && !autoJoinBusyRef.current) {
+      gameAudio.lobbyNotify({ loop: true })
+      autoJoinBusyRef.current = true
+      setAutoJoinTarget(pick)
+      setAutoJoinLeft(AUTO_JOIN_SECONDS)
+    }
+  }
+
+  /**
+   * HTTP poll fallback. Background ticks use `silent` so the list doesn't
+   * flash a loading state. Prefer SSE — browsers throttle timers when hidden.
+   */
+  const refreshLobbies = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true
+    const base = httpBaseFromWs(serverUrlRef.current)
+    if (!base) {
+      setLobbyStatus('error')
+      setLobbyError('Invalid server URL')
+      setLobbies([])
+      return
+    }
+    if (lobbyFetchInFlightRef.current) return
+    lobbyFetchInFlightRef.current = true
+    if (!silent) {
+      setLobbyStatus((s) => (s === 'ok' ? s : 'loading'))
+      setLobbyError(null)
+    }
+    const ac = new AbortController()
+    const timeoutId = window.setTimeout(() => ac.abort(), 8000)
+    try {
+      const res = await fetch(`${base}/lobbies`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+        signal: ac.signal,
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as { lobbies?: LobbyRow[] }
+      applyLobbySnapshot(Array.isArray(data.lobbies) ? data.lobbies : [])
+    } catch (err) {
+      // Keep the last good list on silent poll failures (transient blips).
+      if (!silent) {
+        setLobbies([])
+        setLobbyStatus('error')
+        setLobbyError(
+          err instanceof Error ? err.message : 'Failed to load lobbies',
+        )
+      }
+    } finally {
+      window.clearTimeout(timeoutId)
+      lobbyFetchInFlightRef.current = false
+    }
+  }
+
+  // Live lobby feed: SSE push (works in background tabs) + slow poll backup.
+  useEffect(() => {
+    // New server URL → re-seed so we don't false-alert on a different region.
+    knownLobbyIdsRef.current = null
+    setNotifiedLobby(null)
+    clearAutoJoin()
+
     const base = httpBaseFromWs(serverUrl)
     if (!base) {
       setLobbyStatus('error')
@@ -433,31 +626,149 @@ export function MapPicker({
       setLobbies([])
       return
     }
-    setLobbyStatus('loading')
-    setLobbyError(null)
-    try {
-      const res = await fetch(`${base}/lobbies`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = (await res.json()) as { lobbies?: LobbyRow[] }
-      setLobbies(Array.isArray(data.lobbies) ? data.lobbies : [])
-      setLobbyStatus('ok')
-    } catch (err) {
-      setLobbies([])
-      setLobbyStatus('error')
-      setLobbyError(err instanceof Error ? err.message : 'Failed to load lobbies')
-    }
-  }
 
-  // Keep the Lobbies panel fresh while the picker is open.
+    let disposed = false
+    let es: EventSource | null = null
+    let pollId: number | null = null
+    let reconnectId: number | null = null
+    let sseHealthy = false
+
+    const startPollFallback = (ms: number) => {
+      if (pollId != null) window.clearInterval(pollId)
+      pollId = window.setInterval(() => {
+        void refreshLobbies({ silent: true })
+      }, ms)
+    }
+
+    const connectSse = () => {
+      if (disposed) return
+      try {
+        es?.close()
+      } catch {
+        /* ignore */
+      }
+      es = null
+
+      try {
+        // EventSource delivers pushed lobby lists even when the tab is hidden
+        // (unlike setInterval, which browsers throttle hard in background).
+        const stream = new EventSource(`${base}/lobbies/stream`)
+        es = stream
+
+        stream.onopen = () => {
+          if (disposed) return
+          sseHealthy = true
+          // SSE is live — keep a slow safety poll only.
+          startPollFallback(LOBBY_POLL_IDLE_MS * 4)
+        }
+
+        stream.onmessage = (ev) => {
+          if (disposed) return
+          try {
+            const data = JSON.parse(String(ev.data)) as { lobbies?: LobbyRow[] }
+            applyLobbySnapshot(
+              Array.isArray(data.lobbies) ? data.lobbies : [],
+            )
+            sseHealthy = true
+          } catch {
+            /* ignore bad frame */
+          }
+        }
+
+        stream.onerror = () => {
+          if (disposed) return
+          sseHealthy = false
+          try {
+            stream.close()
+          } catch {
+            /* ignore */
+          }
+          if (es === stream) es = null
+          // Fast poll while reconnecting — still best-effort in background.
+          startPollFallback(
+            lobbyWatchModeRef.current === 'off'
+              ? LOBBY_POLL_IDLE_MS
+              : LOBBY_POLL_WATCH_MS,
+          )
+          if (reconnectId != null) window.clearTimeout(reconnectId)
+          reconnectId = window.setTimeout(connectSse, 2000)
+        }
+      } catch {
+        // EventSource unavailable — poll only.
+        startPollFallback(
+          lobbyWatchModeRef.current === 'off'
+            ? LOBBY_POLL_IDLE_MS
+            : LOBBY_POLL_WATCH_MS,
+        )
+      }
+    }
+
+    // Immediate HTTP snapshot, then open the push stream.
+    void refreshLobbies({ silent: false })
+    connectSse()
+    // Until SSE opens, poll at the watch-aware rate.
+    startPollFallback(
+      lobbyWatchMode === 'off' ? LOBBY_POLL_IDLE_MS : LOBBY_POLL_WATCH_MS,
+    )
+
+    const onVisibility = () => {
+      if (document.hidden) return
+      // Tab focused again → snap refresh (and ensure stream is up).
+      void refreshLobbies({ silent: true })
+      if (!sseHealthy && es == null) connectSse()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      disposed = true
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (pollId != null) window.clearInterval(pollId)
+      if (reconnectId != null) window.clearTimeout(reconnectId)
+      try {
+        es?.close()
+      } catch {
+        /* ignore */
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- feed targets
+  }, [serverUrl, lobbyWatchMode])
+
+  // Silence the queue sting as soon as the user comes back to this tab/window.
+  // (Countdown / banner stay; only the looping audio cuts off.)
   useEffect(() => {
-    void refreshLobbies()
-    const id = window.setInterval(() => void refreshLobbies(), 4000)
-    return () => window.clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll target is serverUrl
-  }, [serverUrl])
+    const silence = () => {
+      gameAudio.stopLobbyNotify()
+    }
+    const onVisibility = () => {
+      if (!document.hidden) silence()
+    }
+    window.addEventListener('focus', silence)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', silence)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
+  // Auto-join countdown (queue-accept style).
+  useEffect(() => {
+    if (!autoJoinTarget) return
+    if (autoJoinLeft <= 0) {
+      const target = autoJoinTarget
+      clearAutoJoin()
+      setNotifiedLobby(null)
+      handleJoinOnline({
+        matchId: target.matchId,
+        mapId: isMapId(target.mapId) ? target.mapId : undefined,
+      })
+      return
+    }
+    const id = window.setTimeout(() => {
+      setAutoJoinLeft((s) => Math.max(0, s - 1))
+    }, 1000)
+    return () => window.clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- join via stable handleJoinOnline
+  }, [autoJoinTarget, autoJoinLeft])
 
   // Tick rejoin countdown; drop stale sessions when the window ends.
   useEffect(() => {
@@ -800,13 +1111,18 @@ export function MapPicker({
               )}
               {lobbyStatus === 'ok' && lobbies.length === 0 && (
                 <p className="rounded-lg border-[2px] border-dashed border-arena-ink/40 bg-arena-surface/50 px-2.5 py-3 text-center text-[11px] font-semibold text-arena-fg/45">
-                  No open lobbies — host one or join by code below.
+                  No open lobbies — host one, or turn on Auto join below.
                 </p>
               )}
               {lobbies.map((lobby) => (
                 <div
                   key={lobby.matchId}
-                  className="flex items-center gap-2 rounded-xl border-[2.5px] border-arena-ink bg-arena-surface px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]"
+                  className={cn(
+                    'flex items-center gap-2 rounded-xl border-[2.5px] border-arena-ink bg-arena-surface px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]',
+                    (autoJoinTarget?.matchId === lobby.matchId ||
+                      notifiedLobby?.matchId === lobby.matchId) &&
+                      'ring-2 ring-arena-heat/60',
+                  )}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -850,30 +1166,135 @@ export function MapPicker({
             </div>
 
             <div className="mt-2 shrink-0 border-t-2 border-arena-ink/35 pt-2">
-              <SectionLabel iconSrc={icons.link}>Join by code</SectionLabel>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value)}
-                  spellCheck={false}
-                  className="min-w-0 flex-1 rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 py-1.5 font-mono text-[11px] text-arena-fg outline-none focus:border-arena-tech"
-                  placeholder="duel-abc123"
-                />
-                <button
-                  type="button"
-                  disabled={
-                    !onJoinOnline || !serverUrl.trim() || !joinCode.trim()
-                  }
-                  onClick={() =>
-                    handleJoinOnline({ matchId: joinCode.trim() })
-                  }
-                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1 rounded-xl border-[3px] border-arena-ink bg-arena-heat px-3 text-[11px] font-black tracking-wide text-arena-ink uppercase shadow-[2px_3px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40 active:translate-y-0.5 active:shadow-[1px_1px_0_var(--arena-ink)]"
-                >
-                  <GameIcon src={icons.aim} className="size-4" />
-                  Join
-                </button>
+              <SectionLabel iconSrc={icons.bolt}>Auto join</SectionLabel>
+              <div className="mb-1.5 flex gap-1">
+                {(
+                  [
+                    { id: 'off', label: 'Off' },
+                    { id: 'notify', label: 'Notify' },
+                    { id: 'auto', label: 'Auto' },
+                  ] as const
+                ).map((opt) => (
+                  <Chip
+                    key={opt.id}
+                    active={lobbyWatchMode === opt.id}
+                    onClick={() => setWatchMode(opt.id)}
+                    className="h-7 min-w-0 flex-1 px-1.5 text-[10px]"
+                    title={
+                      opt.id === 'off'
+                        ? 'No alerts for new lobbies'
+                        : opt.id === 'notify'
+                          ? 'Play a queue-pop sound when a lobby opens'
+                          : 'Sound + auto-join the newest lobby in 5s'
+                    }
+                  >
+                    {opt.label}
+                  </Chip>
+                ))}
               </div>
+
+              {lobbyWatchMode === 'off' && (
+                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                  Silent list. Switch to Notify for a queue-pop sound, or Auto
+                  to join in {AUTO_JOIN_SECONDS}s.
+                </p>
+              )}
+
+              {lobbyWatchMode === 'notify' && !notifiedLobby && !autoJoinTarget && (
+                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                  Live updates (even in background) — new lobbies play the
+                  queue sting twice and show a banner.
+                </p>
+              )}
+
+              {lobbyWatchMode === 'auto' && !autoJoinTarget && (
+                <p className="text-[10px] font-semibold leading-snug text-arena-fg/40">
+                  Live updates (even in background) — sting loops until join;
+                  auto-joins after {AUTO_JOIN_SECONDS}s (cancel anytime).
+                </p>
+              )}
+
+              {autoJoinTarget && (
+                <div className="mt-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-heat/15 px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black tracking-wide text-arena-heat uppercase">
+                        Queue pop · joining in {autoJoinLeft}s
+                      </p>
+                      <p className="mt-0.5 truncate text-[11px] font-extrabold text-arena-fg">
+                        {autoJoinTarget.hostName || 'Host'} ·{' '}
+                        <span className="text-arena-tech">
+                          {mapLabel(autoJoinTarget.mapId)}
+                        </span>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={cancelAutoJoin}
+                      className="inline-flex h-7 shrink-0 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-black tracking-wide text-arena-fg uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full border border-arena-ink/40 bg-arena-surface">
+                    <div
+                      className="h-full rounded-full bg-arena-heat transition-[width] duration-1000 ease-linear"
+                      style={{
+                        width: `${(autoJoinLeft / AUTO_JOIN_SECONDS) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {notifiedLobby && !autoJoinTarget && (
+                <div className="mt-1.5 rounded-xl border-[2.5px] border-arena-ink bg-arena-ok/15 px-2 py-1.5 shadow-[1px_2px_0_var(--arena-ink)]">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black tracking-wide text-arena-ok uppercase">
+                        New lobby
+                      </p>
+                      <p className="mt-0.5 truncate text-[11px] font-extrabold text-arena-fg">
+                        {notifiedLobby.hostName || 'Host'} ·{' '}
+                        <span className="text-arena-tech">
+                          {mapLabel(notifiedLobby.mapId)}
+                        </span>
+                        {notifiedLobby.wager > 0 && (
+                          <span className="text-arena-heat">
+                            {' '}
+                            · ${notifiedLobby.wager}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        onClick={dismissNotify}
+                        className="inline-flex h-7 items-center justify-center rounded-lg border-[2px] border-arena-ink bg-arena-surface px-2 text-[10px] font-black tracking-wide text-arena-fg/70 uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:bg-arena-hover"
+                      >
+                        Dismiss
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!onJoinOnline || !serverUrl.trim()}
+                        onClick={() => {
+                          setNotifiedLobby(null)
+                          handleJoinOnline({
+                            matchId: notifiedLobby.matchId,
+                            mapId: isMapId(notifiedLobby.mapId)
+                              ? notifiedLobby.mapId
+                              : undefined,
+                          })
+                        }}
+                        className="inline-flex h-7 items-center justify-center gap-1 rounded-lg border-[2.5px] border-arena-ink bg-arena-ok px-2 text-[10px] font-black tracking-wide text-arena-ink uppercase shadow-[1px_2px_0_var(--arena-ink)] transition-all hover:-translate-y-0.5 hover:brightness-110 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        Join
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </HudPanel>
         </motion.div>
