@@ -63,7 +63,7 @@ export const BARRIER_VISUAL_INFINITE = {
 /** Gameplay hazard strip / signs length for infinite-width walls. */
 export const BARRIER_GAME_INFINITE_LENGTH = 240
 
-const STORAGE_PREFIX = 'dual-arena:barriers:v1:'
+const STORAGE_PREFIX = 'glint:barriers:v1:'
 
 export function barrierStorageKey(mapId: string): string {
   return `${STORAGE_PREFIX}${mapId}`

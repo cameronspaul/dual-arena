@@ -18,4 +18,4 @@ export type {
   DeathReason,
   HudSnapshot,
   PerfHud,
-} from '@duel/shared'
+} from '@glint/shared'

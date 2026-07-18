@@ -1,5 +1,5 @@
 /**
- * Pooled HTMLAudio SFX for Dual Arena.
+ * Pooled HTMLAudio SFX for Glint.
  * Uses samples in /public/sounds (fire, bolt, reload, hits, foley, UI).
  */
 

@@ -23,4 +23,4 @@ export {
   raySphere,
   rayEllipsoid,
   rayCapsule,
-} from '@duel/shared'
+} from '@glint/shared'

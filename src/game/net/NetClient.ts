@@ -20,8 +20,8 @@ import type {
   VoiceSignal,
   VoiceSignalRelayMessage,
   WelcomeMessage,
-} from '@duel/shared'
-import { CHAT_MAX_LEN, INPUT_SEND_HZ } from '@duel/shared'
+} from '@glint/shared'
+import { CHAT_MAX_LEN, INPUT_SEND_HZ } from '@glint/shared'
 
 export type NetClientStatus =
   | 'idle'

@@ -1,6 +1,6 @@
-# 🚀 React + Vite + Tailwind CSS v4 Template
+# Glint
 
-A modern, fast, and minimal template to jumpstart your next project with React 19 and Tailwind CSS v4.
+Browser sniper 1v1 client for **Glint** — React 19, Vite 7, Tailwind CSS v4, Three.js.
 
 ## ✨ Features
 

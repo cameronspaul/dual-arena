@@ -16,5 +16,5 @@ export {
   createMeshHitscanScratch,
   castMeshHitscan,
   collectDummyHitTargets,
-} from '@duel/shared'
-export type { MeshHitscanScratch } from '@duel/shared'
+} from '@glint/shared'
+export type { MeshHitscanScratch } from '@glint/shared'

@@ -8,5 +8,5 @@ export {
   aimSpread,
   aimSway,
   effectiveLook,
-} from '@duel/shared'
-export type { FireResult } from '@duel/shared'
+} from '@glint/shared'
+export type { FireResult } from '@glint/shared'

@@ -24,7 +24,7 @@ export interface MapSpawnLayout {
   spawns: SpawnPoint[]
 }
 
-const STORAGE_PREFIX = 'dual-arena:spawns:v1:'
+const STORAGE_PREFIX = 'glint:spawns:v1:'
 
 export function storageKey(mapId: string): string {
   return `${STORAGE_PREFIX}${mapId}`

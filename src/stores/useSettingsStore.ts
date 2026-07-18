@@ -193,7 +193,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
     }),
     {
-      name: 'dual-arena-settings',
+      name: 'glint-settings',
       version: 4,
       migrate: (persisted) => {
         const p = (persisted ?? {}) as Partial<UserSettings>

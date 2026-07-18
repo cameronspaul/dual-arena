@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GameEngine } from '@/game/engine/GameEngine'
 import type { ChatLine } from '@/game/engine/GameEngine'
 import type { VoicePeerStatus } from '@/game/net'
-import { CHAT_MAX_LEN } from '@duel/shared'
+import { CHAT_MAX_LEN } from '@glint/shared'
 import {
   codesFor,
   formatKeyCode,

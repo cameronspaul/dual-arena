@@ -1,13 +1,13 @@
 /**
  * Official team spawn points baked from the level editor.
- * Source of truth for online: @duel/shared (server-authoritative).
+ * Source of truth for online: @glint/shared (server-authoritative).
  * localStorage editor overrides still win on the client offline path only.
  */
 import {
   AUTHORED_SPAWNS as SHARED_AUTHORED,
   getAuthoredSpawns as sharedGetAuthored,
   type SpawnPoint as SharedSpawnPoint,
-} from '@duel/shared'
+} from '@glint/shared'
 import type { MapId } from './catalog'
 import type { SpawnPoint } from './spawns'
 

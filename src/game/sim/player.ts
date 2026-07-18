@@ -11,8 +11,8 @@ import {
   resolvePlayerWorldCollisions as resolvePlayerWorldCollisionsShared,
   stepPlayer as stepPlayerShared,
   volumesToHitboxes,
-} from '@duel/shared'
-import type { AABB, PlayerBody, PlayerInput } from '@duel/shared'
+} from '@glint/shared'
+import type { AABB, PlayerBody, PlayerInput } from '@glint/shared'
 import {
   resolveMeshCollisions,
   type MeshWorld,

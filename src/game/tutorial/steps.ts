@@ -111,7 +111,7 @@ export function buildTutorialSteps(): TutorialStep[] {
     {
       id: 'welcome',
       kind: 'info',
-      title: 'Welcome to Duel',
+      title: 'Welcome to Glint',
       body: 'Sniper-only 1v1. This course covers settings, movement, the bolt rifle, damage zones, and online match rules.',
       bullets: [
         'Click the game to capture the mouse',

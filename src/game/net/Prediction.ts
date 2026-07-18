@@ -7,9 +7,9 @@
  * feels like a constant "pull down". Vertical is client-owned except respawn
  * / void / hard teleports.
  */
-import type { PlayerBody, PlayerInput, PlayerSnapshot } from '@duel/shared'
-import { createPlayer } from '@duel/shared'
-import type { AABB } from '@duel/shared'
+import type { PlayerBody, PlayerInput, PlayerSnapshot } from '@glint/shared'
+import { createPlayer } from '@glint/shared'
+import type { AABB } from '@glint/shared'
 import { stepPlayer } from '../sim/player'
 import type { MeshWorld } from '../maps/meshCollision'
 

@@ -5,7 +5,7 @@
  * Deterministic initiator: lower playerId creates the offer (no glare).
  * Mic transmit is gated by setTalking (PTT / open-mic / off from settings).
  */
-import type { VoiceSignal } from '@duel/shared'
+import type { VoiceSignal } from '@glint/shared'
 import { getUserSettings } from '../core/userSettings'
 
 export type VoicePeerStatus =

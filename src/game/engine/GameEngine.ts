@@ -107,7 +107,7 @@ import {
   type RematchUpdateMessage,
   type SnapshotMessage,
   type WelcomeMessage,
-} from '@duel/shared'
+} from '@glint/shared'
 
 export type HudListener = (hud: HudSnapshot) => void
 

@@ -1,4 +1,4 @@
-# Dual Arena — Design Document
+# Glint — Design Document
 
 Browser-based **sniper-only 1v1** duel game with optional wagers (virtual currency first). Inspired by Krunker’s instant-play WebGL FPS and Roblox Rivals’ sniper 1v1 skill culture.
 
@@ -87,7 +87,7 @@ Browser-based **sniper-only 1v1** duel game with optional wagers (virtual curren
 ## 4. Repo layout (target)
 
 ```
-dual-arena/
+glint/
 ├── DESIGN.md
 ├── RULES.md                 # UI coding standards
 ├── src/

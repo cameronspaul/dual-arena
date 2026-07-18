@@ -13,7 +13,7 @@ import {
   DUMMY,
   type MoveState,
   type PlayerSnapshot,
-} from '@duel/shared'
+} from '@glint/shared'
 import {
   alignDummyDeathToShot,
   applyDummyCrouchScale,

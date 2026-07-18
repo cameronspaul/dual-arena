@@ -32,11 +32,11 @@
       "@/*": [
         "./src/*"
       ],
-      "@duel/shared": [
-        "../packages/shared-duel/src/index.ts"
+      "@glint/shared": [
+        "../packages/shared-glint/src/index.ts"
       ],
-      "@duel/shared/*": [
-        "../packages/shared-duel/src/*"
+      "@glint/shared/*": [
+        "../packages/shared-glint/src/*"
       ]
     }
   },

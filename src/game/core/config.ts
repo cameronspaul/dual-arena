@@ -15,4 +15,4 @@ export {
   DUMMY,
   DEBUG,
   MATCH,
-} from '@duel/shared'
+} from '@glint/shared'

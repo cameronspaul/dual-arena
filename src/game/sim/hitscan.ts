@@ -1,2 +1,2 @@
 /** Re-export shared AABB hitscan. */
-export { castHitscan } from '@duel/shared'
+export { castHitscan } from '@glint/shared'

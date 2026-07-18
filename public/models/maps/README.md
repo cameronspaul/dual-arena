@@ -1,4 +1,4 @@
-# Map assets for Dual Arena
+# Map assets for Glint
 
 ## Format: use **glTF binary (`.glb`)** — not USDZ
 
